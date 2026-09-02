@@ -61,7 +61,7 @@ Realizada por un revisor independiente sobre `apps/api` y `packages/shared` sin 
 ## Lo que NO se pudo verificar en este entorno
 1. **Impresora Zebra real** y **terminales Zebra físicas** (escáner en modo teclado): diseño y pruebas en navegador únicamente. Validar en el primer día con hardware real (ZEBRA_SETUP.md).
 2. **Carga a escala completa** (20k LPNs / 300k movimientos): ejecutar `SCALE=1 npm run test:load -w apps/api` en el servidor de pruebas antes del go-live.
-3. **`docker compose up` completo con proxy HTTPS**: `db`, `api`, `backup` y las imágenes se validaron por separado en esta máquina (Docker Desktop estuvo inestable durante la sesión); la composición completa detrás de TLS debe validarse en el servidor destino.
+3. ~~`docker compose up` completo con proxy HTTPS~~ Validado en el servidor real: `db`, `api`, `web`, `backup` detrás de nginx con certificado Let's Encrypt (`/api/health/ready` OK desde internet).
 4. **Aspel SAE**: la sincronización SAE → WMS está implementada y ejecutada contra los datos reales (ver INTEGRATION_SAE.md). Lo que no existe es un canal de escritura hacia Firebird; la salida se expone por API para un conector externo.
 
 ## Recomendaciones antes del go-live
@@ -85,3 +85,4 @@ Realizada por un revisor independiente sobre `apps/api` y `packages/shared` sin 
 | Auditoría externa | 36 hallazgos; críticos/altos corregidos con regresiones |
 | Sincronización SAE real | 1,243 claves SAE → 662 productos (44 con GTIN, 1,281 alias), 214 clientes, 38 proveedores, 16 OC, 4 pedidos en 11 s; segunda corrida 0 duplicados |
 | Nave HIDRO en el 3D | Planta en L extraída de los vectores del levantamiento (39.91 × 59.5 m, H 7.10; vecinos 19.98 × 41.7 m excluidos en la esquina frontal izquierda; oficinas y cubículos interiores; portones medidos) como almacén por defecto del mapa; racks pendientes del layout del usuario |
+| Publicación | En producción desde el 2026-09-02 en `https://wms.104-248-116-147.sslip.io` (ClawCloud, Docker Compose + nginx/Let's Encrypt; ver DEPLOYMENT.md). `COOKIE_SECURE=true`, solo `web` expuesto en localhost, backups cada 6 h en el servidor |
