@@ -200,7 +200,8 @@ export async function deallocateOrder(tx: Tx, ctx: ActorContext, orderId: string
       await tx.order_lines.update({ where: { id: a.order_line_id }, data: { allocated_qty: { decrement: remaining } } });
       released += remaining;
     }
-    await tx.allocations.update({ where: { id: a.id }, data: { status: 'RELEASED', qty: a.picked_qty } });
+    // keep qty > 0 (DB check); when something was picked the allocation shrinks to what was actually taken
+    await tx.allocations.update({ where: { id: a.id }, data: { status: 'RELEASED', ...(a.picked_qty > 0n ? { qty: a.picked_qty } : {}) } });
   }
   return { released, allocations: allocs.length };
 }

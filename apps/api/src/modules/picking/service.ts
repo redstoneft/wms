@@ -257,7 +257,7 @@ export async function shortLine(tx: Tx, ctx: ActorContext, input: { pick_task_id
     });
     await tx.order_lines.update({ where: { id: line.order_line_id }, data: { allocated_qty: { decrement: remaining } } });
   }
-  await tx.allocations.update({ where: { id: line.allocation_id }, data: { status: 'RELEASED', qty: line.picked_qty } });
+  await tx.allocations.update({ where: { id: line.allocation_id }, data: { status: 'RELEASED', ...(line.picked_qty > 0n ? { qty: line.picked_qty } : {}) } });
   await tx.pick_task_lines.update({ where: { id: line.id }, data: { status: 'SHORT' } });
   const sku = await tx.skus.findUniqueOrThrow({ where: { id: line.sku_id } });
   const inc = await createIncident(tx, ctx, { incident_type: 'PICKING_ERROR', severity: 'HIGH', title: `Surtido incompleto ${sku.code}: faltan ${remaining} en ${lpn.code}`, description: input.reason, entity_type: 'pick_task', entity_id: input.pick_task_id, sku_id: sku.id, lpn_id: lpn.id, location_id: lpn.current_location_id, order_id: line.order_id, qty: remaining });

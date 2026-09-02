@@ -8,9 +8,10 @@ export const DEFAULT_SETTINGS = {
   count_variance_recount_threshold: 0,
   session_ttl_hours: 12,
   require_mfa_for_admin: true,
+  auto_print_lpn_labels: true,
 } as const;
 
-export type SettingsShape = { [K in keyof typeof DEFAULT_SETTINGS]: (typeof DEFAULT_SETTINGS)[K] extends string ? string : (typeof DEFAULT_SETTINGS)[K] };
+export type SettingsShape = { [K in keyof typeof DEFAULT_SETTINGS]: (typeof DEFAULT_SETTINGS)[K] extends string ? string : (typeof DEFAULT_SETTINGS)[K] extends boolean ? boolean : number };
 
 export async function getSettings(tx?: Tx): Promise<SettingsShape> {
   const db = tx ?? getDb();

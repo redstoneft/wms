@@ -18,7 +18,7 @@ export function getPool(): pg.Pool {
     const cfg = loadConfig();
     pool = new pg.Pool({
       connectionString: cfg.DATABASE_URL,
-      max: cfg.isTest ? 20 : 30,
+      max: cfg.isTest ? 60 : 50,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
       application_name: 'wms-api',
@@ -78,11 +78,16 @@ export async function withTx<T>(fn: (tx: Tx) => Promise<T>, opts?: { retries?: n
 /** Extracts the PostgreSQL SQLSTATE from a Prisma/pg error, if any. */
 export function sqlState(e: unknown): string | undefined {
   if (!e || typeof e !== 'object') return undefined;
-  const any = e as { code?: unknown; meta?: { code?: unknown }; cause?: unknown; driverAdapterError?: { cause?: { originalCode?: unknown } } };
+  const any = e as {
+    code?: unknown;
+    meta?: { code?: unknown; driverAdapterError?: { cause?: { originalCode?: unknown; code?: unknown } } };
+    cause?: unknown;
+    driverAdapterError?: { cause?: { originalCode?: unknown } };
+  };
+  // Prisma 7 driver adapters: meta.driverAdapterError.cause.originalCode holds the real SQLSTATE
+  const adapterCode = any.meta?.driverAdapterError?.cause?.originalCode ?? any.driverAdapterError?.cause?.originalCode;
+  if (typeof adapterCode === 'string') return adapterCode;
   if (typeof any.meta?.code === 'string') return any.meta.code;
-  if (any.driverAdapterError?.cause && typeof any.driverAdapterError.cause.originalCode === 'string') {
-    return any.driverAdapterError.cause.originalCode;
-  }
   if (typeof any.code === 'string' && /^[0-9A-Z]{5}$/.test(any.code)) return any.code;
   if (any.cause) return sqlState(any.cause);
   return undefined;
@@ -91,7 +96,9 @@ export function sqlState(e: unknown): string | undefined {
 /** Extracts the raw PostgreSQL error message from a Prisma/pg error. */
 export function sqlMessage(e: unknown): string {
   if (!e || typeof e !== 'object') return String(e);
-  const any = e as { message?: unknown; meta?: { message?: unknown }; cause?: unknown };
+  const any = e as { message?: unknown; meta?: { message?: unknown; driverAdapterError?: { cause?: { originalMessage?: unknown; message?: unknown } } }; cause?: unknown };
+  const adapterMsg = any.meta?.driverAdapterError?.cause?.originalMessage ?? any.meta?.driverAdapterError?.cause?.message;
+  if (typeof adapterMsg === 'string') return adapterMsg;
   if (typeof any.meta?.message === 'string') return any.meta.message;
   if (any.cause) {
     const inner = sqlMessage(any.cause);

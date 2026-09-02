@@ -443,6 +443,7 @@ export const zSettings = z.object({
   count_variance_recount_threshold: z.number().int().min(0).optional(),
   session_ttl_hours: z.number().int().min(1).max(72).optional(),
   require_mfa_for_admin: z.boolean().optional(),
+  auto_print_lpn_labels: z.boolean().optional(),
 });
 
 export type LoginInput = z.infer<typeof zLogin>;

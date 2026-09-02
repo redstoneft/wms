@@ -34,6 +34,7 @@ export interface Client {
   get: (url: string) => Promise<{ status: number; body: any }>;
   post: (url: string, body?: unknown, headers?: Record<string, string>) => Promise<{ status: number; body: any; headers: Record<string, unknown> }>;
   patch: (url: string, body?: unknown) => Promise<{ status: number; body: any }>;
+  put: (url: string, body?: unknown) => Promise<{ status: number; body: any }>;
   del: (url: string) => Promise<{ status: number; body: any }>;
 }
 
@@ -63,6 +64,7 @@ export async function clientFor(username: string, password: string): Promise<Cli
     get: async (url) => parse(await a.inject({ method: 'GET', url: `/api${url}`, headers: h() })),
     post: async (url, body, extra) => parse(await a.inject({ method: 'POST', url: `/api${url}`, headers: h(extra), payload: body === undefined ? undefined : JSON.stringify(body, bigintReplacer) })),
     patch: async (url, body) => parse(await a.inject({ method: 'PATCH', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
+    put: async (url, body) => parse(await a.inject({ method: 'PUT', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
     del: async (url) => parse(await a.inject({ method: 'DELETE', url: `/api${url}`, headers: h() })),
   };
 }

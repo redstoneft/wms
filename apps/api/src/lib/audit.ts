@@ -18,6 +18,9 @@ export function scrub(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString();
   if (Array.isArray(value)) return value.map(scrub);
   if (value instanceof Date) return value.toISOString();
+  // Prisma Decimal (and similar numeric wrappers): keep the exact textual value
+  if (typeof value === 'object' && typeof (value as { toFixed?: unknown }).toFixed === 'function') return String(value);
+  if (typeof value === 'function' || typeof value === 'symbol') return undefined;
   if (typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -37,8 +40,8 @@ export async function audit(tx: Tx, ctx: ActorContext, entry: AuditEntry): Promi
       action: entry.action,
       entity_type: entry.entity_type,
       entity_id: entry.entity_id ?? null,
-      before: entry.before === undefined ? undefined : (scrub(entry.before) as object),
-      after: entry.after === undefined ? undefined : (scrub(entry.after) as object),
+      before: entry.before === undefined ? undefined : (JSON.parse(JSON.stringify(scrub(entry.before))) as object),
+      after: entry.after === undefined ? undefined : (JSON.parse(JSON.stringify(scrub(entry.after))) as object),
       reason: entry.reason ?? null,
       ip: ctx.ip,
       device_id: ctx.deviceId,

@@ -74,6 +74,9 @@ export function translateDbError(e: unknown): AppError | null {
     }
     case 'P2025':
       return new NotFoundError('record');
+    case 'P2028':
+    case 'P2024':
+      return new AppError(503, 'SERVICE_BUSY', 'The system is busy, please retry in a moment');
     case 'P2003':
       return new RuleError('REFERENCE_ERROR', 'Referenced record does not exist or is still referenced', { db: msg });
     case 'P2002':
@@ -89,6 +92,11 @@ export function translateDbError(e: unknown): AppError | null {
       if (/idempotency_keys_pkey/.test(msg)) return new ConflictError('IDEMPOTENT_REPLAY', 'Duplicate request');
       return new ConflictError('DUPLICATE', 'A record with the same unique value already exists', { db: msg });
     }
+    case '22021':
+    case '22P02':
+    case '22001':
+    case '22003':
+      return new ValidationError('Invalid input value for the database', { db: msg });
     case '23503':
       return new RuleError('REFERENCE_ERROR', 'Referenced record does not exist or is still referenced', { db: msg });
     case '40001':

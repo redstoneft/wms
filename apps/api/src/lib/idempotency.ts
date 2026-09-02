@@ -50,6 +50,11 @@ export async function runIdempotent<T>(
   const ttlMs = loadConfig().IDEMPOTENCY_TTL_HOURS * 3600 * 1000;
   try {
     const r = await withTx(async (tx) => {
+      // Serialize identical keys: concurrent duplicates wait here instead of
+      // all executing the business logic and racing on the key insert.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${scopeKey}))`;
+      const dup = await tx.idempotency_keys.findUnique({ where: { scope_key: scopeKey } });
+      if (dup) return { status: dup.response_code, body: dup.response_body as T, replayed: true as const };
       const out = await fn(tx);
       await tx.idempotency_keys.create({
         data: {
@@ -61,9 +66,13 @@ export async function runIdempotent<T>(
           expires_at: new Date(Date.now() + ttlMs),
         },
       });
-      return out;
+      return { ...out, replayed: false as const };
     });
-    return { ...r, replayed: false };
+    if (r.replayed) {
+      const row = await db.idempotency_keys.findUnique({ where: { scope_key: scopeKey } });
+      if (row) return replay(row, fp);
+    }
+    return r;
   } catch (e) {
     if (sqlState(e) === '23505') {
       const again = await db.idempotency_keys.findUnique({ where: { scope_key: scopeKey } });

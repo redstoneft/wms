@@ -6,6 +6,8 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import { saveAttachment } from '../attachments/service.js';
+import { printLabel } from '../labels/service.js';
+import { getSettings } from '../settings/routes.js';
 import * as svc from './service.js';
 
 export async function inboundRoutes(app: FastifyInstance) {
@@ -129,6 +131,13 @@ export async function inboundRoutes(app: FastifyInstance) {
     }));
     reply.status(r.status);
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
+    // Automatic LPN label on pallet creation (best effort, after commit; failures are recorded in label_prints)
+    if (!r.replayed && r.body.lpn?.is_new) {
+      const actor = req.actor!;
+      void getSettings()
+        .then((s) => (s.auto_print_lpn_labels === false ? null : printLabel(actor, { label_type: 'LPN', entity_id: r.body.lpn.code, copies: 1 }, 'PRINT')))
+        .catch((e: Error) => req.log.warn({ err: e.message, lpn: r.body.lpn.code }, 'auto label print failed'));
+    }
     return r.body;
   });
 

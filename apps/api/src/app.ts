@@ -95,6 +95,19 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
     reply.header('X-Request-Id', req.id);
   });
 
+  // PostgreSQL cannot store NUL bytes in text; reject them up front (found by fuzzing).
+  const hasNul = (v: unknown): boolean => {
+    if (typeof v === 'string') return v.includes('\u0000');
+    if (Array.isArray(v)) return v.some(hasNul);
+    if (v && typeof v === 'object') return Object.values(v as Record<string, unknown>).some(hasNul);
+    return false;
+  };
+  app.addHook('preValidation', async (req) => {
+    if (hasNul(req.body) || hasNul(req.query) || hasNul(req.params)) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Input contains NUL characters');
+    }
+  });
+
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError) {
       return reply.status(400).send({
@@ -120,7 +133,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
       return reply.status(anyErr.statusCode).send({ error: anyErr.code ?? 'BAD_REQUEST', message: anyErr.message, request_id: req.id });
     }
     req.log.error({ err }, 'unhandled error');
-    return reply.status(500).send({ error: 'INTERNAL_ERROR', message: 'Internal server error', request_id: req.id });
+    return reply.status(500).send({ error: 'INTERNAL_ERROR', message: 'Internal server error', request_id: req.id, ...(cfg.isProd ? {} : { debug: anyErr.message }) });
   });
 
   app.setNotFoundHandler((req, reply) => {
