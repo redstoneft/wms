@@ -30,8 +30,6 @@ jobs:
       APP_ENCRYPTION_KEY: ci-encryption-key-ci-encryption-key-0123456789
       ALLOWED_ORIGINS: http://localhost:5173
       NODE_ENV: test
-    defaults:
-      run:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -86,8 +84,6 @@ jobs:
       APP_ENCRYPTION_KEY: ci-encryption-key-ci-encryption-key-0123456789
       ALLOWED_ORIGINS: http://localhost:5173
       COOKIE_SECURE: 'false'
-    defaults:
-      run:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
