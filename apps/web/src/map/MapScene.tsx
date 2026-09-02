@@ -50,18 +50,32 @@ function setInstance(mesh: THREE.InstancedMesh, i: number, center: Vec3, size: V
 }
 
 // ---------------------------------------------------------------- floor & zones
-function Floor({ width, depth }: { width: number; depth: number }) {
+/** Floor polygon: the surveyed footprint when given (L-shapes…), else the width × depth rectangle. */
+function footprintOf(width: number, depth: number, fp?: { x: number; y: number }[]): { x: number; y: number }[] {
+  return fp && fp.length >= 3 ? fp : [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: depth }, { x: 0, y: depth }];
+}
+
+function Floor({ width, depth, footprint }: { width: number; depth: number; footprint?: { x: number; y: number }[] }) {
   const divisions = Math.max(1, Math.round(Math.max(width, depth) / 2));
+  const pts = footprintOf(width, depth, footprint);
+  const shape = useMemo(() => {
+    const s = new THREE.Shape();
+    pts.forEach((p, i) => (i ? s.lineTo(p.x, -p.y) : s.moveTo(p.x, -p.y))); // shape (x, y) → world (x, 0, -y) after the -90° tilt
+    s.closePath();
+    return s;
+  }, [pts]);
+  const outline = useMemo(() => new Float32Array(pts.flatMap((p, i) => [p.x, 0.02, p.y, pts[(i + 1) % pts.length]!.x, 0.02, pts[(i + 1) % pts.length]!.y])), [pts]);
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[width / 2, -0.01, depth / 2]} receiveShadow>
-        <planeGeometry args={[width + 4, depth + 4]} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
+        <shapeGeometry args={[shape]} />
         <meshStandardMaterial color="#e2e8f0" roughness={1} />
       </mesh>
-      <gridHelper args={[Math.max(width, depth) + 4, divisions * 2, '#94a3b8', '#cbd5e1']} position={[width / 2, 0, depth / 2]} />
-      {/* outer wall outline */}
-      <lineSegments position={[width / 2, 0.02, depth / 2]}>
-        <edgesGeometry args={[new THREE.BoxGeometry(width, 0.04, depth)]} />
+      <gridHelper args={[Math.max(width, depth) * 2.2, divisions * 2, '#cbd5e1', '#e2e8f0']} position={[width / 2, -0.02, depth / 2]} />
+      <lineSegments>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[outline, 3]} />
+        </bufferGeometry>
         <lineBasicMaterial color="#0f172a" />
       </lineSegments>
     </group>
@@ -111,13 +125,17 @@ const CONTEXT_STYLE: Record<string, string> = { PATIO: '#d6d3d1', VECINO: '#fda4
 /** Walls, structural columns, doors/ramps, gable ridges, neighbouring areas and the north arrow, from `warehouse.features`. */
 function Building({ warehouse, width, depth, height }: { warehouse: Warehouse; width: number; depth: number; height: number }) {
   const f: WarehouseFeatures | null | undefined = warehouse.features;
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => invalidate(), [f, width, depth, height, invalidate]); // demand frameloop: draw as soon as the geometry arrives
   const wallT = 0.25;
-  const walls: { pos: Vec3; size: Vec3 }[] = [
-    { pos: [width / 2, height / 2, 0], size: [width + wallT, height, wallT] },
-    { pos: [width / 2, height / 2, depth], size: [width + wallT, height, wallT] },
-    { pos: [0, height / 2, depth / 2], size: [wallT, height, depth] },
-    { pos: [width, height / 2, depth / 2], size: [wallT, height, depth] },
-  ];
+  const pts = footprintOf(width, depth, f?.footprint);
+  // one translucent wall per polygon edge
+  const walls: { pos: Vec3; size: Vec3; rotY: number }[] = pts.map((p, i) => {
+    const q = pts[(i + 1) % pts.length]!;
+    const dx = q.x - p.x;
+    const dz = q.y - p.y;
+    return { pos: [(p.x + q.x) / 2, height / 2, (p.y + q.y) / 2], size: [Math.hypot(dx, dz) + wallT, height, wallT], rotY: -Math.atan2(dz, dx) };
+  });
   const openingBox = (o: WarehouseFeatures['openings'][number]): { pos: Vec3; size: Vec3 } => {
     const st = OPENING_STYLE[o.kind] ?? OPENING_STYLE.PUERTA!;
     const h = o.kind === 'RAMPA' ? 0.3 : st.height;
@@ -133,7 +151,7 @@ function Building({ warehouse, width, depth, height }: { warehouse: Warehouse; w
   return (
     <group>
       {walls.map((w, i) => (
-        <mesh key={i} position={w.pos}>
+        <mesh key={i} position={w.pos} rotation={[0, w.rotY, 0]}>
           <boxGeometry args={w.size} />
           <meshStandardMaterial color="#94a3b8" transparent opacity={0.13} depthWrite={false} />
         </mesh>
@@ -176,6 +194,12 @@ function Building({ warehouse, width, depth, height }: { warehouse: Warehouse; w
             <planeGeometry args={[c.w, c.d]} />
             <meshBasicMaterial color={CONTEXT_STYLE[c.kind] ?? '#e2e8f0'} transparent opacity={0.45} depthWrite={false} />
           </mesh>
+          {c.h && (
+            <mesh position={[0, c.h / 2, 0]}>
+              <boxGeometry args={[c.w, c.h, c.d]} />
+              <meshStandardMaterial color={CONTEXT_STYLE[c.kind] ?? '#e2e8f0'} transparent opacity={0.55} />
+            </mesh>
+          )}
           <lineSegments rotation={[-Math.PI / 2, 0, 0]}>
             <edgesGeometry args={[new THREE.PlaneGeometry(c.w, c.d)]} />
             <lineBasicMaterial color="#78716c" />
@@ -191,7 +215,13 @@ function Building({ warehouse, width, depth, height }: { warehouse: Warehouse; w
             <planeGeometry args={[e.w, e.d]} />
             <meshBasicMaterial color="#fecaca" transparent opacity={0.6} depthWrite={false} />
           </mesh>
-          <Html position={[0, 0.05, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+          {e.h && (
+            <mesh position={[0, e.h / 2, 0]}>
+              <boxGeometry args={[e.w, e.h, e.d]} />
+              <meshStandardMaterial color="#e7e5e4" transparent opacity={0.85} />
+            </mesh>
+          )}
+          <Html position={[0, (e.h ?? 0) + 0.05, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
             <div className="whitespace-nowrap rounded bg-rose-700/85 px-1.5 py-0.5 text-[10px] font-semibold text-white">{e.label}</div>
           </Html>
         </group>
@@ -535,7 +565,7 @@ export function MapScene(props: MapSceneProps) {
       <ambientLight intensity={0.9} />
       <directionalLight position={[model.width, 60, model.depth * 0.3]} intensity={1.1} />
       <hemisphereLight args={['#ffffff', '#cbd5e1', 0.5]} />
-      <Floor width={model.width} depth={model.depth} />
+      <Floor width={model.width} depth={model.depth} footprint={warehouse.features?.footprint} />
       <Building warehouse={warehouse} width={model.width} depth={model.depth} height={model.height} />
       <Zones zones={zones} />
       <Frames items={model.uprights} color="#2563eb" editMode={editMode} onSelectRack={onSelectRack} selectedRackId={selectedRackId} />
