@@ -14,6 +14,22 @@ import securityPlugin from './plugins/security.js';
 import { registerRoutes } from './routes.js';
 import { getDb } from './db.js';
 
+/** Best-effort error tracking: POSTs a compact JSON to ERROR_WEBHOOK_URL (Slack/Discord/PagerDuty relay). Never includes bodies or secrets. */
+let lastNotify = 0;
+function notifyError(requestId: string, method: string, url: string, message: string) {
+  const hook = process.env.ERROR_WEBHOOK_URL;
+  if (!hook) return;
+  const now = Date.now();
+  if (now - lastNotify < 5_000) return; // simple flood control
+  lastNotify = now;
+  fetch(hook, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: `WMS API 500 ${method} ${url.split('?')[0]} req=${requestId}: ${message.slice(0, 300)}`, service: 'wms-api', request_id: requestId, at: new Date().toISOString() }),
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => undefined);
+}
+
 export interface BuildOptions {
   config?: Config;
   logger?: boolean;
@@ -133,6 +149,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
       return reply.status(anyErr.statusCode).send({ error: anyErr.code ?? 'BAD_REQUEST', message: anyErr.message, request_id: req.id });
     }
     req.log.error({ err }, 'unhandled error');
+    notifyError(req.id, req.method, req.url, anyErr.message ?? 'unknown');
     return reply.status(500).send({ error: 'INTERNAL_ERROR', message: 'Internal server error', request_id: req.id, ...(cfg.isProd ? {} : { debug: anyErr.message }) });
   });
 

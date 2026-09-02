@@ -18,6 +18,8 @@ export default fp(async function securityPlugin(app: FastifyInstance) {
 
   app.addHook('onRequest', async (req) => {
     if (!MUTATING.has(req.method)) return;
+    // API-key authenticated integration endpoints carry no cookie, so CSRF does not apply
+    if (req.url.startsWith('/api/integrations/') && typeof req.headers['x-api-key'] === 'string' && !req.headers.cookie) return;
     const xrw = req.headers['x-requested-with'];
     if (xrw !== 'wms-client') {
       throw new ForbiddenError('Missing X-Requested-With header', { code: 'CSRF' });

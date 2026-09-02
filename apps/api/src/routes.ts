@@ -22,6 +22,7 @@ import { dashboardRoutes } from './modules/dashboard/routes.js';
 import { settingsRoutes } from './modules/settings/routes.js';
 import { authorizationRoutes } from './modules/authorizations/routes.js';
 import { auditRoutes } from './modules/audit/routes.js';
+import { integrationRoutes } from './modules/integrations/routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(
@@ -49,6 +50,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(settingsRoutes);
       await api.register(authorizationRoutes);
       await api.register(auditRoutes);
+      await api.register(integrationRoutes);
     },
     { prefix: '/api' },
   );

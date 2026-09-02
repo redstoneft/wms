@@ -58,14 +58,15 @@ export async function clientFor(username: string, password: string): Promise<Cli
     if (r.statusCode >= 400 && process.env.DEBUG_HTTP) console.log('[http]', r.statusCode, JSON.stringify(body).slice(0, 600));
     return { status: r.statusCode, body, headers: r.headers };
   };
+  // resolve the app lazily on every call so a "server restart" (closeApp + getApp) is transparent to the client, like a real handheld
   return {
     username,
     cookie,
-    get: async (url) => parse(await a.inject({ method: 'GET', url: `/api${url}`, headers: h() })),
-    post: async (url, body, extra) => parse(await a.inject({ method: 'POST', url: `/api${url}`, headers: h(extra), payload: body === undefined ? undefined : JSON.stringify(body, bigintReplacer) })),
-    patch: async (url, body) => parse(await a.inject({ method: 'PATCH', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
-    put: async (url, body) => parse(await a.inject({ method: 'PUT', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
-    del: async (url) => parse(await a.inject({ method: 'DELETE', url: `/api${url}`, headers: h() })),
+    get: async (url) => parse(await (await getApp()).inject({ method: 'GET', url: `/api${url}`, headers: h() })),
+    post: async (url, body, extra) => parse(await (await getApp()).inject({ method: 'POST', url: `/api${url}`, headers: h(extra), payload: body === undefined ? undefined : JSON.stringify(body, bigintReplacer) })),
+    patch: async (url, body) => parse(await (await getApp()).inject({ method: 'PATCH', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
+    put: async (url, body) => parse(await (await getApp()).inject({ method: 'PUT', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
+    del: async (url) => parse(await (await getApp()).inject({ method: 'DELETE', url: `/api${url}`, headers: h() })),
   };
 }
 

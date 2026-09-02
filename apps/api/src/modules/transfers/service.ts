@@ -30,8 +30,9 @@ export async function startTransfer(tx: Tx, ctx: ActorContext, input: { lpn_code
   const fit = await checkLocationAccepts(tx, to, lpn);
   if (!fit.ok) throw new RuleError('LOCATION_REJECTED', `Location ${to.code} cannot accept LPN ${lpn.code}: ${fit.reasons.join(', ')}`, fit);
 
+  const crossWarehouse = to.warehouse_id !== lpn.warehouse_id;
   const transfer = await tx.transfers.create({
-    data: { transfer_type: input.transfer_type ?? 'LOCATION', lpn_id: lpn.id, from_location_id: lpn.current_location_id, to_location_id: to.id, started_by: ctx.userId, reason: input.reason ?? null },
+    data: { transfer_type: crossWarehouse ? 'WAREHOUSE' : (input.transfer_type ?? 'LOCATION'), lpn_id: lpn.id, from_location_id: lpn.current_location_id, to_location_id: to.id, started_by: ctx.userId, reason: input.reason ?? null },
   });
   for (const b of balances) {
     await recordMovement(tx, ctx, {
@@ -84,7 +85,8 @@ export async function completeTransfer(tx: Tx, ctx: ActorContext, input: { trans
     reference_id: t.id,
   });
   await tx.transfers.update({ where: { id: t.id }, data: { status: 'COMPLETED', completed_by: ctx.userId, completed_at: new Date() } });
-  await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'STORED', version: { increment: 1 } } });
+  // warehouse → warehouse: the pallet now belongs to the destination warehouse
+  await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'STORED', warehouse_id: scanned.warehouse_id, version: { increment: 1 } } });
   await tx.replenishment_tasks.updateMany({ where: { transfer_id: t.id, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED', completed_at: new Date() } });
   await audit(tx, ctx, { action: 'transfer.complete', entity_type: 'transfer', entity_id: t.id, after: { lpn: lpn.code, location: scanned.code, movements: movements.map(String) } });
   return { transfer_id: t.id, lpn_code: lpn.code, location: scanned.code, movements };
