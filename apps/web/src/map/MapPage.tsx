@@ -129,6 +129,16 @@ export default function MapPage() {
   useEffect(() => {
     if (rack) setRackForm({ x_m: String(rack.x_m), y_m: String(rack.y_m), rotation_deg: String(rack.rotation_deg) });
   }, [rack]);
+  // drag & drop on the 3D floor: the scene reports the new origin, we persist it and the form follows
+  const moveRack = useMutation({
+    mutationFn: (v: { id: string; x_m: number; y_m: number }) => layoutApi.updateRack(v.id, { x_m: v.x_m, y_m: v.y_m }),
+    onSuccess: (r, v) => {
+      setRackForm((f) => ({ ...f, x_m: String(v.x_m), y_m: String(v.y_m) }));
+      toast.success('Rack movido', `${v.x_m} m, ${v.y_m} m · ${r.generated.updated} ubicaciones reposicionadas`);
+      void qc.invalidateQueries({ queryKey: ['map'] });
+    },
+    onError: (e) => toast.error('No se pudo mover el rack', e),
+  });
   const saveRack = useMutation({
     mutationFn: () => layoutApi.updateRack(selectedRackId!, { x_m: Number(rackForm.x_m), y_m: Number(rackForm.y_m), rotation_deg: Number(rackForm.rotation_deg) }),
     onSuccess: (r) => {
@@ -158,7 +168,7 @@ export default function MapPage() {
       {/* toolbar */}
       <div className="z-10 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-sm">
         <form onSubmit={doSearch} className="flex items-center gap-1">
-          <Select value={searchType} onChange={(e) => setSearchType(e.target.value as MapSearchType)} className="w-32" aria-label="Tipo de búsqueda">
+          <Select value={searchType} data-testid="map-search-type" onChange={(e) => setSearchType(e.target.value as MapSearchType)} className="w-32" aria-label="Tipo de búsqueda">
             {SEARCH_TYPES.map((t) => (
               <option key={t.key} value={t.key}>
                 {t.label}
@@ -269,6 +279,7 @@ export default function MapPage() {
               setSelectedRackId(id);
               setPanelOpen(true);
             }}
+            onRackMove={(id, x_m, y_m) => moveRack.mutate({ id, x_m, y_m })}
           />
           {/* legend */}
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-white/90 p-2 text-[11px] shadow" data-testid="map-legend">
@@ -283,7 +294,7 @@ export default function MapPage() {
               {model.slots.length} posiciones · {model.pallets.length} pallets · {far ? 'LOD lejano' : 'detalle'}
             </div>
           </div>
-          {editMode && <div className="pointer-events-none absolute left-3 top-3 rounded bg-amber-400 px-2 py-1 text-xs font-bold text-amber-950">MODO EDICIÓN: haz clic en la estructura de un rack</div>}
+          {editMode && <div className="pointer-events-none absolute left-3 top-3 rounded bg-amber-400 px-2 py-1 text-xs font-bold text-amber-950">MODO EDICIÓN: arrastra un rack por su estructura y suéltalo para guardar · clic para editar números</div>}
           {/* hover tooltip */}
           {hover && hoverLoc && (
             <div className="pointer-events-none fixed z-50 rounded-md bg-slate-900 px-2 py-1 text-xs text-white shadow-lg" style={{ left: hover.x + 12, top: hover.y + 12 }}>

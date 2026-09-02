@@ -32,7 +32,7 @@ Racks según el croquis del usuario (2026-09-02), todos de 3 niveles, módulos d
 | X | 7 | 42 | Contra el muro del fondo, mitad izquierda (zona `RES`) |
 | Z | 1 (3 tarimas) | 9 | Pegado a las oficinas por el lado de los portones |
 
-Total 501 posiciones de rack. Las coordenadas exactas de cada rack son ajustables arrastrándolos en `Mapa 3D → Modo edición`; la separación entre racks quedó en pasillos de 4.4 m para montacargas.
+Total 501 posiciones de rack. Las coordenadas exactas de cada rack se ajustan en `Mapa 3D → Modo edición`: **arrastrar el rack por su cuerpo y soltarlo** guarda la nueva posición (redondeada a 10 cm, dentro del paño; las ubicaciones se recalculan y conservan su código y su inventario); el clic abre el formulario para teclear X/Y/rotación. La separación entre racks quedó en pasillos de 4.4 m para montacargas.
 
 ## 2. Zonas
 Una zona es un rectángulo del piso con un tipo:

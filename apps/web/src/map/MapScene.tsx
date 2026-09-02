@@ -32,9 +32,21 @@ export interface MapSceneProps {
   onHover: (h: HoverInfo | null) => void;
   onSelect: (id: string | null) => void;
   onSelectRack: (rackId: string) => void;
+  /** edit mode: the rack was dragged and dropped at a new origin (meters, already snapped) */
+  onRackMove: (rackId: string, x_m: number, y_m: number) => void;
   onFar: (far: boolean) => void;
   far: boolean;
 }
+
+/** Live displacement of the rack being dragged (world meters); applied to its frames, slots, pallets and label. */
+export interface RackDrag {
+  rackId: string;
+  dx: number;
+  dz: number;
+}
+const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const hit = new THREE.Vector3();
+const snap = (v: number) => Math.round(v * 10) / 10;
 
 const dummy = new THREE.Object3D();
 const tmpColor = new THREE.Color();
@@ -246,14 +258,15 @@ function Building({ warehouse, width, depth, height }: { warehouse: Warehouse; w
 }
 
 // ---------------------------------------------------------------- rack frames
-function Frames({ items, color, editMode, onSelectRack, selectedRackId }: { items: FrameInstance[]; color: string; editMode: boolean; onSelectRack: (id: string) => void; selectedRackId: string | null }) {
+function Frames({ items, color, editMode, onSelectRack, selectedRackId, drag, onDragStart }: { items: FrameInstance[]; color: string; editMode: boolean; onSelectRack: (id: string) => void; selectedRackId: string | null; drag: RackDrag | null; onDragStart: (rackId: string, e: ThreeEvent<PointerEvent>) => void }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((s) => s.invalidate);
   useLayoutEffect(() => {
     const m = ref.current;
     if (!m) return;
     items.forEach((it, i) => {
-      setInstance(m, i, it.center, it.size, it.rotY);
+      const moved = drag && it.rackId === drag.rackId;
+      setInstance(m, i, moved ? [it.center[0] + drag.dx, it.center[1], it.center[2] + drag.dz] : it.center, it.size, it.rotY);
       tmpColor.set(it.rackId === selectedRackId ? SELECT_COLOR : color);
       m.setColorAt(i, tmpColor);
     });
@@ -262,15 +275,21 @@ function Frames({ items, color, editMode, onSelectRack, selectedRackId }: { item
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
     m.computeBoundingSphere();
     invalidate();
-  }, [items, color, selectedRackId, invalidate]);
+  }, [items, color, selectedRackId, drag, invalidate]);
   const onClick = (e: ThreeEvent<MouseEvent>) => {
     if (!editMode || e.instanceId === undefined) return;
     e.stopPropagation();
     const it = items[e.instanceId];
     if (it) onSelectRack(it.rackId);
   };
+  const onDown = (e: ThreeEvent<PointerEvent>) => {
+    if (!editMode || e.instanceId === undefined || e.button !== 0) return;
+    e.stopPropagation();
+    const it = items[e.instanceId];
+    if (it) onDragStart(it.rackId, e);
+  };
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, Math.max(1, items.length)]} frustumCulled={false} onClick={onClick}>
+    <instancedMesh ref={ref} args={[undefined, undefined, Math.max(1, items.length)]} frustumCulled={false} onClick={onClick} onPointerDown={onDown}>
       <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial color="#ffffff" metalness={0.4} roughness={0.5} />
     </instancedMesh>
@@ -278,7 +297,7 @@ function Frames({ items, color, editMode, onSelectRack, selectedRackId }: { item
 }
 
 // ---------------------------------------------------------------- slots
-function Slots({ model, visible, highlight, selectedId, onHover, onSelect }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'onHover' | 'onSelect'>) {
+function Slots({ model, visible, highlight, selectedId, onHover, onSelect, drag }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'onHover' | 'onSelect'> & { drag: RackDrag | null }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((s) => s.invalidate);
   const { slots } = model;
@@ -287,7 +306,8 @@ function Slots({ model, visible, highlight, selectedId, onHover, onSelect }: Pic
     if (!m) return;
     slots.forEach((s, i) => {
       const show = !visible || visible.has(s.loc.id);
-      if (show) setInstance(m, i, s.center, s.size);
+      const moved = drag && s.loc.rack_id === drag.rackId;
+      if (show) setInstance(m, i, moved ? [s.center[0] + drag.dx, s.center[1], s.center[2] + drag.dz] : s.center, s.size);
       else m.setMatrixAt(i, ZERO);
       const hl = highlight.has(s.loc.id);
       tmpColor.set(s.loc.id === selectedId ? SELECT_COLOR : hl ? HIGHLIGHT_COLOR : STATUS_COLORS[s.loc.status] ?? '#999999');
@@ -298,7 +318,7 @@ function Slots({ model, visible, highlight, selectedId, onHover, onSelect }: Pic
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
     m.computeBoundingSphere();
     invalidate();
-  }, [slots, visible, highlight, selectedId, invalidate]);
+  }, [slots, visible, highlight, selectedId, drag, invalidate]);
 
   const lastHover = useRef<number | null>(null);
   const onMove = (e: ThreeEvent<PointerEvent>) => {
@@ -328,7 +348,7 @@ function Slots({ model, visible, highlight, selectedId, onHover, onSelect }: Pic
 }
 
 // ---------------------------------------------------------------- pallets (LOD)
-function Pallets({ model, visible, highlight, selectedId, far, onHover, onSelect }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'far' | 'onHover' | 'onSelect'>) {
+function Pallets({ model, visible, highlight, selectedId, far, onHover, onSelect, drag }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'far' | 'onHover' | 'onSelect'> & { drag: RackDrag | null }) {
   const baseRef = useRef<THREE.InstancedMesh>(null);
   const loadRef = useRef<THREE.InstancedMesh>(null);
   const simpleRef = useRef<THREE.InstancedMesh>(null);
@@ -342,7 +362,8 @@ function Pallets({ model, visible, highlight, selectedId, far, onHover, onSelect
     const s = simpleRef.current;
     pallets.forEach((p, i) => {
       const show = !visible || visible.has(p.locId);
-      const [cx, cy, cz] = p.center;
+      const moved = drag && model.locById.get(p.locId)?.rack_id === drag.rackId;
+      const [cx, cy, cz] = moved ? [p.center[0] + drag.dx, p.center[1], p.center[2] + drag.dz] : p.center;
       const [w, h, d] = p.size;
       const bottom = cy - h / 2;
       const hl = highlight.has(p.locId);
@@ -376,7 +397,7 @@ function Pallets({ model, visible, highlight, selectedId, far, onHover, onSelect
       m.computeBoundingSphere();
     }
     invalidate();
-  }, [pallets, visible, highlight, selectedId, far, invalidate]);
+  }, [pallets, visible, highlight, selectedId, far, drag, model.locById, invalidate]);
 
   const hover = (e: ThreeEvent<PointerEvent>) => {
     if (e.instanceId === undefined) return;
@@ -451,12 +472,49 @@ function Areas({ model, visible, highlight, selectedId, onHover, onSelect }: Pic
   );
 }
 
-function RackLabels({ model, far }: { model: SceneModel; far: boolean }) {
+/** Edit mode: a translucent box over each rack's full volume, so the rack can be grabbed anywhere (uprights are thin). */
+function RackHandles({ model, drag, selectedRackId, onDragStart, onSelectRack }: { model: SceneModel; drag: RackDrag | null; selectedRackId: string | null; onDragStart: (rackId: string, e: ThreeEvent<PointerEvent>) => void; onSelectRack: (id: string) => void }) {
+  return (
+    <group>
+      {model.rackLabels.map(({ rack }) => {
+        const L = rack.bays * rack.bay_width_m;
+        const H = rack.levels * rack.level_height_m;
+        const th = (rack.rotation_deg * Math.PI) / 180;
+        const cx = rack.x_m + (L / 2) * Math.cos(th) - (rack.depth_m / 2) * Math.sin(th);
+        const cz = rack.y_m + (L / 2) * Math.sin(th) + (rack.depth_m / 2) * Math.cos(th);
+        const moved = drag && drag.rackId === rack.id;
+        const sel = rack.id === selectedRackId;
+        return (
+          <mesh
+            key={rack.id}
+            position={[cx + (moved ? drag.dx : 0), H / 2, cz + (moved ? drag.dz : 0)]}
+            rotation={[0, -th, 0]}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              onDragStart(rack.id, e);
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectRack(rack.id);
+            }}
+            data-testid="map-rack-handle"
+          >
+            <boxGeometry args={[L + 0.3, H + 0.2, rack.depth_m + 0.3]} />
+            <meshStandardMaterial color={sel || moved ? SELECT_COLOR : '#2563eb'} transparent opacity={moved ? 0.35 : sel ? 0.22 : 0.1} depthWrite={false} />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+function RackLabels({ model, far, drag }: { model: SceneModel; far: boolean; drag: RackDrag | null }) {
   if (far) return null;
   return (
     <group>
       {model.rackLabels.map((l) => (
-        <Html key={l.rack.id} position={l.pos} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+        <Html key={l.rack.id} position={drag && drag.rackId === l.rack.id ? [l.pos[0] + drag.dx, l.pos[1], l.pos[2] + drag.dz] : l.pos} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
           <div className="whitespace-nowrap rounded bg-slate-800/85 px-1.5 py-0.5 text-[11px] font-semibold text-white">
             {l.rack.zone_code}-{l.rack.aisle_code} {l.rack.code}
           </div>
@@ -544,8 +602,60 @@ function CameraRig({ fly, controls, center, onFar, far }: { fly: FlyTarget | nul
 
 // ---------------------------------------------------------------- root
 export function MapScene(props: MapSceneProps) {
-  const { model, warehouse, zones, fly, onFar, far, editMode, selectedRackId, onSelectRack } = props;
+  const { model, warehouse, zones, fly, onFar, far, editMode, selectedRackId, onSelectRack, onRackMove } = props;
   const controls = useRef<OrbitControlsImpl | null>(null);
+  // ---- drag a rack on the floor (edit mode) ----
+  const [drag, setDrag] = useState<RackDrag | null>(null);
+  const dragRef = useRef<{ rackId: string; startX: number; startZ: number; x_m: number; y_m: number } | null>(null);
+  const floorPoint = (e: ThreeEvent<PointerEvent>): THREE.Vector3 | null => (e.ray.intersectPlane(FLOOR, hit) ? hit.clone() : null);
+  const onDragStart = (rackId: string, e: ThreeEvent<PointerEvent>) => {
+    const rack = model.rackLabels.find((l) => l.rack.id === rackId)?.rack;
+    const p = floorPoint(e);
+    if (!rack || !p) return;
+    onSelectRack(rackId);
+    dragRef.current = { rackId, startX: p.x, startZ: p.z, x_m: rack.x_m, y_m: rack.y_m };
+    setDrag({ rackId, dx: 0, dz: 0 });
+    // the camera controls listen on the same canvas: switch them off right now, not on the next render
+    if (controls.current) controls.current.enabled = false;
+  };
+  /** new origin for the pointer's floor point: snapped to 10 cm and kept inside the warehouse bounds */
+  const targetFor = (p: THREE.Vector3) => {
+    const d = dragRef.current!;
+    const nx = Math.min(model.width, Math.max(0, snap(d.x_m + (p.x - d.startX))));
+    const ny = Math.min(model.depth, Math.max(0, snap(d.y_m + (p.z - d.startZ))));
+    return { nx, ny, dx: snap(nx - d.x_m), dz: snap(ny - d.y_m) };
+  };
+  const onDragMove = (e: ThreeEvent<PointerEvent>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const p = floorPoint(e);
+    if (!p) return;
+    e.stopPropagation();
+    const t = targetFor(p);
+    setDrag({ rackId: d.rackId, dx: t.dx, dz: t.dz });
+  };
+  const finishDrag = (p: THREE.Vector3 | null) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const t = p ? targetFor(p) : null; // before clearing the drag: targetFor reads dragRef
+    dragRef.current = null;
+    setDrag(null);
+    if (controls.current) controls.current.enabled = true;
+    if (t && (t.dx !== 0 || t.dz !== 0)) onRackMove(d.rackId, t.nx, t.ny);
+  };
+  const onDragEnd = (e: ThreeEvent<PointerEvent>) => {
+    if (!dragRef.current) return;
+    e.stopPropagation();
+    finishDrag(floorPoint(e));
+  };
+  // pointer released outside the canvas (or without a floor hit): cancel the drag, nothing is saved
+  useEffect(() => {
+    const cancel = () => {
+      if (dragRef.current) finishDrag(null);
+    };
+    window.addEventListener('pointerup', cancel);
+    return () => window.removeEventListener('pointerup', cancel);
+  }, []);
   const center: Vec3 = [model.width / 2, 0, model.depth / 2];
   const camPos: Vec3 = [model.width * 1.25, Math.max(model.width, model.depth) * 1.0, -model.depth * 1.05];
   const [ready, setReady] = useState(false);
@@ -568,14 +678,22 @@ export function MapScene(props: MapSceneProps) {
       <Floor width={model.width} depth={model.depth} footprint={warehouse.features?.footprint} />
       <Building warehouse={warehouse} width={model.width} depth={model.depth} height={model.height} />
       <Zones zones={zones} />
-      <Frames items={model.uprights} color="#2563eb" editMode={editMode} onSelectRack={onSelectRack} selectedRackId={selectedRackId} />
-      <Frames items={model.beams} color="#f59e0b" editMode={editMode} onSelectRack={onSelectRack} selectedRackId={selectedRackId} />
-      <Slots {...props} />
-      <Pallets {...props} />
+      <Frames items={model.uprights} color="#2563eb" editMode={editMode} onSelectRack={onSelectRack} selectedRackId={selectedRackId} drag={drag} onDragStart={onDragStart} />
+      <Frames items={model.beams} color="#f59e0b" editMode={editMode} onSelectRack={onSelectRack} selectedRackId={selectedRackId} drag={drag} onDragStart={onDragStart} />
+      <Slots {...props} drag={drag} />
+      <Pallets {...props} drag={drag} />
       <Areas {...props} />
-      <RackLabels model={model} far={far} />
+      <RackLabels model={model} far={far} drag={drag} />
+      {editMode && <RackHandles model={model} drag={drag} selectedRackId={selectedRackId} onDragStart={onDragStart} onSelectRack={onSelectRack} />}
+      {editMode && (
+        /* invisible catcher so the drag keeps following the pointer even off the rack; sized well beyond the building */
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[model.width / 2, 0.001, model.depth / 2]} onPointerMove={onDragMove} onPointerUp={onDragEnd} data-testid="map-drag-plane">
+          <planeGeometry args={[Math.max(model.width, model.depth) * 6, Math.max(model.width, model.depth) * 6]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
       <Highlights model={model} highlight={props.highlight} selectedId={props.selectedId} />
-      <OrbitControls ref={controls} makeDefault target={center} maxPolarAngle={Math.PI / 2.05} minDistance={3} maxDistance={400} enableDamping dampingFactor={0.12} />
+      <OrbitControls ref={controls} makeDefault enabled={!drag} target={center} maxPolarAngle={Math.PI / 2.05} minDistance={3} maxDistance={400} enableDamping dampingFactor={0.12} />
       {ready && <CameraRig fly={fly} controls={controls} center={center} onFar={onFar} far={far} />}
     </Canvas>
   );
