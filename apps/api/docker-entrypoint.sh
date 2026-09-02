@@ -6,6 +6,6 @@ cd /app/apps/api
 echo "[entrypoint] applying migrations"
 npx prisma migrate deploy
 echo "[entrypoint] seeding base data"
-node --import tsx prisma/seed.ts 2>/dev/null || npx tsx prisma/seed.ts
+node dist/prisma/seed.js
 echo "[entrypoint] starting API"
-exec node dist/server.js
+exec node dist/src/server.js
