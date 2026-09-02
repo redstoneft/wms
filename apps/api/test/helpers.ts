@@ -36,6 +36,8 @@ export interface Client {
   patch: (url: string, body?: unknown) => Promise<{ status: number; body: any }>;
   put: (url: string, body?: unknown) => Promise<{ status: number; body: any }>;
   del: (url: string) => Promise<{ status: number; body: any }>;
+  /** unparsed response (HTML, ZPL, files) */
+  raw: (method: 'GET' | 'POST', url: string, body?: unknown) => Promise<{ status: number; text: string; headers: Record<string, unknown> }>;
 }
 
 const bigintReplacer = (_k: string, v: unknown) => (typeof v === 'bigint' ? v.toString() : v);
@@ -67,6 +69,10 @@ export async function clientFor(username: string, password: string): Promise<Cli
     patch: async (url, body) => parse(await (await getApp()).inject({ method: 'PATCH', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
     put: async (url, body) => parse(await (await getApp()).inject({ method: 'PUT', url: `/api${url}`, headers: h(), payload: JSON.stringify(body ?? {}, bigintReplacer) })),
     del: async (url) => parse(await (await getApp()).inject({ method: 'DELETE', url: `/api${url}`, headers: h() })),
+    raw: async (method, url, body) => {
+      const r = await (await getApp()).inject({ method, url: `/api${url}`, headers: h(), payload: body === undefined ? undefined : JSON.stringify(body, bigintReplacer) });
+      return { status: r.statusCode, text: r.body, headers: r.headers };
+    },
   };
 }
 

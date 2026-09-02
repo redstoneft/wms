@@ -25,12 +25,12 @@ Racks según el croquis del usuario (2026-09-02), todos de 3 niveles, módulos d
 
 | Rack | Módulos | Posiciones | Ubicación en la nave |
 |---|---|---|---|
-| A | 17 | 102 | Contra el muro exterior derecho, desde el frente hasta el fondo |
-| B / C | 11 + 11 | 66 + 66 | Doble, espalda con espalda, en medio de la pata |
-| D / E | 11 + 11 | 66 + 66 | Doble, espalda con espalda, junto al pasillo del medianero |
+| A | 17 | 102 | Contra el muro exterior derecho, del frente al fondo |
+| B / C | 11 + 11 | 66 + 66 | Doble, espalda con espalda, recorridos hacia el fondo (y 24–54) |
+| D / E | 11 + 11 | 66 + 66 | Doble, espalda con espalda, recorridos hacia el fondo; entre su remate y el rack X solo queda pasillo de montacargas |
 | F | 14 | 84 | Contra el muro medianero con los vecinos |
-| X | 7 | 42 | Contra el muro del fondo (zona `RES`) |
-| Z | 1 (3 tarimas) | 9 | Entre las oficinas y el cubículo, junto al frente |
+| X | 7 | 42 | Contra el muro del fondo, mitad izquierda (zona `RES`) |
+| Z | 1 (3 tarimas) | 9 | Pegado a las oficinas por el lado de los portones |
 
 Total 501 posiciones de rack. Las coordenadas exactas de cada rack son ajustables arrastrándolos en `Mapa 3D → Modo edición`; la separación entre racks quedó en pasillos de 4.4 m para montacargas.
 
@@ -73,8 +73,22 @@ Secuencia de picking (`pick_sequence`) = pasillo → rack → bahía → nivel �
 * Ocupación derivada: `FREE`, `PARTIAL`, `OCCUPIED`, `RESERVED` (una tarea de put-away o transferencia va hacia ella).
 * Restricciones JSON: familias permitidas, grupos de compatibilidad permitidos, altura máxima. El motor de slotting y los escaneos las respetan.
 
-## 6. Etiquetas de ubicación
-`Etiquetas → LOCATION` imprime el barcode de la ubicación (Code128 + QR). Imprima y coloque una etiqueta por posición antes de operar.
+## 6. Etiquetas de ubicación (etiquetar un rack)
+`Etiquetas → Etiquetar un rack completo`: elija la zona y el rack (o toda la zona) y use una de tres salidas:
+
+| Salida | Cuándo | Qué produce |
+|---|---|---|
+| **Hoja para imprimir** | No hay Zebra todavía, o se quiere PDF | Página A4 con etiquetas de 95 × 50 mm (2 por fila): código grande, Code128 `LOC-…`, nivel, pasillo/rack/módulo/posición. Imprimir al 100 % en cualquier impresora o guardar como PDF |
+| **Descargar ZPL** | Zebra fuera de la red del servidor | Archivo `.zpl` con todas las etiquetas (203 dpi, 100 × 150 mm), para enviarlo con Zebra Setup Utilities o copiarlo al puerto 9100 |
+| **Imprimir en Zebra** | Zebra registrada en `Datos maestros → Impresoras` | Envía una etiqueta por posición; cada una queda en el historial y en auditoría |
+
+Las etiquetas salen en el orden de la ruta de surtido (pasillo → rack → módulo → nivel → posición), que es el orden recomendado para pegarlas:
+
+1. Empezar en el módulo 1 (el más cercano al frente/pasillo de entrada) y avanzar módulo por módulo.
+2. En cada módulo pegar las etiquetas de los tres niveles en el poste frontal, a la altura de los ojos, de abajo hacia arriba (N01 abajo, N03 arriba); la etiqueta indica el nivel y la posición (P01 izquierda, P02 derecha vistas de frente).
+3. Al terminar el rack, verificar con la terminal: en modo almacén escanear cada etiqueta (`Almacenaje` o `Trazabilidad → Ubicación`) y comprobar que el sistema muestra el código esperado. Una etiqueta que no lee se reimprime desde `Etiquetas` con motivo.
+
+Los `barcode` (`LOC-<código>`) no cambian aunque se mueva el rack en el mapa; solo cambian las coordenadas.
 
 ## 7. Maestros
 * **SKUs**: código, descripción, familia, grupo de compatibilidad, clase ABC, peso unitario, altura de pallet, requiere lote/caducidad, conversiones `1 PALLET = N CASE`, `1 CASE = N PIECE`, barcodes por nivel de empaque.

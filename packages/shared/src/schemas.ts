@@ -131,7 +131,19 @@ export const zCreateZone = z.object({
   width_m: z.number().positive().max(10000).default(10),
   depth_m: z.number().positive().max(10000).default(10),
 });
-export const zUpdateZone = zCreateZone.omit({ warehouse_id: true }).partial().extend({ is_active: z.boolean().optional() });
+// NOTE: update schemas are written without defaults on purpose — `.partial()` over a schema with `.default()` would
+// silently reset the omitted fields (a PATCH moving a rack must never change its bays or positions).
+export const zUpdateZone = z.object({
+  code: zCode.max(20).optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+  zone_type: z.enum(ZONE_TYPES).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  x_m: z.number().min(0).max(10000).optional(),
+  y_m: z.number().min(0).max(10000).optional(),
+  width_m: z.number().positive().max(10000).optional(),
+  depth_m: z.number().positive().max(10000).optional(),
+  is_active: z.boolean().optional(),
+});
 
 export const zCreateAisle = z.object({ zone_id: zUuid, code: zCode.max(20), name: z.string().trim().max(120).optional() });
 
@@ -153,10 +165,19 @@ export const zCreateRack = z.object({
   /** generate locations for every bay/level/position */
   generate_locations: z.boolean().default(true),
 });
-export const zUpdateRack = zCreateRack
-  .omit({ aisle_id: true, generate_locations: true, location_type: true, pallet_capacity: true, max_weight_kg: true })
-  .partial()
-  .extend({ is_active: z.boolean().optional() });
+export const zUpdateRack = z.object({
+  code: zCode.max(20).optional(),
+  bays: z.number().int().min(1).max(200).optional(),
+  levels: z.number().int().min(1).max(30).optional(),
+  positions_per_bay: z.number().int().min(1).max(10).optional(),
+  bay_width_m: z.number().positive().max(20).optional(),
+  level_height_m: z.number().positive().max(10).optional(),
+  depth_m: z.number().positive().max(10).optional(),
+  x_m: z.number().min(0).max(10000).optional(),
+  y_m: z.number().min(0).max(10000).optional(),
+  rotation_deg: z.number().int().min(0).max(359).optional(),
+  is_active: z.boolean().optional(),
+});
 
 export const zCreateAreaLocation = z.object({
   warehouse_id: zUuid,

@@ -244,3 +244,75 @@ export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PR
 }
 
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+// ---------------------------------------------------------------------------
+// Location labels in batch (a whole rack or zone): printable sheet for any
+// office printer, ZPL file for Zebra, or direct print. Used to label a rack
+// before it goes into operation.
+// ---------------------------------------------------------------------------
+export interface LocationBatchFilter { rack_id?: string; zone_id?: string; warehouse_id?: string }
+
+export async function locationLabelBatch(filter: LocationBatchFilter) {
+  const db = getDb();
+  if (!filter.rack_id && !filter.zone_id && !filter.warehouse_id) throw new RuleError('FILTER_REQUIRED', 'Indique rack_id, zone_id o warehouse_id');
+  const rows = await db.locations.findMany({
+    where: { is_active: true, ...(filter.rack_id ? { rack_id: filter.rack_id } : {}), ...(filter.zone_id ? { zone_id: filter.zone_id } : {}), ...(filter.warehouse_id ? { warehouse_id: filter.warehouse_id } : {}) },
+    include: { zone: true, rack: { include: { aisle: true } } },
+    orderBy: [{ pick_sequence: 'asc' }, { code: 'asc' }],
+  });
+  if (!rows.length) throw new NotFoundError('locations', JSON.stringify(filter));
+  const title = filter.rack_id && rows[0]?.rack ? `Rack ${rows[0].rack.aisle.code}-${rows[0].rack.code} · ${rows[0].zone?.name ?? ''}` : rows[0]?.zone ? `Zona ${rows[0].zone.code} · ${rows[0].zone.name}` : 'Ubicaciones';
+  const models: LabelModel[] = rows.map((loc) => ({
+    label_type: 'LOCATION',
+    title: loc.code,
+    barcode: loc.barcode,
+    qr: loc.barcode,
+    lines: [
+      { label: 'TIPO', value: loc.location_type },
+      { label: 'ZONA', value: loc.zone?.code ?? '-' },
+      ...(loc.level ? [{ label: 'NIVEL', value: String(loc.level) }] : []),
+      { label: 'CAP', value: `${loc.pallet_capacity} PLT / ${loc.max_weight_kg} kg` },
+    ],
+  }));
+  return { title, rows, models };
+}
+
+const esc = (v: unknown) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** Self-contained HTML sheet (A4, 2 × 5 labels of 95 × 50 mm) with Code128 barcodes as embedded PNGs. */
+export async function locationLabelSheetHtml(filter: LocationBatchFilter): Promise<string> {
+  const { title, rows } = await locationLabelBatch(filter);
+  const cells: string[] = [];
+  for (const loc of rows) {
+    const png = await bwipjs.toBuffer({ bcid: 'code128', text: loc.barcode, scale: 3, height: 14, includetext: false });
+    const levelTxt = loc.level ? `NIVEL ${loc.level}` : loc.location_type;
+    const where = loc.rack ? `Pasillo ${esc(loc.rack.aisle.code)} · Rack ${esc(loc.rack.code)} · Módulo ${loc.bay ?? '-'} · Pos ${loc.position ?? '-'}` : `${esc(loc.zone?.name ?? '')}`;
+    cells.push(`<div class="l"><div class="code">${esc(loc.code)}</div><img src="data:image/png;base64,${png.toString('base64')}" alt=""><div class="bc">${esc(loc.barcode)}</div><div class="meta"><b>${esc(levelTxt)}</b> · ${where}</div></div>`);
+  }
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+@page{size:A4;margin:8mm}body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000}
+.sheet{display:grid;grid-template-columns:repeat(2,95mm);gap:4mm 6mm;justify-content:center;padding:4mm}
+.l{width:95mm;height:50mm;box-sizing:border-box;border:0.3mm dashed #888;padding:3mm 4mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;page-break-inside:avoid;break-inside:avoid}
+.code{font-size:9.5mm;font-weight:900;letter-spacing:0.3mm;font-family:Menlo,Consolas,monospace;white-space:nowrap}
+img{height:15mm;max-width:88mm}.bc{font-family:Menlo,Consolas,monospace;font-size:3.6mm}.meta{font-size:3.4mm;color:#222;text-align:center}
+.hdr{padding:4mm 6mm 0;font-size:4mm;color:#444}@media print{.hdr{display:none}}
+</style></head><body><div class="hdr">${esc(title)} · ${rows.length} etiquetas · imprimir al 100 % (sin ajustar a la página)</div><div class="sheet">${cells.join('')}</div></body></html>`;
+}
+
+/** Prints every location of a rack/zone on a Zebra printer, one label per position, in walking order. */
+export async function printLocationBatch(ctx: ActorContext, filter: LocationBatchFilter, printerId?: string) {
+  const { rows } = await locationLabelBatch(filter);
+  let sent = 0;
+  const failed: { code: string; error: string }[] = [];
+  for (const loc of rows) {
+    try {
+      await printLabel(ctx, { label_type: 'LOCATION', entity_id: loc.code, printer_id: printerId, copies: 1, reprint_reason: 'Etiquetado de rack en lote' }, 'PRINT');
+      sent++;
+    } catch (e) {
+      failed.push({ code: loc.code, error: (e as Error).message.slice(0, 120) });
+      if (failed.length >= 3 && sent === 0) break; // printer clearly unreachable: stop early
+    }
+  }
+  return { total: rows.length, sent, failed };
+}

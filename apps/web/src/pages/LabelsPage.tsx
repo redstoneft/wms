@@ -6,6 +6,7 @@ import { LABEL_TYPES } from '@wms/shared';
 import { ApiError } from '../api/client';
 import { labelsApi } from '../api/labels';
 import { masterdataApi } from '../api/masterdata';
+import { layoutApi } from '../api/layout';
 import type { LabelPreview as LabelPreviewT } from '../api/types';
 import { LabelPreview } from '../components/LabelPreview';
 import { useToast } from '../components/Toast';
@@ -19,6 +20,17 @@ export default function LabelsPage() {
   const [preview, setPreview] = useState<LabelPreviewT | null>(null);
   const [needsReason, setNeedsReason] = useState(false);
   const printers = useQuery({ queryKey: ['printers'], queryFn: masterdataApi.printers });
+  // batch labelling of a whole rack (or zone) — the first thing to do after building the layout
+  const zones = useQuery({ queryKey: ['zones', 'all'], queryFn: () => layoutApi.zones() });
+  const [batch, setBatch] = useState({ zone_id: '', rack_id: '', printer_id: '' });
+  const batchZone = zones.data?.find((z) => z.id === batch.zone_id);
+  const batchRacks = (batchZone?.aisles ?? []).flatMap((a) => (a.racks ?? []).map((r) => ({ id: r.id, label: `Pasillo ${a.code} · Rack ${r.code}` })));
+  const batchFilter = batch.rack_id ? { rack_id: batch.rack_id } : batch.zone_id ? { zone_id: batch.zone_id } : null;
+  const doBatch = useMutation({
+    mutationFn: () => labelsApi.printBatch({ ...batchFilter!, printer_id: batch.printer_id || undefined }),
+    onSuccess: (r) => (r.failed.length ? toast.warn(`${r.sent}/${r.total} etiquetas enviadas`, r.failed[0]?.error) : toast.success(`${r.sent} etiquetas enviadas a la Zebra`)),
+    onError: (e) => toast.error('No se pudo imprimir el lote', e),
+  });
   const history = useQuery({ queryKey: ['label-history', f.label_type], queryFn: () => labelsApi.history({ label_type: f.label_type, limit: 100 }) });
   const doPreview = useMutation({
     mutationFn: () => labelsApi.preview({ label_type: f.label_type, entity_id: f.entity_id.trim(), copies: Number(f.copies) }),
@@ -92,6 +104,55 @@ export default function LabelsPage() {
           {preview ? <LabelPreview model={preview.model} barcodePng={preview.barcode_png} qrPng={preview.qr_png} zpl={preview.zpl} /> : <p className="text-sm text-slate-500">Genera una vista previa para ver la etiqueta y su ZPL.</p>}
         </Card>
       </div>
+      <Card title="Etiquetar un rack completo" className="mt-4">
+        <div className="grid gap-3 lg:grid-cols-4">
+          <Field label="Zona" required>
+            <Select value={batch.zone_id} onChange={(e) => setBatch({ ...batch, zone_id: e.target.value, rack_id: '' })}>
+              <option value="">Elegir zona…</option>
+              {zones.data?.map((z) => (
+                <option key={z.id} value={z.id}>
+                  {z.code} · {z.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Rack" hint="Vacío = todas las ubicaciones de la zona">
+            <Select value={batch.rack_id} onChange={(e) => setBatch({ ...batch, rack_id: e.target.value })} disabled={!batch.zone_id}>
+              <option value="">Toda la zona</option>
+              {batchRacks.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Impresora Zebra">
+            <Select value={batch.printer_id} onChange={(e) => setBatch({ ...batch, printer_id: e.target.value })}>
+              <option value="">Predeterminada</option>
+              {printers.data?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className="flex flex-wrap items-end gap-2">
+            <Button variant="secondary" disabled={!batchFilter} onClick={() => window.open(labelsApi.sheetUrl(batchFilter!), '_blank')} data-testid="labels-sheet">
+              Hoja para imprimir
+            </Button>
+            <Button variant="secondary" disabled={!batchFilter} onClick={() => window.open(labelsApi.zplUrl(batchFilter!), '_blank')}>
+              Descargar ZPL
+            </Button>
+            <Button disabled={!batchFilter || !printers.data?.length} loading={doBatch.isPending} onClick={() => doBatch.mutate()}>
+              Imprimir en Zebra
+            </Button>
+          </div>
+        </div>
+        <Alert tone="info" className="mt-3">
+          <b>Hoja para imprimir</b>: etiquetas de 95 × 50 mm en A4 (2 por fila) para cualquier impresora o para guardar como PDF; imprimir al 100 %. Orden de pegado: por pasillo, módulo y nivel, igual que la ruta de surtido.
+          <b> Descargar ZPL</b>: archivo listo para una Zebra (203 dpi). <b>Imprimir en Zebra</b>: envía una etiqueta por posición y queda auditado.
+        </Alert>
+      </Card>
       <Card title="Historial" className="mt-4" padded={false}>
         <Table
           rows={history.data}

@@ -1,0 +1,125 @@
+{
+  "checked_at": "2026-09-02T16:49:15.794Z",
+  "dump": "/Users/robertohop/Documents/GitHub/wms/backups/wms-ledger-2026-09-02T16-49-15-306Z.json",
+  "identical": true,
+  "triggers_work_after_restore": true,
+  "before": {
+    "counts": {
+      "inventory_movements": "2579",
+      "inventory_balances": "911",
+      "lpns": "823",
+      "orders": "348",
+      "order_lines": "356",
+      "audit_logs": "5386",
+      "locations": "3214",
+      "skus": "206",
+      "users": "457",
+      "shipments": "26",
+      "incidents": "365"
+    },
+    "totals": [
+      {
+        "status": "ALLOCATED",
+        "qty": "990"
+      },
+      {
+        "status": "AVAILABLE",
+        "qty": "17940"
+      },
+      {
+        "status": "BLOCKED",
+        "qty": "259"
+      },
+      {
+        "status": "DAMAGED",
+        "qty": "541"
+      },
+      {
+        "status": "IN_TRANSFER",
+        "qty": "84"
+      },
+      {
+        "status": "LOADED",
+        "qty": "54"
+      },
+      {
+        "status": "PICKING",
+        "qty": "492"
+      },
+      {
+        "status": "QUARANTINE",
+        "qty": "592"
+      },
+      {
+        "status": "STAGING",
+        "qty": "48"
+      }
+    ],
+    "ledgerSum": {
+      "s": "55692",
+      "max_id": "2617"
+    },
+    "diffs": "0",
+    "seq": "823"
+  },
+  "after": {
+    "counts": {
+      "inventory_movements": "2579",
+      "inventory_balances": "911",
+      "lpns": "823",
+      "orders": "348",
+      "order_lines": "356",
+      "audit_logs": "5386",
+      "locations": "3214",
+      "skus": "206",
+      "users": "457",
+      "shipments": "26",
+      "incidents": "365"
+    },
+    "totals": [
+      {
+        "status": "ALLOCATED",
+        "qty": "990"
+      },
+      {
+        "status": "AVAILABLE",
+        "qty": "17940"
+      },
+      {
+        "status": "BLOCKED",
+        "qty": "259"
+      },
+      {
+        "status": "DAMAGED",
+        "qty": "541"
+      },
+      {
+        "status": "IN_TRANSFER",
+        "qty": "84"
+      },
+      {
+        "status": "LOADED",
+        "qty": "54"
+      },
+      {
+        "status": "PICKING",
+        "qty": "492"
+      },
+      {
+        "status": "QUARANTINE",
+        "qty": "592"
+      },
+      {
+        "status": "STAGING",
+        "qty": "48"
+      }
+    ],
+    "ledgerSum": {
+      "s": "55692",
+      "max_id": "2617"
+    },
+    "diffs": "0",
+    "seq": "823"
+  },
+  "ms": 542
+}
