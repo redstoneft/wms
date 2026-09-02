@@ -11,7 +11,7 @@ export async function putawayRoutes(app: FastifyInstance) {
   const db = getDb();
 
   app.get('/putaway/tasks', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
-    const q = z.object({ status: z.string().default('PENDING,ASSIGNED,IN_PROGRESS'), limit: z.coerce.number().int().min(1).max(500).default(200) }).parse(req.query);
+    const q = z.object({ status: z.string().default('PENDING,ASSIGNED,IN_PROGRESS'), mine: z.enum(['true', 'false']).optional(), limit: z.coerce.number().int().min(1).max(500).default(200) }).parse(req.query);
     const rows = await db.$queryRaw<Record<string, unknown>[]>`
       SELECT t.id, t.status, t.created_at, t.started_at, t.assigned_to, t.suggested_location_id, l.code AS lpn_code, l.current_location_id,
              cur.code AS current_location, sug.code AS suggested_location, u.username AS assigned_username,
@@ -19,7 +19,8 @@ export async function putawayRoutes(app: FastifyInstance) {
         FROM putaway_tasks t JOIN lpns l ON l.id = t.lpn_id
         LEFT JOIN locations cur ON cur.id = l.current_location_id LEFT JOIN locations sug ON sug.id = t.suggested_location_id
         LEFT JOIN users u ON u.id = t.assigned_to
-       WHERE t.status = ANY(${q.status.split(',')}::text[]) ORDER BY t.created_at LIMIT ${q.limit}`;
+       WHERE t.status = ANY(${q.status.split(',')}::text[]) AND (${q.mine !== 'true'} OR t.assigned_to = ${req.actor!.userId}::uuid OR t.assigned_to IS NULL)
+       ORDER BY t.created_at LIMIT ${q.limit}`;
     return rows;
   });
 

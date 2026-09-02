@@ -137,6 +137,7 @@ export default function MapPage() {
 
   return (
     <div className="relative -m-4 flex h-[calc(100vh-3.5rem)] flex-col lg:-m-6" data-testid="map-page">
+      <h1 className="sr-only">Mapa 3D del almacén</h1>
       {/* toolbar */}
       <div className="z-10 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-sm">
         <form onSubmit={doSearch} className="flex items-center gap-1">
@@ -203,11 +204,11 @@ export default function MapPage() {
           <option value="FULL">Llenas</option>
         </Select>
         <div className="ml-auto flex items-center gap-2 text-xs text-slate-500">
-          <span title={fmtDateTime(mapQ.data.generated_at)}>Actualizado {relTime(mapQ.dataUpdatedAt)}</span>
+          <span title={fmtDateTime(mapQ.data.generated_at)}>Actualizado {relTime(new Date(mapQ.dataUpdatedAt))}</span>
           <Button size="sm" variant="secondary" onClick={() => void mapQ.refetch()} loading={mapQ.isFetching}>
             Actualizar
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => setFly({ seq: Date.now(), position: [model.width * 0.55, Math.max(model.width, model.depth) * 0.75, model.depth * 1.45], lookAt: [model.width / 2, 0, model.depth / 2] })}>
+          <Button size="sm" variant="secondary" onClick={() => setFly({ seq: Date.now(), position: [model.width * 0.5, Math.max(model.width, model.depth) * 0.75, model.depth * 1.5], lookAt: [model.width / 2, 0, model.depth / 2] })}>
             Vista general
           </Button>
           {can('layout.manage') && (

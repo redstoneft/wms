@@ -16,7 +16,7 @@ export async function createPickTask(tx: Tx, ctx: ActorContext, orderId: string,
   const orows = await tx.$queryRaw<{ id: string; status: string; order_number: string }[]>`SELECT id, status, order_number FROM orders WHERE id = ${orderId}::uuid FOR UPDATE`;
   const order = orows[0];
   if (!order) throw new NotFoundError('order', orderId);
-  if (!['ALLOCATED', 'PARTIALLY_ALLOCATED'].includes(order.status)) throw new RuleError('ORDER_STATUS', `Order is ${order.status}; allocate it first`);
+  if (!['ALLOCATED', 'PARTIALLY_ALLOCATED', 'PICKED'].includes(order.status)) throw new RuleError('ORDER_STATUS', `Order is ${order.status}; allocate it first`);
   const existing = await tx.pick_tasks.findFirst({ where: { order_id: orderId, status: { in: ['PENDING', 'IN_PROGRESS'] } } });
   if (existing) throw new ConflictError('PICK_TASK_EXISTS', 'Order already has an active pick task');
 
@@ -115,8 +115,7 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
     case 'LOCATION': {
       const scanned = (input.scanned ?? '').trim();
       if (scanned !== expectedLoc.barcode && scanned.toUpperCase() !== expectedLoc.code) {
-        await blockedScan(tx, ctx, task.id, line.id, 'WRONG_LOCATION', { expected: expectedLoc.code, scanned });
-        throw new RuleError('WRONG_LOCATION', `UBICACIÓN INCORRECTA — esperada ${expectedLoc.code}`, { expected: expectedLoc.code, scanned });
+        throw blocked(ctx, task.id, line.id, 'WRONG_LOCATION', `UBICACIÓN INCORRECTA — esperada ${expectedLoc.code}`, { expected: expectedLoc.code, scanned });
       }
       if (expectedLpn.current_location_id !== expectedLoc.id) {
         throw new RuleError('LPN_MOVED', `LPN ${expectedLpn.code} is no longer in ${expectedLoc.code}; ask a supervisor`, { lpn: expectedLpn.code });
@@ -128,7 +127,7 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
       if (line.scan_step < 1) throw new RuleError('SCAN_ORDER', 'Scan the location first');
       const scanned = (input.scanned ?? '').trim();
       if (scanned.toUpperCase() !== expectedLpn.code) {
-        // maybe they scanned the product barcode: it must be the right SKU
+        // maybe they scanned the product barcode: it must be the right SKU…
         let okSku = false;
         try {
           const r = await resolveSkuBarcode(tx, scanned);
@@ -138,8 +137,13 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
         }
         if (!okSku) {
           const code = /^PLT-/i.test(scanned) ? 'WRONG_LPN' : 'WRONG_SKU';
-          await blockedScan(tx, ctx, task.id, line.id, code, { expected_lpn: expectedLpn.code, expected_sku: sku.code, scanned });
-          throw new RuleError(code, code === 'WRONG_LPN' ? `LPN INCORRECTO — esperado ${expectedLpn.code}` : `SKU INCORRECTO — esperado ${sku.code}`, { expected_lpn: expectedLpn.code, expected_sku: sku.code, scanned });
+          throw blocked(ctx, task.id, line.id, code, code === 'WRONG_LPN' ? `LPN INCORRECTO — esperado ${expectedLpn.code}` : `SKU INCORRECTO — esperado ${sku.code}`, { expected_lpn: expectedLpn.code, expected_sku: sku.code, scanned });
+        }
+        // …and unambiguous: if another pallet of this SKU sits in the same location the LPN itself must be scanned
+        const others = await tx.$queryRaw<{ n: bigint }[]>`SELECT count(DISTINCT l.id) AS n FROM lpns l JOIN inventory_balances b ON b.lpn_id = l.id AND b.qty > 0 AND b.sku_id = ${line.sku_id}::uuid
+          WHERE l.current_location_id = ${expectedLoc.id}::uuid`;
+        if (Number(others[0]?.n ?? 0n) > 1) {
+          throw blocked(ctx, task.id, line.id, 'LPN_REQUIRED', `Hay varios pallets de ${sku.code} en ${expectedLoc.code}: escanee el LPN ${expectedLpn.code}`, { expected_lpn: expectedLpn.code });
         }
       }
       await tx.pick_task_lines.update({ where: { id: line.id }, data: { scan_step: 2 } });
@@ -148,17 +152,19 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
     }
     case 'QTY': {
       if (line.scan_step < 2) throw new RuleError('SCAN_ORDER', 'Scan location and LPN/product first');
-      if (input.qty === undefined) throw new RuleError('QTY_REQUIRED', 'quantity required');
-      const uom = input.uom_code ?? 'PIECE';
+      if (input.qty === undefined || !input.uom_code) throw new RuleError('QTY_REQUIRED', 'quantity and unit of measure are required');
+      const uom = input.uom_code;
       const { base } = await toBaseQty(tx, line.sku_id, input.qty, uom);
       const remaining = line.qty - line.picked_qty;
       if (base > remaining) {
-        await blockedScan(tx, ctx, task.id, line.id, 'QTY_EXCEEDED', { remaining: remaining.toString(), scanned: base.toString() });
-        throw new RuleError('QTY_EXCEEDED', `CANTIDAD EXCEDIDA — faltan ${remaining}, escaneaste ${base}`, { remaining, scanned: base });
+        throw blocked(ctx, task.id, line.id, 'QTY_EXCEEDED', `CANTIDAD EXCEDIDA — faltan ${remaining}, escaneaste ${base}`, { remaining: remaining.toString(), scanned: base.toString() });
       }
       let movementId: bigint;
       let outboundCode: string;
-      if (line.full_pallet && base === remaining) {
+      // whole-pallet conversion only when the pallet really holds exactly what is left on the line (single SKU, all of it)
+      const palletState = await tx.$queryRaw<{ total: bigint; skus: bigint }[]>`SELECT COALESCE(sum(qty),0)::bigint AS total, count(DISTINCT sku_id)::bigint AS skus FROM inventory_balances WHERE lpn_id = ${expectedLpn.id}::uuid AND qty > 0`;
+      const wholePallet = line.full_pallet && base === remaining && palletState[0]!.skus === 1n && palletState[0]!.total === remaining;
+      if (wholePallet) {
         // whole pallet becomes the outbound unit, in place
         movementId = await changeStatus(tx, ctx, { movement_type: 'PICK', lpn: expectedLpn, sku_id: line.sku_id, qty: base, from_status: 'ALLOCATED', to_status: 'PICKING', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line', reference_id: line.id });
         await tx.lpns.update({ where: { id: expectedLpn.id }, data: { status: 'PICKING', lpn_type: 'OUTBOUND', order_id: task.order_id, version: { increment: 1 } } });
@@ -210,16 +216,20 @@ async function getOrCreateOutboundLpn(tx: Tx, ctx: ActorContext, task: { id: str
   return { ...lpn, status: 'PICKING' };
 }
 
-async function blockedScan(tx: Tx, ctx: ActorContext, taskId: string, lineId: string, code: string, details: unknown) {
-  await audit(tx, ctx, { action: `pick.blocked_${code.toLowerCase()}`, entity_type: 'pick_task', entity_id: taskId, after: { line: lineId, details } });
+/** A blocked scan: the business transaction rolls back, but the attempt is persisted afterwards for traceability/KPIs. */
+function blocked(ctx: ActorContext, taskId: string, lineId: string, code: string, message: string, details: Record<string, unknown>): RuleError {
+  return new RuleError(code, message, details).persistAfterRollback((tx2) =>
+    audit(tx2, ctx, { action: `pick.blocked_${code.toLowerCase()}`, entity_type: 'pick_task', entity_id: taskId, after: { line: lineId, details } }),
+  );
 }
 
 async function maybeCompleteTask(tx: Tx, ctx: ActorContext, taskId: string): Promise<boolean> {
   const open = await tx.pick_task_lines.count({ where: { pick_task_id: taskId, status: { in: ['PENDING', 'IN_PROGRESS'] } } });
   if (open > 0) return false;
   const t = await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'COMPLETED', completed_at: new Date(), version: { increment: 1 } } });
-  const remainingAllocs = await tx.allocations.count({ where: { order_line: { order_id: t.order_id }, status: 'ACTIVE', qty: { gt: 0n } } });
-  await tx.orders.update({ where: { id: t.order_id }, data: { status: 'PICKED', version: { increment: 1 } } });
+  // allocations added after this task was created still need a pick wave: keep the order pickable
+  const remainingAllocs = await tx.allocations.count({ where: { order_line: { order_id: t.order_id }, status: 'ACTIVE' } });
+  await tx.orders.update({ where: { id: t.order_id }, data: { status: remainingAllocs > 0 ? 'PARTIALLY_ALLOCATED' : 'PICKED', version: { increment: 1 } } });
   await audit(tx, ctx, { action: 'pick.task_completed', entity_type: 'pick_task', entity_id: taskId, after: { remaining_active_allocations: remainingAllocs } });
   return true;
 }
@@ -290,7 +300,8 @@ export async function stageLpn(tx: Tx, ctx: ActorContext, input: { lpn_code: str
   const stillPicking = await tx.lpns.count({ where: { order_id: lpn.order_id, status: 'PICKING' } });
   const openTasks = await tx.pick_tasks.count({ where: { order_id: lpn.order_id, status: { in: ['PENDING', 'IN_PROGRESS'] } } });
   let orderStatus: string | null = null;
-  if (stillPicking === 0 && openTasks === 0) {
+  const orderRow = await tx.orders.findUniqueOrThrow({ where: { id: lpn.order_id }, select: { status: true } });
+  if (stillPicking === 0 && openTasks === 0 && orderRow.status === 'PICKED') {
     await tx.orders.update({ where: { id: lpn.order_id }, data: { status: 'STAGED', version: { increment: 1 } } });
     orderStatus = 'STAGED';
   }
@@ -333,7 +344,7 @@ export async function unpickOrder(tx: Tx, ctx: ActorContext, orderId: string, re
       }
     }
     await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'STORED', lpn_type: 'STORAGE', order_id: null, version: { increment: 1 } } });
-    await createPutawayTask(tx, ctx, { ...lpn, status: 'STORED' });
+    await createPutawayTask(tx, ctx, { ...lpn, status: 'STORED' }, { allowStoredLocation: true });
   }
   await tx.allocations.updateMany({ where: { order_line: { order_id: orderId }, status: 'PICKED' }, data: { status: 'RELEASED' } });
   return { lpns: lpns.length };

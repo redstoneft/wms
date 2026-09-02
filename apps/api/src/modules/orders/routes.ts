@@ -8,10 +8,12 @@ export async function orderRoutes(app: FastifyInstance) {
   const db = getDb();
 
   app.get('/orders', { preHandler: app.requirePermission('orders.read') }, async (req) => {
-    const q = z.object({ status: z.string().optional(), q: z.string().trim().max(60).optional(), customer_id: zUuid.optional(), limit: z.coerce.number().int().min(1).max(500).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
+    const q = z.object({ status: z.string().optional(), q: z.string().trim().max(60).optional(), customer_id: zUuid.optional(), shipment_id: zUuid.optional(), unassigned: z.enum(['true', 'false']).optional(), limit: z.coerce.number().int().min(1).max(500).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
     const where = {
       ...(q.status ? { status: { in: q.status.split(',') } } : {}),
       ...(q.customer_id ? { customer_id: q.customer_id } : {}),
+      ...(q.shipment_id ? { shipment_id: q.shipment_id } : {}),
+      ...(q.unassigned === 'true' ? { shipment_id: null } : {}),
       ...(q.q ? { OR: [{ order_number: { contains: q.q, mode: 'insensitive' as const } }, { customer: { name: { contains: q.q, mode: 'insensitive' as const } } }] } : {}),
     };
     const [items, total] = await Promise.all([

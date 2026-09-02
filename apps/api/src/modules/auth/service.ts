@@ -1,5 +1,6 @@
 import { permissionsForRoles, type Role } from '@wms/shared';
 import { loadConfig } from '../../config.js';
+import { getSettingsCached } from '../settings/routes.js';
 import { getDb, withTx } from '../../db.js';
 import { AppError, ForbiddenError, NotFoundError, RuleError, UnauthorizedError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
@@ -22,6 +23,7 @@ const LOCK_MINUTES = 15;
 export interface LoginResult {
   token: string;
   session_id: string;
+  ttl_hours: number;
   user: { id: string; username: string; full_name: string; roles: Role[]; permissions: string[]; mfa_enabled: boolean };
   mfa_required: boolean;
   mfa_enrollment_required: boolean;
@@ -68,7 +70,9 @@ export async function login(params: {
 
   const roles = user.user_roles.map((r) => r.role.code as Role);
   const isAdmin = roles.includes('ADMIN');
-  const mfaRequired = user.mfa_enabled || isAdmin;
+  const settings = await getSettingsCached();
+  const mfaRequired = user.mfa_enabled || (isAdmin && settings.require_mfa_for_admin !== false);
+  const ttlHours = Number(settings.session_ttl_hours) > 0 ? Number(settings.session_ttl_hours) : cfg.SESSION_TTL_HOURS;
   const token = generateToken(32);
   const session = await withTx(async (tx) => {
     await tx.users.update({ where: { id: user.id }, data: { failed_login_count: 0, locked_until: null } });
@@ -80,7 +84,7 @@ export async function login(params: {
         ip: params.ip,
         user_agent: params.userAgent?.slice(0, 512) ?? null,
         device_id: params.deviceId,
-        expires_at: new Date(Date.now() + cfg.SESSION_TTL_HOURS * 3600_000),
+        expires_at: new Date(Date.now() + ttlHours * 3600_000),
       },
     });
     await tx.audit_logs.create({
@@ -92,6 +96,7 @@ export async function login(params: {
   return {
     token,
     session_id: session.id,
+    ttl_hours: ttlHours,
     user: {
       id: user.id,
       username: user.username,
@@ -160,18 +165,24 @@ export async function verifyMfa(userId: string, sessionId: string, code: string,
   const db = getDb();
   const user = await db.users.findUnique({ where: { id: userId } });
   if (!user?.mfa_enabled || !user.mfa_secret_enc) throw new RuleError('MFA_NOT_ENROLLED', 'MFA not enrolled');
+  if (user.locked_until && user.locked_until > new Date()) throw new AppError(423, 'ACCOUNT_LOCKED', `Account locked until ${user.locked_until.toISOString()}`);
   const secret = decryptSecret(user.mfa_secret_enc, cfg.APP_ENCRYPTION_KEY);
   if (!verifyTotp(secret, code)) {
+    // brute-force protection: MFA failures count like password failures and lock the account
+    const failed = user.failed_login_count + 1;
+    await db.users.update({ where: { id: userId }, data: { failed_login_count: failed, locked_until: failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null } });
+    if (failed >= MAX_FAILED) await db.sessions.updateMany({ where: { user_id: userId, revoked_at: null }, data: { revoked_at: new Date() } });
     await db.audit_logs.create({ data: { user_id: userId, username: user.username, action: 'auth.mfa_failed', entity_type: 'session', entity_id: sessionId, ip: ctx.ip, request_id: ctx.requestId } });
     throw new UnauthorizedError('Invalid MFA code');
   }
   await withTx(async (tx) => {
+    await tx.users.update({ where: { id: userId }, data: { failed_login_count: 0 } });
     await tx.sessions.update({ where: { id: sessionId }, data: { mfa_verified: true } });
     await audit(tx, ctx, { action: 'auth.mfa_verified', entity_type: 'session', entity_id: sessionId });
   });
 }
 
-export async function changePassword(ctx: ActorContext, currentPassword: string, newPassword: string): Promise<void> {
+export async function changePassword(ctx: ActorContext, currentPassword: string, newPassword: string, keepSessionId?: string | null): Promise<void> {
   const db = getDb();
   const user = await db.users.findUnique({ where: { id: ctx.userId } });
   if (!user) throw new NotFoundError('user');
@@ -180,8 +191,8 @@ export async function changePassword(ctx: ActorContext, currentPassword: string,
   const hash = await hashPassword(newPassword);
   await withTx(async (tx) => {
     await tx.users.update({ where: { id: ctx.userId }, data: { password_hash: hash, password_changed_at: new Date() } });
-    // revoke every other session
-    await tx.sessions.updateMany({ where: { user_id: ctx.userId, revoked_at: null }, data: { revoked_at: new Date() } });
+    // revoke every other session (the current one stays valid)
+    await tx.sessions.updateMany({ where: { user_id: ctx.userId, revoked_at: null, ...(keepSessionId ? { id: { not: keepSessionId } } : {}) }, data: { revoked_at: new Date() } });
     await audit(tx, ctx, { action: 'auth.password_changed', entity_type: 'user', entity_id: ctx.userId });
   });
 }

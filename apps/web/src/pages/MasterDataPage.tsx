@@ -50,7 +50,7 @@ function Skus() {
       <div className="mb-3 flex gap-2">
         <Input placeholder="Buscar código o descripción" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
         {can('masterdata.manage') && (
-          <Button className="ml-auto" onClick={() => setEdit({ isNew: true, code: '', description: '', abc_class: 'C', unit_weight_kg: '0', uoms: [{ uom_code: 'PIECE', base_qty: '1' }, { uom_code: 'CASE', base_qty: '6' }, { uom_code: 'PALLET', base_qty: '240' }], barcodes: [], requires_lot: false, requires_expiry: false, allow_negative: false })}>
+          <Button className="ml-auto" onClick={() => setEdit({ isNew: true, code: '', description: '', abc_class: 'C', unit_weight_kg: '0', uoms: [{ uom_code: 'PIECE', base_qty: '1' }, { uom_code: 'CASE', base_qty: '6' }, { uom_code: 'PALLET', base_qty: '240' }], barcodes: [], requires_lot: false, requires_expiry: false })}>
             Nuevo SKU
           </Button>
         )}
@@ -68,7 +68,7 @@ function Skus() {
           { key: 'u', header: 'UoMs', render: (s) => s.uoms.map((u) => `${u.uom_code}=${fmtQty(u.base_qty)}`).join(' · ') },
           { key: 'b', header: 'Códigos de barras', render: (s) => s.barcodes.map((b) => `${b.barcode} (${b.uom_code})`).join(', ') || '—' },
           { key: 'w', header: 'Peso u. (kg)', render: (s) => s.unit_weight_kg, align: 'right' },
-          { key: 'fl', header: 'Reglas', render: (s) => [s.requires_lot && 'Lote', s.requires_expiry && 'Caducidad', s.allow_negative && 'Negativo'].filter(Boolean).join(', ') },
+          { key: 'fl', header: 'Reglas', render: (s) => [s.requires_lot && 'Lote', s.requires_expiry && 'Caducidad'].filter(Boolean).join(', ') },
           { key: 's', header: 'Activo', render: (s) => (s.is_active ? 'Sí' : 'No') },
         ]}
       />
@@ -100,7 +100,6 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
         pallet_height_cm: f.pallet_height_cm ? Number(f.pallet_height_cm) : undefined,
         requires_lot: !!f.requires_lot,
         requires_expiry: !!f.requires_expiry,
-        allow_negative: !!f.allow_negative,
         uoms: (f.uoms ?? []).filter((u) => u.base_qty).map((u) => ({ uom_code: u.uom_code, base_qty: String(u.base_qty) })),
         barcodes: (f.barcodes ?? []).filter((b) => b.barcode).map((b) => ({ barcode: b.barcode, uom_code: b.uom_code })),
       };
@@ -140,7 +139,6 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
         <div className="flex flex-wrap gap-4 sm:col-span-2">
           <Checkbox label="Requiere lote" checked={!!f.requires_lot} onChange={(e) => setF({ ...f, requires_lot: e.target.checked })} />
           <Checkbox label="Requiere caducidad" checked={!!f.requires_expiry} onChange={(e) => setF({ ...f, requires_expiry: e.target.checked })} />
-          <Checkbox label="Permite negativo (no recomendado)" checked={!!f.allow_negative} onChange={(e) => setF({ ...f, allow_negative: e.target.checked })} />
           {!f.isNew && <Checkbox label="Activo" checked={f.is_active !== false} onChange={(e) => setF({ ...f, is_active: e.target.checked })} />}
         </div>
       </div>

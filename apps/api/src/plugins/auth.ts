@@ -6,6 +6,7 @@ import { ForbiddenError, UnauthorizedError } from '../errors.js';
 import { sha256 } from '../lib/crypto.js';
 import type { ActorContext } from '../lib/context.js';
 import { loadConfig } from '../config.js';
+import { getSettingsCached } from '../modules/settings/routes.js';
 
 export const SESSION_COOKIE = 'wms_session';
 
@@ -52,7 +53,8 @@ async function resolveSession(req: FastifyRequest): Promise<void> {
   if (!session || session.revoked_at || session.expires_at < new Date()) return;
   if (!session.user.is_active) return;
   const roles = session.user.user_roles.map((ur) => ur.role.code as Role);
-  const requiresMfa = session.user.mfa_enabled || roles.includes('ADMIN');
+  const settings = await getSettingsCached();
+  const requiresMfa = session.user.mfa_enabled || (roles.includes('ADMIN') && settings.require_mfa_for_admin !== false);
   req.mfaPending = requiresMfa && !session.mfa_verified;
   req.sessionId = session.id;
   req.actor = {
@@ -93,7 +95,7 @@ export default fp(async function authPlugin(app: FastifyInstance) {
   });
 });
 
-export function cookieOptions() {
+export function cookieOptions(ttlHours?: number) {
   const cfg = loadConfig();
   return {
     path: '/',
@@ -101,6 +103,6 @@ export function cookieOptions() {
     secure: cfg.COOKIE_SECURE,
     sameSite: 'strict' as const,
     signed: true,
-    maxAge: cfg.SESSION_TTL_HOURS * 3600,
+    maxAge: (ttlHours ?? cfg.SESSION_TTL_HOURS) * 3600,
   };
 }

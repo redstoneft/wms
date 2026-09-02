@@ -18,10 +18,13 @@ const schema = z.object({
   UPLOAD_DIR: z.string().default('./uploads'),
   RATE_LIMIT_MAX: z.coerce.number().int().min(10).default(2000), // per IP (many handhelds may share one NAT address)
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(3).default(10),
-  IDEMPOTENCY_TTL_HOURS: z.coerce.number().int().min(1).default(48),
+  IDEMPOTENCY_TTL_HOURS: z.coerce.number().int().min(1).default(168),
+  // 'false' (default), 'true' (trust all proxies — only on a private network) or a comma-separated list of proxy IPs/CIDRs
+  TRUST_PROXY: z.string().default('false'),
+  ALLOW_INSECURE_COOKIE: z.string().default('false').transform((v) => v === 'true' || v === '1'),
 });
 
-export type Config = z.infer<typeof schema> & { allowedOrigins: string[]; isProd: boolean; isTest: boolean };
+export type Config = z.infer<typeof schema> & { allowedOrigins: string[]; isProd: boolean; isTest: boolean; trustProxy: boolean | string[] };
 
 let cached: Config | null = null;
 
@@ -41,10 +44,10 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Con
       .filter(Boolean),
     isProd: parsed.data.NODE_ENV === 'production',
     isTest: parsed.data.NODE_ENV === 'test',
+    trustProxy: parsed.data.TRUST_PROXY === 'true' ? true : parsed.data.TRUST_PROXY === 'false' || parsed.data.TRUST_PROXY.trim() === '' ? false : parsed.data.TRUST_PROXY.split(',').map((s) => s.trim()).filter(Boolean),
   };
-  if (cfg.isProd && !cfg.COOKIE_SECURE) {
-    // Not fatal (may run behind TLS-terminating proxy on http), but loud.
-    console.warn('[config] COOKIE_SECURE=false in production — only acceptable behind an HTTPS proxy on a trusted network');
+  if (cfg.isProd && !cfg.COOKIE_SECURE && !cfg.ALLOW_INSECURE_COOKIE) {
+    throw new Error('COOKIE_SECURE=false in production is not allowed. Terminate TLS in front of the API and set COOKIE_SECURE=true, or set ALLOW_INSECURE_COOKIE=true explicitly for a trusted private network.');
   }
   if (Object.keys(overrides).length === 0) cached = cfg;
   return cfg;

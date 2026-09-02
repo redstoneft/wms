@@ -6,7 +6,7 @@
 // acting as the service user `integration` (created on demand, role SUPERVISOR
 // restricted here to order/PO/master-data commands). Every call is audited and
 // idempotent by external reference (order_number / po_number).
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { permissionsForRoles, zOrderLineInput } from '@wms/shared';
@@ -40,8 +40,15 @@ async function integrationActor(req: FastifyRequest): Promise<ActorContext> {
   const db = getDb();
   let user = await db.users.findUnique({ where: { username: 'integration' } });
   if (!user) {
-    const role = await db.roles.findUniqueOrThrow({ where: { code: 'SUPERVISOR' } });
-    user = await db.users.create({ data: { username: 'integration', full_name: 'Integración externa (SAE)', password_hash: await hashPassword(createHash('sha256').update(configured).digest('hex')), user_roles: { create: [{ role_id: role.id }] } } });
+    // Service identity only: no roles, a random unguessable password and a permanent lock, so it can never log in interactively.
+    user = await db.users.create({
+      data: { username: 'integration', full_name: 'Integración externa (SAE)', password_hash: await hashPassword(randomBytes(48).toString('base64url')), locked_until: new Date('9999-12-31T00:00:00Z') },
+    });
+  } else if (!user.locked_until || user.locked_until.getFullYear() < 9000 || (await db.user_roles.count({ where: { user_id: user.id } })) > 0) {
+    // repair an identity created by an older version (it must never be able to log in or hold roles)
+    await db.user_roles.deleteMany({ where: { user_id: user.id } });
+    await db.sessions.updateMany({ where: { user_id: user.id, revoked_at: null }, data: { revoked_at: new Date() } });
+    user = await db.users.update({ where: { id: user.id }, data: { password_hash: await hashPassword(randomBytes(48).toString('base64url')), locked_until: new Date('9999-12-31T00:00:00Z') } });
   }
   return {
     userId: user.id,

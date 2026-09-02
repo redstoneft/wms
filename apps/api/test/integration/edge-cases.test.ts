@@ -266,7 +266,12 @@ describe('orders: cancellation during picking, partial allocation, short pick', 
     const before = await skuTotal(f.skus[2]!.id);
     const noAuth = await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló' });
     expect(noAuth.status).toBe(422);
-    const auth = await sup.post('/authorizations', { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.body.id, reason: 'cliente canceló' });
+    // the authorizer must be a different supervisor than the one executing the cancellation
+    const sup2 = await userWithRoles('esup2', ['SUPERVISOR']);
+    const selfAuth = await sup.post('/authorizations', { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.body.id, reason: 'cliente canceló' });
+    expect((await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló', authorization_id: selfAuth.body.id })).body.error).toBe('SELF_AUTHORIZATION');
+    await sup.post(`/authorizations/${selfAuth.body.id}/revoke`);
+    const auth = await sup2.post('/authorizations', { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.body.id, reason: 'cliente canceló' });
     const c = await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló', authorization_id: auth.body.id });
     expect(c.status).toBe(200);
     expect(await skuTotal(f.skus[2]!.id)).toBe(before); // nothing lost
@@ -323,7 +328,7 @@ describe('returns', () => {
     const r = await recv.post('/returns', { customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 10, uom_code: 'PIECE' }] });
     expect(r.status).toBe(201);
     const line = r.body.lines[0];
-    const rec = await recv.post('/returns/receive', { return_id: r.body.id, line_id: line.id, qty: 10, returns_location_barcode: f.returns.barcode }, idem());
+    const rec = await recv.post('/returns/receive', { return_id: r.body.id, line_id: line.id, qty: 10, uom_code: 'PIECE', returns_location_barcode: f.returns.barcode }, idem());
     expect(rec.status).toBe(200);
     const lpn = rec.body.lpn_code;
     const q = await sql<{ status: string; qty: bigint }>(`SELECT b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id=b.lpn_id WHERE l.code='${lpn}'`);

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { MultipartFile } from '@fastify/multipart';
 import { loadConfig } from '../../config.js';
@@ -33,7 +33,8 @@ export async function saveAttachment(ctx: ActorContext, entityType: string, enti
   const ext = file.mimetype === 'application/pdf' ? 'pdf' : file.mimetype.split('/')[1]!;
   const storagePath = path.join(dir, `${sha}.${ext}`);
   await writeFile(storagePath, buf, { flag: 'w' });
-  return getDb().attachments.create({
+  try {
+    return await getDb().attachments.create({
     data: {
       entity_type: entityType,
       entity_id: entityId,
@@ -44,5 +45,10 @@ export async function saveAttachment(ctx: ActorContext, entityType: string, enti
       sha256: sha,
       uploaded_by: ctx.userId,
     },
-  });
+    });
+  } catch (e) {
+    // never leave orphan files behind when the metadata insert fails
+    await unlink(storagePath).catch(() => undefined);
+    throw e;
+  }
 }

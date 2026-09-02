@@ -641,6 +641,7 @@ model transfers {
   from_location_id String    @db.Uuid
   to_location_id   String    @db.Uuid
   status           String    @default("IN_TRANSIT") @db.VarChar(20) // IN_TRANSIT | COMPLETED | CANCELLED
+  origin_status    String    @default("AVAILABLE") @db.VarChar(20) // status the inventory had before IN_TRANSFER
   started_by       String    @db.Uuid
   completed_by     String?   @db.Uuid
   started_at       DateTime  @default(now()) @db.Timestamptz(6)

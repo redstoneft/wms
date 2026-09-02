@@ -4,7 +4,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { getSkuByCode, toBaseQty } from '../../lib/lookup.js';
-import { lockLpn, recordMovement } from '../../inventory/ledger.js';
+import { getBalance, lockLpn, recordMovement } from '../../inventory/ledger.js';
 import { consumeAuthorization } from '../authorizations/routes.js';
 import { getSettings } from '../settings/routes.js';
 import { createIncident } from '../incidents/service.js';
@@ -97,7 +97,9 @@ interface CandidateBalance {
  */
 export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id: string; strategy?: AllocationStrategy; allow_partial: boolean }) {
   const o = await lockOrder(tx, input.order_id);
-  if (!['ACCEPTED', 'PARTIALLY_ALLOCATED', 'IMPORTED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}; only accepted orders can be allocated`);
+  if (!['ACCEPTED', 'PARTIALLY_ALLOCATED', 'PICKED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}; only accepted orders can be allocated`);
+  const activeTask = await tx.pick_tasks.count({ where: { order_id: o.id, status: { in: ['PENDING', 'IN_PROGRESS'] } } });
+  if (activeTask) throw new RuleError('PICK_TASK_ACTIVE', 'Order has an active pick task; wait for it to finish before allocating more');
   const settings = await getSettings(tx);
   const strategy = input.strategy ?? (settings.allocation_strategy as AllocationStrategy);
   const lines = await tx.order_lines.findMany({ where: { order_id: o.id }, include: { sku: true }, orderBy: { line_no: 'asc' } });
@@ -129,12 +131,16 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
          CASE WHEN ${strategy} = 'CASE_PIECE' THEN (loc.location_type = 'PICKING') END DESC,
          CASE WHEN ${strategy} = 'FULL_PALLET' THEN (b.qty <= ${remaining}) END DESC,
          CASE WHEN ${strategy} = 'FULL_PALLET' THEN b.qty END DESC,
-         l.created_at ASC, l.code ASC
-       FOR UPDATE OF b`;
+         l.created_at ASC, l.code ASC`;
+    // Lock order everywhere is LPN → balance. Candidates are read unlocked and re-checked under the LPN lock,
+    // so a concurrent allocation of the same pallet is seen (smaller AVAILABLE) instead of double-allocated.
     for (const c of candidates) {
       if (remaining <= 0n) break;
-      const take = c.qty < remaining ? c.qty : remaining;
       const lpn = await lockLpn(tx, c.lpn_id);
+      if (lpn.status !== 'STORED') continue;
+      const available = await getBalance(tx, lpn.id, line.sku_id, 'AVAILABLE');
+      if (available <= 0n) continue;
+      const take = available < remaining ? available : remaining;
       await recordMovement(tx, ctx, {
         movement_type: 'ALLOCATE',
         sku_id: line.sku_id,
@@ -217,7 +223,7 @@ export async function cancelOrder(tx: Tx, ctx: ActorContext, input: { order_id: 
   if (o.shipment_id) throw new RuleError('ORDER_IN_SHIPMENT', 'Remove the order from its shipment first');
   if (['PICKING', 'PICKED', 'STAGED', 'VERIFIED'].includes(o.status)) {
     if (!input.authorization_id) throw new RuleError('AUTHORIZATION_REQUIRED', 'Cancelling an order during/after picking requires supervisor authorization (ORDER_CANCEL_DURING_PICKING)');
-    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.id });
+    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.id }, ctx);
     await unpickOrder(tx, ctx, o.id, input.reason);
   }
   const de = await deallocateOrder(tx, ctx, o.id, input.reason);
@@ -225,7 +231,8 @@ export async function cancelOrder(tx: Tx, ctx: ActorContext, input: { order_id: 
   await tx.pick_task_lines.updateMany({ where: { pick_task: { order_id: o.id }, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
   await tx.staging_assignments.updateMany({ where: { order_id: o.id, released_at: null }, data: { released_at: new Date() } });
   await tx.verifications.updateMany({ where: { order_id: o.id, status: 'IN_PROGRESS' }, data: { status: 'CANCELLED', completed_at: new Date() } });
-  await tx.orders.update({ where: { id: o.id }, data: { status: 'CANCELLED', version: { increment: 1 }, notes: input.reason } });
+  const prev = await tx.orders.findUniqueOrThrow({ where: { id: o.id }, select: { notes: true } });
+  await tx.orders.update({ where: { id: o.id }, data: { status: 'CANCELLED', version: { increment: 1 }, notes: [prev.notes, `[CANCELADO] ${input.reason}`].filter(Boolean).join('\n') } });
   if (['PICKING', 'PICKED', 'STAGED', 'VERIFIED'].includes(o.status)) {
     await createIncident(tx, ctx, { incident_type: 'OTHER', severity: 'LOW', title: `Pedido ${o.order_number} cancelado durante surtido`, description: input.reason, entity_type: 'order', entity_id: o.id, order_id: o.id });
   }

@@ -7,7 +7,8 @@ import multipart from '@fastify/multipart';
 import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import { loadConfig, type Config } from './config.js';
-import { AppError, translateDbError } from './errors.js';
+import { AppError, RuleError, translateDbError } from './errors.js';
+import { withTx } from './db.js';
 import { jsonReplacer } from './lib/serialize.js';
 import authPlugin from './plugins/auth.js';
 import securityPlugin from './plugins/security.js';
@@ -59,8 +60,9 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
             },
             ...(cfg.NODE_ENV === 'development' ? { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss' } } } : {}),
           },
-    genReqId: (req) => (req.headers['x-request-id'] as string | undefined)?.slice(0, 64) ?? randomUUID(),
-    trustProxy: true,
+    // request ids are always server-generated (client-supplied ids would make audit trails forgeable)
+    genReqId: () => randomUUID(),
+    trustProxy: cfg.trustProxy,
     bodyLimit: 5 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
   });
@@ -124,7 +126,17 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
     }
   });
 
-  app.setErrorHandler((err, req, reply) => {
+  app.setErrorHandler(async (err, req, reply) => {
+    // Blocked business attempts stay traceable: persist their audit/incident side effects in a new transaction
+    if (err instanceof RuleError && err.afterRollback.length) {
+      try {
+        await withTx(async (tx) => {
+          for (const fn of err.afterRollback) await fn(tx);
+        });
+      } catch (e) {
+        req.log.error({ err: e }, 'failed to persist blocked-attempt trace');
+      }
+    }
     if (err instanceof ZodError) {
       return reply.status(400).send({
         error: 'VALIDATION_ERROR',

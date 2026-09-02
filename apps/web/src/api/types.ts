@@ -65,7 +65,6 @@ export interface Sku {
   pallet_height_cm: Dec | null;
   requires_lot: boolean;
   requires_expiry: boolean;
-  allow_negative: boolean;
   is_active: boolean;
   created_at: Iso;
   uoms: SkuUom[];
@@ -989,7 +988,6 @@ export interface RoleRow {
 }
 export interface Settings {
   allocation_strategy: string;
-  count_variance_recount_threshold: number;
   session_ttl_hours: number;
   require_mfa_for_admin: boolean;
 }

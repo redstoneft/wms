@@ -18,6 +18,9 @@ export async function incidentRoutes(app: FastifyInstance) {
         type: z.string().optional(),
         entity_type: z.string().optional(),
         entity_id: z.string().optional(),
+        order_id: zUuid.optional(),
+        shipment_id: zUuid.optional(),
+        lpn_id: zUuid.optional(),
         limit: z.coerce.number().int().min(1).max(500).default(100),
         offset: z.coerce.number().int().min(0).default(0),
       })
@@ -28,6 +31,9 @@ export async function incidentRoutes(app: FastifyInstance) {
       ...(q.type ? { incident_type: q.type } : {}),
       ...(q.entity_type ? { entity_type: q.entity_type } : {}),
       ...(q.entity_id ? { entity_id: q.entity_id } : {}),
+      ...(q.order_id ? { order_id: q.order_id } : {}),
+      ...(q.shipment_id ? { shipment_id: q.shipment_id } : {}),
+      ...(q.lpn_id ? { lpn_id: q.lpn_id } : {}),
     };
     const [items, total] = await Promise.all([
       db.incidents.findMany({ where, orderBy: [{ created_at: 'desc' }], take: q.limit, skip: q.offset }),

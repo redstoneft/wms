@@ -15,7 +15,7 @@ export default function SettingsPage() {
     if (q.data) setF(q.data);
   }, [q.data]);
   const save = useMutation({
-    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, count_variance_recount_threshold: Number(f!.count_variance_recount_threshold), session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin }),
+    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin }),
     onSuccess: () => { toast.success('Configuración guardada (auditada)'); void qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e) => toast.error('No se pudo guardar', e),
   });
@@ -29,9 +29,6 @@ export default function SettingsPage() {
             <Select value={f.allocation_strategy} onChange={(e) => setF({ ...f, allocation_strategy: e.target.value })}>
               {ALLOCATION_STRATEGIES.map((s) => <option key={s}>{s}</option>)}
             </Select>
-          </Field>
-          <Field label="Umbral de diferencia para reconteo (piezas)" hint="0 = cualquier diferencia obliga a reconteo por otra persona.">
-            <Input type="number" min={0} value={f.count_variance_recount_threshold} onChange={(e) => setF({ ...f, count_variance_recount_threshold: Number(e.target.value) })} />
           </Field>
           <Field label="Duración de sesión (horas, 1-72)">
             <Input type="number" min={1} max={72} value={f.session_ttl_hours} onChange={(e) => setF({ ...f, session_ttl_hours: Number(e.target.value) })} />

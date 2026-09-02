@@ -224,6 +224,11 @@ export async function approveCount(tx: Tx, ctx: ActorContext, input: { count_tas
       continue;
     }
     const lpn = await lockLpn(tx, l.lpn_id);
+    if (lpn.status !== 'STORED') {
+      await tx.count_lines.update({ where: { id: l.id }, data: { status: 'RECOUNT', recount_qty: null, final_qty: null } });
+      skipped.push({ line_id: l.id, reason: `LPN_NOT_STORED (${lpn.status})` });
+      continue;
+    }
     const cur = await tx.$queryRaw<{ qty: bigint; available: bigint }[]>`SELECT COALESCE(sum(qty),0)::bigint AS qty, COALESCE(sum(qty) FILTER (WHERE status='AVAILABLE'),0)::bigint AS available
       FROM inventory_balances WHERE lpn_id = ${l.lpn_id}::uuid AND sku_id = ${l.sku_id}::uuid`;
     const currentQty = cur[0]?.qty ?? 0n;

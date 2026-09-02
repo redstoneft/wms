@@ -87,12 +87,15 @@ export async function createReceipt(
   });
   // expected lines from PO or explicit list
   if (poId) {
+    // a PO may list the same SKU on several lines: expectations are per SKU
     const poLines = await tx.purchase_order_lines.findMany({ where: { po_id: poId } });
+    const bySku = new Map<string, bigint>();
     for (const l of poLines) {
       const remaining = l.ordered_qty - l.received_qty;
-      if (remaining > 0n) {
-        await tx.receipt_lines.create({ data: { receipt_id: receipt.id, sku_id: l.sku_id, expected_qty: remaining } });
-      }
+      if (remaining > 0n) bySku.set(l.sku_id, (bySku.get(l.sku_id) ?? 0n) + remaining);
+    }
+    for (const [skuId, remaining] of bySku) {
+      await tx.receipt_lines.create({ data: { receipt_id: receipt.id, sku_id: skuId, expected_qty: remaining } });
     }
   }
   for (const e of input.expected ?? []) {
@@ -117,7 +120,7 @@ export interface ReceiveScanInput {
   cases_count?: number;
   weight_kg?: number;
   lot?: string;
-  expiry_date?: Date;
+  expiry_date?: string;
   damaged: boolean;
   note?: string;
 }
@@ -308,7 +311,18 @@ export async function completeReceipt(tx: Tx, ctx: ActorContext, input: { receip
   // PO progress
   if (r.po_id) {
     for (const l of lines) {
-      await tx.purchase_order_lines.updateMany({ where: { po_id: r.po_id, sku_id: l.sku_id }, data: { received_qty: { increment: l.received_qty } } });
+      // distribute received units across the PO lines of that SKU (a PO may list a SKU more than once)
+      let left = l.received_qty;
+      const poLines = await tx.purchase_order_lines.findMany({ where: { po_id: r.po_id, sku_id: l.sku_id }, orderBy: { line_no: 'asc' } });
+      for (let i = 0; i < poLines.length && left > 0n; i++) {
+        const pl = poLines[i]!;
+        const room = pl.ordered_qty - pl.received_qty;
+        const add = i === poLines.length - 1 ? left : room > 0n ? (room < left ? room : left) : 0n;
+        if (add > 0n) {
+          await tx.purchase_order_lines.update({ where: { id: pl.id }, data: { received_qty: { increment: add } } });
+          left -= add;
+        }
+      }
     }
     const poLines = await tx.purchase_order_lines.findMany({ where: { po_id: r.po_id } });
     const complete = poLines.every((l) => l.received_qty >= l.ordered_qty);

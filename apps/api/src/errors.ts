@@ -38,10 +38,23 @@ export class ConflictError extends AppError {
     super(409, code, message, details);
   }
 }
-/** Business rule violation: the request is well-formed but not allowed by WMS rules. */
+import type { Tx } from './db.js';
+
+/**
+ * Business rule violation: the request is well-formed but not allowed by WMS rules.
+ * Blocked attempts must remain traceable even though the business transaction is
+ * rolled back: services attach side effects (audit rows, incidents, status marks)
+ * with `persistAfterRollback`; the global error handler runs them in a fresh
+ * transaction after the failed one is gone.
+ */
 export class RuleError extends AppError {
+  readonly afterRollback: Array<(tx: Tx) => Promise<void>> = [];
   constructor(code: string, message: string, details?: unknown) {
     super(422, code, message, details);
+  }
+  persistAfterRollback(fn: (tx: Tx) => Promise<void>): this {
+    this.afterRollback.push(fn);
+    return this;
   }
 }
 
@@ -51,7 +64,9 @@ export class RuleError extends AppError {
  */
 export function translateDbError(e: unknown): AppError | null {
   const state = sqlState(e);
-  const msg = sqlMessage(e);
+  const raw = sqlMessage(e);
+  // raw PostgreSQL text (constraint names, ids) is useful for operators in dev/test but is information leakage in production
+  const msg = process.env.NODE_ENV === 'production' ? '' : raw;
   if (!state) return null;
   switch (state) {
     case 'P0002':
@@ -64,6 +79,7 @@ export function translateDbError(e: unknown): AppError | null {
       return new ForbiddenError('Append-only data cannot be modified', { db: msg });
     case '23514': {
       // check_violation
+      const msg = raw;
       if (/ck_balance_qty_nonneg/.test(msg)) {
         return new RuleError('INSUFFICIENT_INVENTORY', 'Inventory would become negative; operation rejected', { db: msg });
       }
@@ -82,6 +98,7 @@ export function translateDbError(e: unknown): AppError | null {
     case 'P2002':
     case '23505': {
       // unique_violation
+      const msg = raw;
       if (/ux_authorizations_once/.test(msg)) return new ConflictError('ALREADY_AUTHORIZED', 'This exception was already authorized by another supervisor');
       if (/ux_transfers_one_active_per_lpn/.test(msg)) return new ConflictError('TRANSFER_IN_PROGRESS', 'LPN already has a transfer in progress');
       if (/ux_putaway_one_active_per_lpn/.test(msg)) return new ConflictError('PUTAWAY_IN_PROGRESS', 'LPN already has an active put-away task');

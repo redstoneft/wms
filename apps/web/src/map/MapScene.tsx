@@ -6,7 +6,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
-import type { MapLocation, Zone } from '../api/types';
+import type { Zone } from '../api/types';
 import { HIGHLIGHT_COLOR, PALLET_BASE_COLOR, PALLET_LOAD_COLOR, SELECT_COLOR, STATUS_COLORS, type FrameInstance, type SceneModel, type Vec3 } from './mapModel';
 
 export interface FlyTarget {
@@ -38,7 +38,7 @@ export interface MapSceneProps {
 const dummy = new THREE.Object3D();
 const tmpColor = new THREE.Color();
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
-const LOD_DISTANCE = 55;
+const LOD_DISTANCE = 75;
 
 function setInstance(mesh: THREE.InstancedMesh, i: number, center: Vec3, size: Vec3, rotY = 0) {
   dummy.position.set(center[0], center[1], center[2]);
@@ -175,7 +175,7 @@ function Slots({ model, visible, highlight, selectedId, onHover, onSelect }: Pic
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, Math.max(1, slots.length)]} frustumCulled={false} onPointerMove={onMove} onPointerOut={onOut} onClick={onClick}>
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color="#ffffff" transparent opacity={0.32} depthWrite={false} roughness={0.9} />
+      <meshStandardMaterial color="#ffffff" transparent opacity={0.2} depthWrite={false} roughness={0.9} />
     </instancedMesh>
   );
 }
@@ -400,7 +400,7 @@ export function MapScene(props: MapSceneProps) {
   const { model, zones, fly, onFar, far, editMode, selectedRackId, onSelectRack } = props;
   const controls = useRef<OrbitControlsImpl | null>(null);
   const center: Vec3 = [model.width / 2, 0, model.depth / 2];
-  const camPos: Vec3 = [model.width * 0.55, Math.max(model.width, model.depth) * 0.75, model.depth * 1.45];
+  const camPos: Vec3 = [model.width * 0.5, Math.max(model.width, model.depth) * 0.75, model.depth * 1.5];
   const [ready, setReady] = useState(false);
   useEffect(() => setReady(true), []);
 

@@ -98,13 +98,14 @@ export async function inboundRoutes(app: FastifyInstance) {
 
   // ---------------- receipts ----------------
   app.get('/receipts', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
-    const q = z.object({ status: z.string().optional(), container_id: zUuid.optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
-    return db.receipts.findMany({
-      where: { ...(q.status ? { status: { in: q.status.split(',') } } : {}), ...(q.container_id ? { container_id: q.container_id } : {}) },
-      include: { container: { select: { container_number: true } }, lines: { include: { sku: { select: { code: true, description: true } } } } },
-      orderBy: { created_at: 'desc' },
-      take: q.limit,
-    });
+    const q = z.object({ status: z.string().optional(), container_id: zUuid.optional(), limit: z.coerce.number().int().min(1).max(500).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
+    const where = { ...(q.status ? { status: { in: q.status.split(',') } } : {}), ...(q.container_id ? { container_id: q.container_id } : {}) };
+    const [items, total] = await Promise.all([
+      db.receipts.findMany({ where, include: { container: { select: { container_number: true } }, lines: { include: { sku: { select: { code: true, description: true } } } } }, orderBy: { created_at: 'desc' }, take: q.limit, skip: q.offset }),
+      db.receipts.count({ where }),
+    ]);
+    // backwards compatible: array response with pagination metadata attached
+    return Object.assign(items, { total }) as unknown as typeof items & { total: number };
   });
   app.get('/receipts/:id', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

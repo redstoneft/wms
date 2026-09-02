@@ -9,9 +9,9 @@ export async function countRoutes(app: FastifyInstance) {
   const db = getDb();
 
   app.get('/counts', { preHandler: app.requirePermission('counts.execute') }, async (req) => {
-    const q = z.object({ status: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
+    const q = z.object({ status: z.string().optional(), assigned_to: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
     const tasks = await db.count_tasks.findMany({
-      where: q.status ? { status: { in: q.status.split(',') } } : {},
+      where: { ...(q.status ? { status: { in: q.status.split(',') } } : {}), ...(q.assigned_to === 'me' ? { OR: [{ assigned_to: req.actor!.userId }, { assigned_to: null }] } : q.assigned_to ? { assigned_to: q.assigned_to } : {}) },
       include: { _count: { select: { lines: true } } },
       orderBy: { created_at: 'desc' },
       take: q.limit,

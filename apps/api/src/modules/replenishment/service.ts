@@ -58,7 +58,9 @@ export async function startReplenishment(tx: Tx, ctx: ActorContext, taskId: stri
   let sourceLpnId = t.source_lpn_id;
   if (!sourceLpnId) {
     const rule = await tx.replenishment_rules.findUnique({ where: { id: (await tx.replenishment_tasks.findUniqueOrThrow({ where: { id: taskId } })).rule_id } });
-    const src = await pickSourcePallet(tx, t.sku_id, rule ? rule.max_qty : 0n, t.to_location_id);
+    const cur = await tx.$queryRaw<{ q: bigint }[]>`SELECT COALESCE(sum(b.qty),0)::bigint AS q FROM lpns l JOIN inventory_balances b ON b.lpn_id = l.id AND b.sku_id = ${t.sku_id}::uuid AND b.status IN ('AVAILABLE','ALLOCATED') WHERE l.current_location_id = ${t.to_location_id}::uuid`;
+    const gap = rule ? rule.max_qty - (cur[0]?.q ?? 0n) : 0n;
+    const src = await pickSourcePallet(tx, t.sku_id, gap > 0n ? gap : 1n, t.to_location_id);
     if (!src) throw new RuleError('NO_SOURCE_PALLET', 'No reserve pallet available for this SKU');
     sourceLpnId = src.lpn_id;
     await tx.replenishment_tasks.update({ where: { id: taskId }, data: { source_lpn_id: src.lpn_id, from_location_id: src.location_id, qty: src.qty } });

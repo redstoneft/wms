@@ -66,12 +66,13 @@ describe('network failures', () => {
     await expectReconciled();
   });
 
-  it('a request WITHOUT Idempotency-Key is executed every time (the client must always send one for scans)', async () => {
+  it('a scan WITHOUT Idempotency-Key is refused (a retry could otherwise double-record it)', async () => {
     const rcp = await recv.post('/receipts', { receiving_location_id: f.dock.id });
     const before = await skuTotal(f.skus[0]!.id);
-    await recv.post('/receipts/scan', { receipt_id: rcp.body.id, barcode: f.skus[0]!.piece_barcode, qty: 1 });
-    await recv.post('/receipts/scan', { receipt_id: rcp.body.id, barcode: f.skus[0]!.piece_barcode, qty: 1 });
-    expect(await skuTotal(f.skus[0]!.id)).toBe(before + 2n);
+    const r = await recv.post('/receipts/scan', { receipt_id: rcp.body.id, barcode: f.skus[0]!.piece_barcode, qty: 1 });
+    expect(r.status).toBe(400);
+    expect(r.body.details.code).toBe('IDEMPOTENCY_KEY_REQUIRED');
+    expect(await skuTotal(f.skus[0]!.id)).toBe(before);
   });
 
   it('the idempotency key is scoped per user: two users with the same key do not collide', async () => {

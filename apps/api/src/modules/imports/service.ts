@@ -437,8 +437,10 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
           requires_lot: r.requires_lot === 'true' || (r.requires_lot as unknown) === true,
           requires_expiry: r.requires_expiry === 'true' || (r.requires_expiry as unknown) === true,
         };
-        const ex = await tx.skus.findUnique({ where: { code: r.sku } });
+        const ex = await tx.skus.findUnique({ where: { code: r.sku }, include: { barcodes: true } });
         if (ex) {
+          const orphan = ex.barcodes.filter((b) => !uoms.some((u) => u.uom_code === b.uom_code));
+          if (orphan.length) throw new RuleError('BARCODE_UOM_ORPHAN', `SKU ${r.sku}: barcodes ${orphan.map((b) => b.barcode).join(', ')} reference a UoM removed by this import`);
           await tx.skus.update({ where: { id: ex.id }, data });
           await tx.sku_uoms.deleteMany({ where: { sku_id: ex.id } });
           await tx.sku_uoms.createMany({ data: uoms.map((u) => ({ sku_id: ex.id, ...u })) });
@@ -543,7 +545,11 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
         let lpnRef = r.lpn ? groups.get(r.lpn) : undefined;
         let lpnRow;
         if (!lpnRef) {
-          lpnRow = await createLpn(tx, ctx, { warehouse_id: loc.warehouse_id, lpn_type: 'STORAGE', location_id: loc.id, lot: r.lot || null, expiry_date: r.expiry_date ? new Date(r.expiry_date) : null });
+          // physical capacity of the slot is enforced for initial loads too
+          const occ = await tx.$queryRaw<{ n: bigint }[]>`SELECT count(DISTINCT l.id) AS n FROM lpns l WHERE l.current_location_id = ${loc.id}::uuid`;
+          if (Number(occ[0]?.n ?? 0n) >= loc.pallet_capacity) throw new RuleError('LOCATION_FULL', `Location ${loc.code} already holds ${loc.pallet_capacity} pallet(s) (row for SKU ${r.sku})`);
+          if (loc.admin_status !== 'ACTIVE' || !loc.is_active) throw new RuleError('LOCATION_BLOCKED', `Location ${loc.code} is ${loc.admin_status}`);
+          lpnRow = await createLpn(tx, ctx, { warehouse_id: loc.warehouse_id, lpn_type: 'STORAGE', location_id: loc.id, lot: r.lot || null, expiry_date: r.expiry_date || null });
           await tx.lpns.update({ where: { id: lpnRow.id }, data: { status: 'STORED' } });
           lpnRef = { id: lpnRow.id, code: lpnRow.code };
           if (r.lpn) groups.set(r.lpn, lpnRef);

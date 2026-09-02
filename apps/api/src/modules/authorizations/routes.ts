@@ -16,6 +16,9 @@ export async function consumeAuthorization(
   tx: Tx,
   id: string,
   expected: { exception_type: string; entity_type: string; entity_id: string },
+  ctx: ActorContext,
+  /** additional users who must NOT be the authorizing supervisor (e.g. the picker of the order being verified) */
+  alsoNot: Array<string | null | undefined> = [],
 ): Promise<{ supervisor_id: string; reason: string }> {
   const rows = await tx.$queryRaw<{ id: string; exception_type: string; entity_type: string; entity_id: string; status: string; supervisor_id: string; reason: string }[]>`
     SELECT id, exception_type, entity_type, entity_id, status, supervisor_id, reason FROM authorizations WHERE id = ${id}::uuid FOR UPDATE`;
@@ -25,12 +28,25 @@ export async function consumeAuthorization(
   if (a.exception_type !== expected.exception_type || a.entity_type !== expected.entity_type || a.entity_id !== expected.entity_id) {
     throw new RuleError('AUTHORIZATION_MISMATCH', 'Authorization does not match this operation', { expected, got: a });
   }
+  // separation of duties: the person executing the exception (or otherwise involved) can never be its own authorizer
+  if (a.supervisor_id === ctx.userId || alsoNot.some((u) => u && u === a.supervisor_id)) {
+    throw new RuleError('SELF_AUTHORIZATION', 'The authorizing supervisor cannot be the same person who executes or is involved in the exception');
+  }
   await tx.authorizations.update({ where: { id }, data: { status: 'CONSUMED', consumed_at: new Date() } });
   return { supervisor_id: a.supervisor_id, reason: a.reason };
 }
 
 export async function createAuthorization(tx: Tx, ctx: ActorContext, input: z.infer<typeof zAuthorize>) {
   if (!ctx.permissions.has('exceptions.authorize')) throw new ForbiddenError('Only supervisors can authorize exceptions');
+  if (input.exception_type === 'FORCE_RELEASE_NOT_ALLOWED') {
+    throw new RuleError('RELEASE_CANNOT_BE_FORCED', 'A shipment release can never be forced: every SKU must be loaded exactly as required');
+  }
+  if (input.exception_type === 'PUTAWAY_LOCATION_OVERRIDE' && !ctx.permissions.has('putaway.override')) {
+    throw new ForbiddenError('putaway.override permission required to authorize location overrides');
+  }
+  if (input.requested_by && input.requested_by === ctx.userId) {
+    throw new RuleError('SELF_AUTHORIZATION', 'A supervisor cannot authorize an exception requested by themselves');
+  }
   const a = await tx.authorizations.create({
     data: {
       exception_type: input.exception_type,

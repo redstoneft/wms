@@ -29,6 +29,18 @@ export async function masterDataRoutes(app: FastifyInstance) {
     return { items, total };
   });
 
+  /** Resolve a scanned barcode (or SKU code) to its SKU, packaging level and UoM table — read-only, for handheld screens. */
+  app.get('/skus/by-barcode/:barcode', { preHandler: app.requireAuth }, async (req) => {
+    const barcode = (req.params as { barcode: string }).barcode;
+    const { resolveSkuBarcode, uomTableFor } = await import('../../lib/lookup.js');
+    return withTx(async (tx) => {
+      const r = await resolveSkuBarcode(tx, barcode);
+      const uoms = await tx.sku_uoms.findMany({ where: { sku_id: r.sku.id }, orderBy: { base_qty: 'asc' } });
+      await uomTableFor(tx, r.sku.id);
+      return { sku: { id: r.sku.id, code: r.sku.code, description: r.sku.description, requires_lot: r.sku.requires_lot, requires_expiry: r.sku.requires_expiry, is_active: r.sku.is_active }, uom_code: r.uom_code, uoms: uoms.map((u) => ({ uom_code: u.uom_code, base_qty: u.base_qty })) };
+    });
+  });
+
   app.get('/skus/:id', { preHandler: app.requirePermission('masterdata.read') }, async (req) => {
     const id = (req.params as { id: string }).id;
     const sku = await db.skus.findFirst({ where: { OR: [{ id: z.string().uuid().safeParse(id).success ? id : undefined }, { code: id }] }, include: { uoms: true, barcodes: true } });
@@ -41,6 +53,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
   app.post('/skus', { preHandler: app.requirePermission('masterdata.manage') }, async (req, reply) => {
     const body = zCreateSku.parse(req.body);
     const uoms = normalizeUoms(body.uoms);
+    for (const b of body.barcodes) if (!uoms.some((u) => u.uom_code === b.uom_code)) throw new RuleError('BARCODE_UOM_ORPHAN', `Barcode ${b.barcode} references UoM ${b.uom_code} which the SKU does not define`);
     const sku = await withTx(async (tx) => {
       if (await tx.skus.findUnique({ where: { code: body.code } })) throw new ConflictError('SKU_EXISTS', `SKU ${body.code} already exists`);
       for (const b of body.barcodes) {
@@ -61,7 +74,6 @@ export async function masterDataRoutes(app: FastifyInstance) {
           pallet_height_cm: body.pallet_height_cm ?? null,
           requires_lot: body.requires_lot,
           requires_expiry: body.requires_expiry,
-          allow_negative: body.allow_negative,
           uoms: { create: uoms.map((u) => ({ uom_code: u.uom_code, base_qty: u.base_qty })) },
           barcodes: { create: body.barcodes.map((b) => ({ barcode: b.barcode, uom_code: b.uom_code })) },
         },
@@ -86,12 +98,17 @@ export async function masterDataRoutes(app: FastifyInstance) {
       await tx.skus.update({ where: { id }, data });
       if (uoms) {
         const norm = normalizeUoms(uoms);
-        // UoM changes are only allowed when they keep all existing barcodes valid
+        // UoM changes must keep every barcode (existing or incoming) resolvable
+        const futureBarcodes = barcodes ?? before.barcodes;
+        const orphan = futureBarcodes.filter((b) => !norm.some((u) => u.uom_code === b.uom_code));
+        if (orphan.length) throw new RuleError('BARCODE_UOM_ORPHAN', `Barcodes ${orphan.map((b) => b.barcode).join(', ')} reference a UoM that would no longer exist`);
         await tx.sku_uoms.deleteMany({ where: { sku_id: id } });
         await tx.sku_uoms.createMany({ data: norm.map((u) => ({ sku_id: id, uom_code: u.uom_code, base_qty: u.base_qty })) });
       }
       if (barcodes) {
+        const uomSet = uoms ? normalizeUoms(uoms) : before.uoms;
         for (const b of barcodes) {
+          if (!uomSet.some((u) => u.uom_code === b.uom_code)) throw new RuleError('BARCODE_UOM_ORPHAN', `Barcode ${b.barcode} references UoM ${b.uom_code} which the SKU does not define`);
           const clash = await tx.sku_barcodes.findUnique({ where: { barcode: b.barcode } });
           if (clash && clash.sku_id !== id) throw new ConflictError('BARCODE_EXISTS', `Barcode ${b.barcode} belongs to another SKU`);
         }
@@ -153,7 +170,13 @@ export async function masterDataRoutes(app: FastifyInstance) {
   const zPrinter = z.object({
     code: z.string().trim().min(1).max(40),
     name: z.string().trim().min(1).max(120),
-    host: z.string().trim().min(1).max(255),
+    // printers live on the LAN: private IPv4 or a plain hostname (no schemes/paths) — prevents using the API as a TCP relay
+    host: z
+      .string()
+      .trim()
+      .min(1)
+      .max(255)
+      .refine((h) => /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|[A-Za-z0-9][A-Za-z0-9.-]{0,253})$/.test(h) && !/^\d{1,3}(\.\d{1,3}){3}$/.test(h.replace(/^(10|172\.(1[6-9]|2\d|3[01])|192\.168|127)\..*/, '')), 'printer host must be a private IPv4 address or a LAN hostname'),
     port: z.number().int().min(1).max(65535).default(9100),
     dpi: z.union([z.literal(203), z.literal(300)]).default(203),
     label_width_mm: z.number().int().min(20).max(300).default(100),

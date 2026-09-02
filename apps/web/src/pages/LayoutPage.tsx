@@ -7,7 +7,7 @@ import { layoutApi } from '../api/layout';
 import type { LocationRow, Rack, Zone } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/Toast';
-import { Alert, Button, Card, Drawer, Field, Input, PageHeader, Select, StatusChip, Table, Tabs, Textarea } from '../components/ui';
+import { Alert, Button, Drawer, Field, Input, PageHeader, Select, StatusChip, Table, Tabs, Textarea } from '../components/ui';
 import { useDebounced, useQueryParam } from '../lib/hooks';
 import { es, fmtNum, fmtQty } from '../lib/format';
 
@@ -21,7 +21,6 @@ export default function LayoutPage() {
   const warehouse = wh.data?.[0];
   useEffect(() => {
     if (sp.get('location') && tab !== 'locations') setTab('locations');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sp]);
   if (!warehouse) return <Alert tone="info">Cargando almacén…</Alert>;
   return (

@@ -158,7 +158,7 @@ export async function makeFixture(opts: { skus?: number; reserveBays?: number; l
 }
 
 /** Puts a stored pallet with `qty` base units of a SKU in a location (via the ledger). */
-export async function storedPallet(f: Fixture, skuIdx: number, locationId: string, qty: bigint, extra: { lot?: string; expiry?: Date } = {}) {
+export async function storedPallet(f: Fixture, skuIdx: number, locationId: string, qty: bigint, extra: { lot?: string; expiry?: string } = {}) {
   return withTx(async (tx) => {
     const lpn = await createLpn(tx, SYSTEM_ACTOR, { warehouse_id: f.warehouse_id, lpn_type: 'STORAGE', location_id: locationId, lot: extra.lot ?? null, expiry_date: extra.expiry ?? null });
     await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'STORED' } });

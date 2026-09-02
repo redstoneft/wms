@@ -34,7 +34,6 @@ export function QtyPad({ uoms, defaultUom = 'PIECE', hint, onConfirm, onCancel, 
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [val, uom]);
 
   const press = (k: string) => {

@@ -25,7 +25,8 @@ export async function startVerification(tx: Tx, ctx: ActorContext, input: { orde
     if (!input.authorization_id) {
       throw new RuleError('SAME_USER', 'SURTIDOR = VERIFICADOR: the picker cannot verify their own order. A supervisor authorization (SAME_USER_VERIFICATION) is required.', { picker_id: order.picker_id });
     }
-    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'SAME_USER_VERIFICATION', entity_type: 'order', entity_id: order.id });
+    // the authorizing supervisor must be neither the verifier nor the picker
+    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'SAME_USER_VERIFICATION', entity_type: 'order', entity_id: order.id }, ctx, [order.picker_id]);
     authId = input.authorization_id;
   }
   const expected = await tx.$queryRaw<{ lpn_id: string; sku_id: string; qty: bigint }[]>`
@@ -48,19 +49,23 @@ export async function verifyScan(tx: Tx, ctx: ActorContext, input: { verificatio
   const lpn = await tx.lpns.findUnique({ where: { code: input.lpn_code.toUpperCase() } });
   if (!lpn) throw new NotFoundError('LPN', input.lpn_code);
   if (lpn.order_id !== v.order_id) {
-    await audit(tx, ctx, { action: 'verification.blocked_wrong_lpn', entity_type: 'verification', entity_id: v.id, after: { scanned: lpn.code } });
-    throw new RuleError('WRONG_LPN', `LPN ${lpn.code} does not belong to this order`);
+    throw new RuleError('WRONG_LPN', `LPN ${lpn.code} does not belong to this order`).persistAfterRollback((tx2) =>
+      audit(tx2, ctx, { action: 'verification.blocked_wrong_lpn', entity_type: 'verification', entity_id: v.id, after: { scanned: lpn.code } }),
+    );
   }
   const { sku, uom_code } = await resolveSkuBarcode(tx, input.barcode);
   const { base } = await toBaseQty(tx, sku.id, input.qty, input.uom_code ?? uom_code);
   const line = await tx.verification_lines.findFirst({ where: { verification_id: v.id, lpn_id: lpn.id, sku_id: sku.id } });
   if (!line) {
-    await audit(tx, ctx, { action: 'verification.blocked_wrong_sku', entity_type: 'verification', entity_id: v.id, after: { lpn: lpn.code, sku: sku.code } });
-    throw new RuleError('WRONG_SKU', `SKU ${sku.code} is not expected in LPN ${lpn.code}`);
+    throw new RuleError('WRONG_SKU', `SKU ${sku.code} is not expected in LPN ${lpn.code}`).persistAfterRollback((tx2) =>
+      audit(tx2, ctx, { action: 'verification.blocked_wrong_sku', entity_type: 'verification', entity_id: v.id, after: { lpn: lpn.code, sku: sku.code } }),
+    );
   }
   if (line.scanned_qty + base > line.expected_qty) {
-    await audit(tx, ctx, { action: 'verification.blocked_qty_exceeded', entity_type: 'verification', entity_id: v.id, after: { lpn: lpn.code, sku: sku.code, scanned: (line.scanned_qty + base).toString(), expected: line.expected_qty.toString() } });
-    throw new RuleError('QTY_EXCEEDED', `Scanned more ${sku.code} than picked in ${lpn.code}`, { expected: line.expected_qty, already: line.scanned_qty, scanned: base });
+    const info = { lpn: lpn.code, sku: sku.code, scanned: (line.scanned_qty + base).toString(), expected: line.expected_qty.toString() };
+    throw new RuleError('QTY_EXCEEDED', `Scanned more ${sku.code} than picked in ${lpn.code}`, { expected: line.expected_qty, already: line.scanned_qty, scanned: base }).persistAfterRollback((tx2) =>
+      audit(tx2, ctx, { action: 'verification.blocked_qty_exceeded', entity_type: 'verification', entity_id: v.id, after: info }),
+    );
   }
   const updated = await tx.verification_lines.update({ where: { id: line.id }, data: { scanned_qty: { increment: base } } });
   await audit(tx, ctx, { action: 'verification.scan', entity_type: 'verification', entity_id: v.id, after: { lpn: lpn.code, sku: sku.code, qty: base.toString() } });

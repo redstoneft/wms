@@ -53,7 +53,7 @@ function Flow() {
       setOverride(null);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'WRONG_LOCATION') {
-        wm.fail(e, 'UBICACIÓN INCORRECTA');
+        wm.error(e, 'UBICACIÓN INCORRECTA');
         setOverride({ scanned: locationBarcode, authId: '', reason: '' });
       } else wm.fail(e);
     } finally {

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getDb, sqlState, type Tx, withTx } from '../db.js';
-import { ConflictError, translateDbError } from '../errors.js';
+import { ConflictError, translateDbError, ValidationError } from '../errors.js';
 import { loadConfig } from '../config.js';
 import type { ActorContext } from './context.js';
 
@@ -38,8 +38,8 @@ export async function runIdempotent<T>(
 ): Promise<IdempotentResult<T>> {
   const key = ctx.idempotencyKey;
   if (!key) {
-    const r = await withTx(fn);
-    return { ...r, replayed: false };
+    // Movement-producing endpoints are never executed without a key: a retry could otherwise double-record a scan.
+    throw new ValidationError('Idempotency-Key header is required for this operation', { code: 'IDEMPOTENCY_KEY_REQUIRED' });
   }
   const scopeKey = `${ctx.userId}:${key}`;
   const db = getDb();

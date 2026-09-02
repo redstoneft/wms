@@ -25,7 +25,7 @@ export async function adjustInventory(
   const { base } = await toBaseQty(tx, sku.id, input.qty, input.uom_code);
   // adjustments of significant size need a supervisor
   if (input.authorization_id) {
-    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'COUNT_ADJUSTMENT', entity_type: 'lpn', entity_id: lpn.id });
+    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'COUNT_ADJUSTMENT', entity_type: 'lpn', entity_id: lpn.id }, ctx);
   } else if (!ctx.permissions.has('counts.approve')) {
     throw new ForbiddenError('Inventory adjustments require supervisor approval (authorization_id) or the counts.approve permission');
   }
@@ -158,16 +158,20 @@ export async function reconcile(tx: Tx) {
   const locationDiffs = await tx.$queryRaw<{ lpn_id: string; ledger_location_id: string | null; lpn_location_id: string | null }[]>`SELECT * FROM lpn_location_reconcile()`;
   const negatives = await tx.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM inventory_balances WHERE qty < 0`;
   const orphanLpns = await tx.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM lpns l WHERE l.status IN ('STORED','IN_TRANSFER','PICKING','STAGED','LOADED') AND l.current_location_id IS NULL`;
-  const orderLineDiffs = await tx.$queryRaw<{ order_number: string; sku_code: string; picked_qty: bigint; ledger_picked: bigint }[]>`
-    SELECT o.order_number, s.code AS sku_code, ol.picked_qty,
-           COALESCE((SELECT sum(m.qty) FROM inventory_movements m WHERE m.order_id = o.id AND m.sku_id = ol.sku_id AND m.movement_type = 'PICK'), 0)
-         - COALESCE((SELECT sum(m.qty) FROM inventory_movements m WHERE m.order_id = o.id AND m.sku_id = ol.sku_id AND m.movement_type = 'UNPICK'), 0)::bigint AS ledger_picked
+  // order-line counters are not protected by the ledger trigger: compare picked/loaded with the ledger per (order, sku)
+  const orderLineDiffs = await tx.$queryRaw<{ order_number: string; sku_code: string; picked_qty: bigint; ledger_picked: bigint; loaded_qty: bigint; ledger_loaded: bigint }[]>`
+    WITH led AS (
+      SELECT m.order_id, m.sku_id,
+             COALESCE(sum(m.qty) FILTER (WHERE m.movement_type = 'PICK'), 0) - COALESCE(sum(m.qty) FILTER (WHERE m.movement_type = 'UNPICK'), 0) AS picked,
+             COALESCE(sum(m.qty) FILTER (WHERE m.movement_type = 'LOAD'), 0) - COALESCE(sum(m.qty) FILTER (WHERE m.movement_type = 'UNLOAD'), 0) AS loaded
+        FROM inventory_movements m WHERE m.order_id IS NOT NULL GROUP BY m.order_id, m.sku_id)
+    SELECT o.order_number, s.code AS sku_code, ol.picked_qty, COALESCE(led.picked, 0)::bigint AS ledger_picked, ol.loaded_qty, COALESCE(led.loaded, 0)::bigint AS ledger_loaded
       FROM order_lines ol JOIN orders o ON o.id = ol.order_id JOIN skus s ON s.id = ol.sku_id
+      LEFT JOIN led ON led.order_id = o.id AND led.sku_id = ol.sku_id
      WHERE o.status NOT IN ('IMPORTED','ACCEPTED','CANCELLED')
-    HAVING ol.picked_qty <> COALESCE((SELECT sum(m.qty) FROM inventory_movements m WHERE m.order_id = o.id AND m.sku_id = ol.sku_id AND m.movement_type = 'PICK'), 0)
-         - COALESCE((SELECT sum(m.qty) FROM inventory_movements m WHERE m.order_id = o.id AND m.sku_id = ol.sku_id AND m.movement_type = 'UNPICK'), 0)`.catch(() => [] as never);
+       AND (ol.picked_qty <> COALESCE(led.picked, 0) OR ol.loaded_qty <> COALESCE(led.loaded, 0))`;
   const totals = await tx.$queryRaw<{ status: string; qty: bigint }[]>`SELECT status, sum(qty)::bigint AS qty FROM inventory_balances GROUP BY status ORDER BY status`;
-  const ok = balanceDiffs.length === 0 && locationDiffs.length === 0 && Number(negatives[0]?.n ?? 0) === 0 && Number(orphanLpns[0]?.n ?? 0) === 0;
+  const ok = balanceDiffs.length === 0 && locationDiffs.length === 0 && Number(negatives[0]?.n ?? 0) === 0 && Number(orphanLpns[0]?.n ?? 0) === 0 && orderLineDiffs.length === 0;
   return {
     ok,
     checked_at: new Date().toISOString(),

@@ -1,5 +1,5 @@
 import type { Tx } from '../../db.js';
-import { ConflictError, ForbiddenError, NotFoundError, RuleError } from '../../errors.js';
+import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { lockLocation, lockLocationByBarcode, lockLpn, lockLpnByCode, moveLpn, type LocationRow, type LpnRow } from '../../inventory/ledger.js';
@@ -190,9 +190,23 @@ export async function suggestLocation(tx: Tx, lpn: LpnRow): Promise<SlottingExpl
 // Put-away tasks
 // ---------------------------------------------------------------------
 
-export async function createPutawayTask(tx: Tx, ctx: ActorContext, lpn: LpnRow) {
+/** Put-away only applies to pallets waiting in an inbound area (RECEIVING/RETURNS) whose stock is free. Storage-to-storage moves go through transfers. */
+async function assertPutawayEligible(tx: Tx, lpn: LpnRow, opts: { skipLocationCheck?: boolean } = {}) {
+  if (lpn.current_location_id && !opts.skipLocationCheck) {
+    const loc = await tx.locations.findUnique({ where: { id: lpn.current_location_id }, select: { location_type: true, code: true } });
+    if (loc && !['RECEIVING', 'RETURNS'].includes(loc.location_type)) {
+      throw new RuleError('LPN_ALREADY_STORED', `LPN ${lpn.code} is already stored at ${loc.code}; use a transfer to move it`);
+    }
+  }
+  const busy = await tx.$queryRaw<{ status: string }[]>`SELECT DISTINCT status FROM inventory_balances WHERE lpn_id = ${lpn.id}::uuid AND qty > 0 AND status IN ('ALLOCATED','PICKING','STAGING','LOADED','IN_TRANSFER')`;
+  if (busy.length) throw new RuleError('LPN_NOT_FREE', `LPN ${lpn.code} has inventory in ${busy.map((b) => b.status).join(', ')} and cannot be put away`);
+}
+
+export async function createPutawayTask(tx: Tx, ctx: ActorContext, lpn: LpnRow, opts: { allowStoredLocation?: boolean } = {}) {
   const existing = await tx.putaway_tasks.findFirst({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } } });
   if (existing) return existing;
+  // allowStoredLocation: legitimate flows that leave a pallet in an aisle (e.g. picked goods returned to stock on cancellation)
+  await assertPutawayEligible(tx, lpn, { skipLocationCheck: opts.allowStoredLocation });
   const suggestion = await suggestLocation(tx, lpn);
   const task = await tx.putaway_tasks.create({
     data: {
@@ -211,6 +225,8 @@ export async function startPutaway(tx: Tx, ctx: ActorContext, lpnCode: string) {
   const lpn = await lockLpnByCode(tx, lpnCode);
   if (lpn.status !== 'STORED' && lpn.status !== 'OPEN') throw new RuleError('LPN_STATUS', `LPN ${lpn.code} is ${lpn.status}; only stored pallets can be put away`);
   let task = await tx.putaway_tasks.findFirst({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } } });
+  // an existing task was created by a legitimate flow (receiving close, returns, cancelled picking): only the stock-status rule applies
+  await assertPutawayEligible(tx, lpn, { skipLocationCheck: !!task });
   if (!task) {
     if (lpn.status === 'OPEN') throw new RuleError('LPN_NOT_CLOSED', `LPN ${lpn.code} is still open in receiving; close it first`);
     task = await createPutawayTask(tx, ctx, lpn);
@@ -251,6 +267,7 @@ export async function confirmPutaway(
 
   const lpn = await lockLpn(tx, task.lpn_id);
   if (lpn.code !== input.lpn_code.trim().toUpperCase()) throw new RuleError('WRONG_LPN', `Scanned LPN ${input.lpn_code} does not match task LPN ${lpn.code}`);
+  await assertPutawayEligible(tx, lpn, { skipLocationCheck: true });
   const scanned = await lockLocationByBarcode(tx, input.location_barcode);
 
   let overrideBy: string | null = null;
@@ -264,8 +281,7 @@ export async function confirmPutaway(
         hint: 'A supervisor authorization (PUTAWAY_LOCATION_OVERRIDE) is required to store the pallet elsewhere',
       });
     }
-    if (!ctx.permissions.has('putaway.execute')) throw new ForbiddenError();
-    const auth = await consumeAuthorization(tx, input.authorization_id, { exception_type: 'PUTAWAY_LOCATION_OVERRIDE', entity_type: 'putaway_task', entity_id: task.id });
+    const auth = await consumeAuthorization(tx, input.authorization_id, { exception_type: 'PUTAWAY_LOCATION_OVERRIDE', entity_type: 'putaway_task', entity_id: task.id }, ctx);
     overrideBy = auth.supervisor_id;
     overrideReason = input.override_reason ?? auth.reason;
     if (!overrideReason) throw new RuleError('REASON_REQUIRED', 'Override requires a reason');

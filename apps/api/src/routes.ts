@@ -23,6 +23,7 @@ import { settingsRoutes } from './modules/settings/routes.js';
 import { authorizationRoutes } from './modules/authorizations/routes.js';
 import { auditRoutes } from './modules/audit/routes.js';
 import { integrationRoutes } from './modules/integrations/routes.js';
+import { attachmentRoutes } from './modules/attachments/routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(
@@ -51,6 +52,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(authorizationRoutes);
       await api.register(auditRoutes);
       await api.register(integrationRoutes);
+      await api.register(attachmentRoutes);
     },
     { prefix: '/api' },
   );

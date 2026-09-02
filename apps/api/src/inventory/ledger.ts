@@ -125,10 +125,15 @@ export async function lockLocation(tx: Tx, locationId: string): Promise<Location
 }
 
 export async function lockLocationByBarcode(tx: Tx, barcode: string): Promise<LocationRow> {
-  const rows = await tx.$queryRaw<LocationRow[]>`SELECT id, warehouse_id, zone_id, rack_id, code, barcode, location_type, admin_status,
+  // exact barcode match wins; the human-readable code is only a fallback (avoids ambiguity when a barcode equals another location's code)
+  const byBarcode = await tx.$queryRaw<LocationRow[]>`SELECT id, warehouse_id, zone_id, rack_id, code, barcode, location_type, admin_status,
       pallet_capacity, max_weight_kg::text AS max_weight_kg, height_m::text AS height_m, restrictions, is_active, level, pick_sequence
-    FROM locations WHERE barcode = ${barcode.trim()} OR code = ${barcode.trim().toUpperCase()} FOR UPDATE`;
-  const row = rows[0];
+    FROM locations WHERE barcode = ${barcode.trim()} FOR UPDATE`;
+  if (byBarcode[0]) return byBarcode[0];
+  const byCode = await tx.$queryRaw<LocationRow[]>`SELECT id, warehouse_id, zone_id, rack_id, code, barcode, location_type, admin_status,
+      pallet_capacity, max_weight_kg::text AS max_weight_kg, height_m::text AS height_m, restrictions, is_active, level, pick_sequence
+    FROM locations WHERE code = ${barcode.trim().toUpperCase()} FOR UPDATE`;
+  const row = byCode[0];
   if (!row) throw new NotFoundError('location', barcode);
   return row;
 }
@@ -400,7 +405,8 @@ export async function createLpn(
     order_id?: string | null;
     parent_lpn_id?: string | null;
     lot?: string | null;
-    expiry_date?: Date | null;
+    /** ISO date YYYY-MM-DD (never a JS Date: avoids timezone shifts) */
+    expiry_date?: string | null;
     weight_kg?: number | null;
     cases_count?: number;
   },

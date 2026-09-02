@@ -5,7 +5,6 @@ import { audit } from '../../lib/audit.js';
 
 export const DEFAULT_SETTINGS = {
   allocation_strategy: 'FIFO',
-  count_variance_recount_threshold: 0,
   session_ttl_hours: 12,
   require_mfa_for_admin: true,
   auto_print_lpn_labels: true,
@@ -21,6 +20,18 @@ export async function getSettings(tx?: Tx): Promise<SettingsShape> {
   return out as SettingsShape;
 }
 
+let cache: { at: number; value: SettingsShape } | null = null;
+/** Settings read on hot paths (every request): cached for 15 s, refreshed on write. */
+export async function getSettingsCached(): Promise<SettingsShape> {
+  if (cache && Date.now() - cache.at < 15_000) return cache.value;
+  const value = await getSettings();
+  cache = { at: Date.now(), value };
+  return value;
+}
+export function invalidateSettingsCache() {
+  cache = null;
+}
+
 export async function settingsRoutes(app: FastifyInstance) {
   app.get('/settings', { preHandler: app.requireAuth }, async () => getSettings());
   app.put('/settings', { preHandler: app.requirePermission('settings.manage') }, async (req) => {
@@ -33,6 +44,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       const after = await getSettings(tx);
       await audit(tx, req.actor!, { action: 'settings.update', entity_type: 'settings', before, after });
+      invalidateSettingsCache();
       return after;
     });
   });

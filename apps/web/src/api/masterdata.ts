@@ -1,7 +1,7 @@
-import { api } from './client';
+import { api, type Query } from './client';
 import type { Paged, Party, Printer, QuarantineReason, Sku } from './types';
 
-export interface ListQuery {
+export interface ListQuery extends Query {
   q?: string;
   active?: 'true' | 'false';
   limit?: number;

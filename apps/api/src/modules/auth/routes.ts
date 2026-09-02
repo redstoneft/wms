@@ -23,7 +23,7 @@ export async function authRoutes(app: FastifyInstance) {
         deviceId: body.device_id ?? (req.headers['x-device-id'] as string | undefined) ?? null,
         requestId: req.id,
       });
-      reply.setCookie(SESSION_COOKIE, result.token, cookieOptions());
+      reply.setCookie(SESSION_COOKIE, result.token, cookieOptions(result.ttl_hours));
       return {
         user: result.user,
         mfa_required: result.mfa_required,
@@ -67,7 +67,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/auth/password', { preHandler: app.requireAuth }, async (req) => {
     const body = zChangePassword.parse(req.body);
-    await svc.changePassword(req.actor!, body.current_password, body.new_password);
+    await svc.changePassword(req.actor!, body.current_password, body.new_password, req.sessionId);
     return { ok: true };
   });
 

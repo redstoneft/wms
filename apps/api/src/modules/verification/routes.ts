@@ -12,7 +12,9 @@ export async function verificationRoutes(app: FastifyInstance) {
   app.get('/verifications/pending-orders', { preHandler: perm }, async () =>
     db.$queryRaw<Record<string, unknown>[]>`
       SELECT o.id, o.order_number, o.priority, c.name AS customer, o.picker_id, u.username AS picker, sl.code AS staging_code,
-             (SELECT count(*) FROM lpns l WHERE l.order_id = o.id AND l.status = 'STAGED') AS staged_lpns
+             (SELECT count(*) FROM lpns l WHERE l.order_id = o.id AND l.status = 'STAGED') AS staged_lpns,
+             (SELECT v.id FROM verifications v WHERE v.order_id = o.id AND v.status = 'IN_PROGRESS' LIMIT 1) AS verification_id,
+             (SELECT v.verifier_id FROM verifications v WHERE v.order_id = o.id AND v.status = 'IN_PROGRESS' LIMIT 1) AS verifier_id
         FROM orders o JOIN customers c ON c.id = o.customer_id LEFT JOIN users u ON u.id = o.picker_id
         LEFT JOIN staging_assignments sa ON sa.order_id = o.id AND sa.released_at IS NULL LEFT JOIN locations sl ON sl.id = sa.location_id
        WHERE o.status = 'STAGED' ORDER BY o.priority, o.created_at`,

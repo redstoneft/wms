@@ -15,10 +15,10 @@ export default function UsersPage() {
   const [edit, setEdit] = useState<(Partial<UserRow> & { isNew?: boolean; password?: string }) | null>(null);
   const refresh = () => void qc.invalidateQueries({ queryKey: ['users'] });
   const save = useMutation({
-    mutationFn: () =>
-      edit!.isNew
-        ? adminApi.createUser({ username: edit!.username, full_name: edit!.full_name, email: edit!.email || undefined, password: edit!.password, roles: edit!.roles })
-        : adminApi.updateUser(edit!.id!, { full_name: edit!.full_name, email: edit!.email || null, is_active: edit!.is_active, roles: edit!.roles, reset_password: edit!.password || undefined }),
+    mutationFn: async () => {
+      if (edit!.isNew) await adminApi.createUser({ username: edit!.username, full_name: edit!.full_name, email: edit!.email || undefined, password: edit!.password, roles: edit!.roles });
+      else await adminApi.updateUser(edit!.id!, { full_name: edit!.full_name, email: edit!.email || null, is_active: edit!.is_active, roles: edit!.roles, reset_password: edit!.password || undefined });
+    },
     onSuccess: () => { toast.success('Usuario guardado'); setEdit(null); refresh(); },
     onError: (e) => toast.error('No se pudo guardar', e),
   });

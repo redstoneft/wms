@@ -78,15 +78,18 @@ export async function removeOrder(tx: Tx, ctx: ActorContext, shipmentId: string,
  */
 export async function loadScan(tx: Tx, ctx: ActorContext, input: { shipment_id: string; lpn_code: string; dock_location_barcode?: string }) {
   const sh = await lockShipment(tx, input.shipment_id);
-  if (!['OPEN', 'LOADING'].includes(sh.status)) throw new RuleError('SHIPMENT_STATUS', `Shipment is ${sh.status}; loading is closed`);
+  // BLOCKED = a release attempt failed; operators keep loading/unloading to fix it
+  if (!['OPEN', 'LOADING', 'BLOCKED'].includes(sh.status)) throw new RuleError('SHIPMENT_STATUS', `Shipment is ${sh.status}; loading is closed`);
   const lpn = await lockLpnByCode(tx, input.lpn_code);
   if (lpn.status === 'LOADED') throw new ConflictError('ALREADY_LOADED', `LPN ${lpn.code} is already loaded${lpn.shipment_id === sh.id ? ' on this shipment' : ' on another shipment'}`);
   if (lpn.status !== 'STAGED') throw new RuleError('LPN_STATUS', `LPN ${lpn.code} is ${lpn.status}; only staged pallets can be loaded`);
   if (!lpn.order_id) throw new RuleError('LPN_NO_ORDER', 'LPN has no order');
   const order = await tx.orders.findUniqueOrThrow({ where: { id: lpn.order_id } });
   if (order.shipment_id !== sh.id) {
-    await createIncident(tx, ctx, { incident_type: 'LOADING_ERROR', severity: 'HIGH', title: `Intento de cargar pallet ${lpn.code} del pedido ${order.order_number} en embarque ${sh.shipment_number}`, entity_type: 'shipment', entity_id: sh.id, lpn_id: lpn.id, order_id: order.id, shipment_id: sh.id });
-    throw new RuleError('WRONG_SHIPMENT', `LPN ${lpn.code} belongs to order ${order.order_number}, which is not in this shipment`);
+    const incident = { incident_type: 'LOADING_ERROR' as const, severity: 'HIGH' as const, title: `Intento de cargar pallet ${lpn.code} del pedido ${order.order_number} en embarque ${sh.shipment_number}`, entity_type: 'shipment', entity_id: sh.id, lpn_id: lpn.id, order_id: order.id, shipment_id: sh.id };
+    throw new RuleError('WRONG_SHIPMENT', `LPN ${lpn.code} belongs to order ${order.order_number}, which is not in this shipment`).persistAfterRollback(async (tx2) => {
+      await createIncident(tx2, ctx, incident);
+    });
   }
   if (order.status !== 'VERIFIED' && order.status !== 'LOADING') throw new RuleError('ORDER_NOT_VERIFIED', `Order ${order.order_number} is ${order.status}; it must pass second-person verification before loading`);
 
@@ -116,6 +119,7 @@ export async function loadScan(tx: Tx, ctx: ActorContext, input: { shipment_id: 
   }
   await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'LOADED', shipment_id: sh.id, version: { increment: 1 } } });
   if (sh.status === 'OPEN') await tx.shipments.update({ where: { id: sh.id }, data: { status: 'LOADING', loading_started_at: new Date(), dock_location_id: dockId, version: { increment: 1 } } });
+  if (sh.status === 'BLOCKED') await tx.shipments.update({ where: { id: sh.id }, data: { status: 'LOADING', version: { increment: 1 } } });
   if (order.status === 'VERIFIED') await tx.orders.update({ where: { id: order.id }, data: { status: 'LOADING', version: { increment: 1 } } });
   // staged pallets left for the order?
   const staged = await tx.lpns.count({ where: { order_id: order.id, status: 'STAGED' } });
@@ -191,13 +195,16 @@ export async function releaseCheck(tx: Tx, shipmentId: string): Promise<ReleaseC
 export async function releaseShipment(tx: Tx, ctx: ActorContext, input: { shipment_id: string; version: number }) {
   const sh = await lockShipment(tx, input.shipment_id);
   if (sh.version !== input.version) throw new ConflictError('STALE_VERSION', 'Shipment changed; reload and re-check before releasing');
-  if (!['LOADING', 'LOADED', 'BLOCKED'].includes(sh.status)) throw new RuleError('SHIPMENT_STATUS', `Shipment is ${sh.status}`);
+  if (!['OPEN', 'LOADING', 'LOADED', 'BLOCKED'].includes(sh.status)) throw new RuleError('SHIPMENT_STATUS', `Shipment is ${sh.status}`);
   const check = await releaseCheck(tx, sh.id);
-  await tx.shipments.update({ where: { id: sh.id }, data: { release_check: JSON.parse(JSON.stringify(check, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))) } });
+  const checkJson = JSON.parse(JSON.stringify(check, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  await tx.shipments.update({ where: { id: sh.id }, data: { release_check: checkJson } });
   if (!check.can_release) {
-    await tx.shipments.update({ where: { id: sh.id }, data: { status: 'BLOCKED', version: { increment: 1 } } });
-    await audit(tx, ctx, { action: 'shipment.release_blocked', entity_type: 'shipment', entity_id: sh.id, after: { reasons: check.blocking_reasons } });
-    throw new RuleError('RELEASE_BLOCKED', 'EMBARQUE INCORRECTO — release blocked', { blocking_reasons: check.blocking_reasons, lines: check.lines });
+    // the rejection itself must survive the rollback: mark the shipment BLOCKED, keep the check, audit it
+    throw new RuleError('RELEASE_BLOCKED', 'EMBARQUE INCORRECTO — release blocked', { blocking_reasons: check.blocking_reasons, lines: check.lines }).persistAfterRollback(async (tx2) => {
+      await tx2.shipments.update({ where: { id: sh.id }, data: { status: 'BLOCKED', release_check: checkJson, version: { increment: 1 } } });
+      await audit(tx2, ctx, { action: 'shipment.release_blocked', entity_type: 'shipment', entity_id: sh.id, after: { reasons: check.blocking_reasons } });
+    });
   }
   await tx.shipments.update({ where: { id: sh.id }, data: { status: 'RELEASED', released_at: new Date(), released_by: ctx.userId, loading_finished_at: new Date(), version: { increment: 1 } } });
   await audit(tx, ctx, { action: 'shipment.release', entity_type: 'shipment', entity_id: sh.id, after: { totals: { required: check.totals.required.toString(), loaded: check.totals.loaded.toString() } } });

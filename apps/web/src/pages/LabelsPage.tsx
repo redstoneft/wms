@@ -41,7 +41,6 @@ export default function LabelsPage() {
   });
   useEffect(() => {
     if (sp.get('id')) doPreview.mutate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

@@ -244,9 +244,10 @@ export async function layoutRoutes(app: FastifyInstance) {
         SELECT 'warehouse', l.warehouse_id::text, count(*), count(*) FILTER (WHERE o.status IN ('OCCUPIED','PARTIAL'))
           FROM locations l JOIN v_location_occupancy o ON o.location_id = l.id WHERE l.warehouse_id = ${wh.id}::uuid AND l.is_active GROUP BY l.warehouse_id`,
     ]);
+    const num = (v: unknown) => Number(v);
     return {
-      warehouse: wh,
-      zones,
+      warehouse: { ...wh, width_m: num(wh.width_m), depth_m: num(wh.depth_m), height_m: num(wh.height_m) },
+      zones: zones.map((z) => ({ ...z, x_m: num(z.x_m), y_m: num(z.y_m), width_m: num(z.width_m), depth_m: num(z.depth_m) })),
       racks: racks.map((r) => ({
         id: r.id,
         code: r.code,

@@ -46,7 +46,7 @@ function Flow() {
     } catch (e) {
       if (e instanceof ApiError && e.code === 'SAME_USER') {
         setOrder(o);
-        wm.fail(e, 'SURTIDOR = VERIFICADOR');
+        wm.error(e, 'SURTIDOR = VERIFICADOR');
         setStep('AUTH');
       } else wm.fail(e);
     } finally {
@@ -78,7 +78,7 @@ function Flow() {
       const r = await verificationApi.complete(vid);
       setResult(r);
       if (r.status === 'PASSED') wm.ok('VERIFICACIÓN APROBADA');
-      else wm.fail({ message: 'VERIFICACIÓN FALLIDA — se creó incidencia; el pedido debe revisarse' }, 'FAILED');
+      else wm.error({ message: 'VERIFICACIÓN FALLIDA — se creó incidencia; el pedido debe revisarse' }, 'FAILED');
       void qc.invalidateQueries({ queryKey: ['verif-pending'] });
       setStep('RESULT');
     } catch (e) {

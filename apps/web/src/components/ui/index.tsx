@@ -62,16 +62,18 @@ export function Field({ label, hint, error, children, required, className }: { l
     </label>
   );
 }
-const inputBase = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:bg-slate-100';
+const inputBase = 'rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:bg-slate-100';
+/** full width unless the caller passes an explicit width utility (w-40, max-w-xs, …) */
+const widthOf = (className?: string) => (className && /(^|\s)(w-|max-w-)/.test(className) ? '' : 'w-full');
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cls(inputBase, className)} {...rest} />;
+  return <input className={cls(inputBase, widthOf(className), className)} {...rest} />;
 }
 export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cls(inputBase, 'min-h-20', className)} {...rest} />;
+  return <textarea className={cls(inputBase, widthOf(className), 'min-h-20', className)} {...rest} />;
 }
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select className={cls(inputBase, 'pr-8', className)} {...rest}>
+    <select className={cls(inputBase, widthOf(className), 'pr-8', className)} {...rest}>
       {children}
     </select>
   );

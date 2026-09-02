@@ -4,6 +4,7 @@ import {
   ALLOCATION_STRATEGIES,
   CONTAINER_STATUSES,
   COUNT_TYPES,
+  EXCEPTION_TYPES,
   INCIDENT_SEVERITIES,
   INCIDENT_TYPES,
   LABEL_TYPES,
@@ -88,7 +89,6 @@ export const zCreateSku = z.object({
   pallet_height_cm: z.number().positive().max(10000).optional(),
   requires_lot: z.boolean().default(false),
   requires_expiry: z.boolean().default(false),
-  allow_negative: z.boolean().default(false),
   uoms: z.array(zSkuUom).default([]),
   barcodes: z.array(z.object({ barcode: zBarcode, uom_code: zUom.default('PIECE') })).default([]),
 });
@@ -218,7 +218,8 @@ export const zReceiveScan = z.object({
   cases_count: z.number().int().min(0).max(100000).optional(),
   weight_kg: z.number().nonnegative().max(100000).optional(),
   lot: z.string().trim().max(60).optional(),
-  expiry_date: z.coerce.date().optional(),
+  /** ISO date YYYY-MM-DD — sent as text end to end to avoid timezone shifts */
+  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),
   damaged: z.boolean().default(false),
   note: zNote,
 });
@@ -331,14 +332,17 @@ export const zAllocateOrder = z.object({
 export const zCancelOrder = z.object({ order_id: zUuid, reason: zReason });
 
 // ---- picking ----
-export const zPickScan = z.object({
-  pick_task_id: zUuid,
-  line_id: zUuid,
-  step: z.enum(['LOCATION', 'LPN', 'QTY']),
-  scanned: z.string().trim().min(1).max(64).optional(),
-  qty: zQty.optional(),
-  uom_code: zUom.optional(),
-});
+export const zPickScan = z
+  .object({
+    pick_task_id: zUuid,
+    line_id: zUuid,
+    step: z.enum(['LOCATION', 'LPN', 'QTY']),
+    scanned: z.string().trim().min(1).max(64).optional(),
+    qty: zQty.optional(),
+    uom_code: zUom.optional(),
+  })
+  .refine((v) => v.step !== 'QTY' || (v.qty !== undefined && v.uom_code !== undefined), { message: 'qty and uom_code are required for the QTY step', path: ['uom_code'] })
+  .refine((v) => v.step === 'QTY' || (v.scanned !== undefined && v.scanned.length > 0), { message: 'scanned is required', path: ['scanned'] });
 export const zPickShort = z.object({ pick_task_id: zUuid, line_id: zUuid, reason: zReason });
 export const zStageLpn = z.object({
   lpn_code: z.string().trim().min(1).max(30),
@@ -408,7 +412,7 @@ export const zReceiveReturnLine = z.object({
   return_id: zUuid,
   line_id: zUuid,
   qty: zQty,
-  uom_code: zUom.optional(),
+  uom_code: zUom,
   returns_location_barcode: zBarcode,
 });
 export const zClassifyReturnLine = z.object({
@@ -430,7 +434,7 @@ export const zPrintLabel = z.object({
 
 // ---- authorizations ----
 export const zAuthorize = z.object({
-  exception_type: z.string().trim().min(1).max(60),
+  exception_type: z.enum(EXCEPTION_TYPES),
   entity_type: z.string().trim().min(1).max(60),
   entity_id: z.string().trim().min(1).max(64),
   requested_by: zUuid.optional(),
@@ -440,7 +444,6 @@ export const zAuthorize = z.object({
 // ---- settings ----
 export const zSettings = z.object({
   allocation_strategy: z.enum(ALLOCATION_STRATEGIES).optional(),
-  count_variance_recount_threshold: z.number().int().min(0).optional(),
   session_ttl_hours: z.number().int().min(1).max(72).optional(),
   require_mfa_for_admin: z.boolean().optional(),
   auto_print_lpn_labels: z.boolean().optional(),
