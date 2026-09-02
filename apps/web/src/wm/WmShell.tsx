@@ -139,6 +139,15 @@ export function WmShell({ title, children, backTo = '/wm', step, onBack }: { tit
   );
 }
 
+/** Tells the operator exactly what to do next. */
+export function StepBar({ text }: { text: string }) {
+  return (
+    <div className="mb-3 rounded-xl bg-sky-700 px-4 py-2 text-center text-base font-black uppercase tracking-wide" data-testid="wm-step">
+      {text}
+    </div>
+  );
+}
+
 /** Huge action button for warehouse mode (min 64px tall). */
 export function BigButton({ children, onClick, tone = 'primary', disabled, className, testId }: { children: ReactNode; onClick?: () => void; tone?: 'primary' | 'success' | 'danger' | 'neutral' | 'warning'; disabled?: boolean; className?: string; testId?: string }) {
   const t = {

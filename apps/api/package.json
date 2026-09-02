@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "build": "prisma generate && tsc -p tsconfig.build.json",
     "typecheck": "prisma generate && tsc --noEmit",
-    "lint": "eslint src",
+    "lint": "eslint src prisma test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",

@@ -113,7 +113,6 @@ export async function masterDataRoutes(app: FastifyInstance) {
     app.get(`/${path}`, { preHandler: app.requirePermission('masterdata.read') }, async (req) => {
       const q = zList.parse(req.query);
       const where = q.q ? { OR: [{ code: { contains: q.q, mode: 'insensitive' as const } }, { name: { contains: q.q, mode: 'insensitive' as const } }] } : {};
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const model = (db as any)[table];
       const [items, total] = await Promise.all([model.findMany({ where, orderBy: { code: 'asc' }, take: q.limit, skip: q.offset }), model.count({ where })]);
       return { items, total };
@@ -121,8 +120,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
     app.post(`/${path}`, { preHandler: app.requirePermission('masterdata.manage') }, async (req, reply) => {
       const body = zCreateParty.parse(req.body);
       const row = await withTx(async (tx) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const model = (tx as any)[table];
+          const model = (tx as any)[table];
         if (await model.findUnique({ where: { code: body.code } })) throw new ConflictError('CODE_EXISTS', `${label} ${body.code} already exists`);
         const data: Record<string, unknown> = { code: body.code, name: body.name };
         if (table !== 'carriers') data.tax_id = body.tax_id ?? null;
@@ -139,8 +137,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
       const id = zUuid.parse((req.params as { id: string }).id);
       const body = zCreateParty.partial().extend({ is_active: z.boolean().optional() }).parse(req.body);
       return withTx(async (tx) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const model = (tx as any)[table];
+          const model = (tx as any)[table];
         const before = await model.findUnique({ where: { id } });
         if (!before) throw new NotFoundError(label, id);
         const data: Record<string, unknown> = {};
