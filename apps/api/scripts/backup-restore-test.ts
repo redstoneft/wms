@@ -40,6 +40,13 @@ function hasBinary(bin: string) {
   return r.status === 0;
 }
 
+/** pg_dump refuses servers newer than itself ("server version mismatch"): only use the binaries when their major matches. */
+function clientMajor(bin: string): number | null {
+  const r = spawnSync(bin, ['--version'], { encoding: 'utf8' });
+  const m = /\b(\d+)\.\d+/.exec(r.stdout ?? '');
+  return r.status === 0 && m ? Number(m[1]) : null;
+}
+
 async function main() {
   const t0 = Date.now();
   console.log('[restore-test] source snapshot…');
@@ -54,7 +61,11 @@ async function main() {
   await admin.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${RESTORE_DB}' AND pid <> pg_backend_pid()`);
   await admin.query(`DROP DATABASE IF EXISTS "${RESTORE_DB}"`);
 
-  if (hasBinary('pg_dump') && hasBinary('pg_restore')) {
+  const serverMajor = Math.floor(Number((await admin.query('SHOW server_version_num')).rows[0].server_version_num) / 10000);
+  const dumpMajor = clientMajor('pg_dump');
+  const toolsUsable = hasBinary('pg_restore') && dumpMajor !== null && dumpMajor >= serverMajor;
+  if (dumpMajor !== null && !toolsUsable) console.log(`[restore-test] pg_dump ${dumpMajor} cannot dump a PostgreSQL ${serverMajor} server → falling back to TEMPLATE copy`);
+  if (toolsUsable) {
     dumpFile = path.join(OUT, `wms-${stamp}.dump`);
     console.log('[restore-test] pg_dump →', dumpFile);
     execFileSync('pg_dump', ['--format=custom', '--compress=6', '--no-owner', '--no-privileges', `--file=${dumpFile}`, SRC], { stdio: 'inherit' });
