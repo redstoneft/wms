@@ -19,7 +19,20 @@ Todo se configura sin tocar código: por la pantalla **Layout** o por plantillas
 | `exclusions[]` | Áreas dentro del paño no utilizables (oficinas interiores, sanitarios) |
 | `roof.spans_x[]` | Líneas de cumbrera de las naves |
 
-**Nave HIDRO (Lerma)** está cargada desde los vectores del levantamiento topográfico (ADC, agosto 2026), calibrados con las superficies del plano (833.109 y 1,539.402 m²). Planta en **L**: frente de 39.91 m (columnas 9.91/10.07/9.95/9.98) y fondo de 59.5 m; el predio vecino de 833.109 m² (19.98 × 41.7 m) ocupa la esquina frontal izquierda, así que el frente propio es solo la pata de la L (x 19.98–39.91). Portones medidos en x 25.8 y 30.8 (3.1 m); rampa a desnivel aproximada. Dentro de la nave, junto al frente: oficinas de dos niveles (planta baja sanitarios, H 4.90) y dos cubículos de tablaroca (H 3.07 y 2.44), modelados como volúmenes no almacenables. Patio de maniobras, construcciones del patio, caseta y acceso desde Av. Santa Rosa como contexto. Zonas propuestas: `REC` (`HID-DOCK-01/02` frente a los portones) y `STG` (`HID-STG-01..04`); los racks se crean cuando se defina el layout (sección 3). El polígono va en `features.footprint`.
+**Nave HIDRO (Lerma)** está cargada desde los vectores del levantamiento topográfico (ADC, agosto 2026), calibrados con las superficies del plano (833.109 y 1,539.402 m²). Planta en **L**: frente de 39.91 m (columnas 9.91/10.07/9.95/9.98) y fondo de 59.5 m; el predio vecino de 833.109 m² (19.98 × 41.7 m) ocupa la esquina frontal izquierda, así que el frente propio es solo la pata de la L (x 19.98–39.91). Portones medidos en x 25.8 y 30.8 (3.1 m); rampa a desnivel aproximada. Dentro de la nave, junto al frente: oficinas de dos niveles (planta baja sanitarios, H 4.90) y dos cubículos de tablaroca (H 3.07 y 2.44), modelados como volúmenes no almacenables. Patio de maniobras, construcciones del patio, caseta y acceso desde Av. Santa Rosa como contexto. Zonas: `REC` (`HID-DOCK-01/02` frente a los portones), `STG` (`HID-STG-01..04`), `ALM` (almacenaje en la pata de la L) y `RES` (reserva del fondo). El polígono va en `features.footprint`.
+
+Racks según el croquis del usuario (2026-09-02), todos de 3 niveles, módulos de 2 tarimas lado a lado (2.70 m) salvo Z (1 módulo de 3 tarimas, 3.90 m); códigos de ubicación `ALM-<rack>-R01-N<nivel>-P<posición>`:
+
+| Rack | Módulos | Posiciones | Ubicación en la nave |
+|---|---|---|---|
+| A | 17 | 102 | Contra el muro exterior derecho, desde el frente hasta el fondo |
+| B / C | 11 + 11 | 66 + 66 | Doble, espalda con espalda, en medio de la pata |
+| D / E | 11 + 11 | 66 + 66 | Doble, espalda con espalda, junto al pasillo del medianero |
+| F | 14 | 84 | Contra el muro medianero con los vecinos |
+| X | 7 | 42 | Contra el muro del fondo (zona `RES`) |
+| Z | 1 (3 tarimas) | 9 | Entre las oficinas y el cubículo, junto al frente |
+
+Total 501 posiciones de rack. Las coordenadas exactas de cada rack son ajustables arrastrándolos en `Mapa 3D → Modo edición`; la separación entre racks quedó en pasillos de 4.4 m para montacargas.
 
 ## 2. Zonas
 Una zona es un rectángulo del piso con un tipo:
