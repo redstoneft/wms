@@ -2,7 +2,7 @@
   "name": "wms",
   "private": true,
   "version": "1.0.0",
-  "description": "Warehouse Management System — ledger-based inventory, LPN traceability, 3D digital twin",
+  "description": "Warehouse Management System \u2014 ledger-based inventory, LPN traceability, 3D digital twin",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -30,5 +30,10 @@
     "eslint": "^9.39.5",
     "globals": "^17.12.0",
     "typescript-eslint": "^8.69.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1",
+    "mysql2": "^3.22.0",
+    "deepmerge-ts": "^8.0.0"
   }
 }
