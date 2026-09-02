@@ -70,7 +70,7 @@ Transferencias: `TRANSFER_START` (AVAILABLE→IN_TRANSFER en origen, destino res
 | Riesgo | Mecanismo |
 |---|---|
 | Inventario negativo | `CHECK qty >= 0` + comprobación previa con `FOR UPDATE` |
-| Doble allocation | Candidatos bloqueados `FOR UPDATE OF b` en orden de estrategia; el segundo pedido ve el saldo ya reducido |
+| Doble allocation | Candidatos leídos en orden de estrategia y re-verificados bajo `lockLpn` → `getBalance FOR UPDATE` (mismo orden de bloqueo que el resto del sistema); el segundo pedido ve el saldo ya reducido |
 | Dos operadores sobre el mismo pallet | `lockLpn` (`SELECT … FOR UPDATE`) al inicio de toda operación |
 | Escaneo repetido / reintento de red | `Idempotency-Key` por usuario: `pg_advisory_xact_lock(hashtext(key))` + fila en `idempotency_keys` escrita **en la misma transacción** que el movimiento; réplica exacta de la respuesta (`Idempotent-Replayed: true`); mismo key con otro payload → 409 |
 | Duplicado de movimientos a nivel BD | índice único parcial en `inventory_movements.idempotency_key` |
@@ -79,6 +79,16 @@ Transferencias: `TRANSFER_START` (AVAILABLE→IN_TRANSFER en origen, destino res
 | Importación duplicada | índice único parcial `(import_type, file_sha256) WHERE status='APPLIED'` |
 | Deadlock / serialización | `withTx` reintenta `40001`/`40P01`; orden de bloqueo LPN → ubicación → saldos |
 | Versión obsoleta | `version` optimista en contenedores, embarques, pedidos |
+
+### Intentos bloqueados que deben quedar registrados
+
+Un escaneo rechazado revierte la transacción de negocio (nada se mueve), pero la operación quiere dejar rastro: auditoría del error del operador, incidencia `LOADING_ERROR`, embarque marcado `BLOCKED` con su `release_check`. Para no perder esos efectos en el rollback, los servicios los adjuntan al error (`RuleError.persistAfterRollback(fn)`) y el manejador global de errores los ejecuta en una **transacción nueva** una vez que la fallida terminó. Hallazgo A2 de la auditoría externa; cubierto por `audit-regressions.test.ts`.
+
+### Endurecimiento en base de datos (migración `hardening`)
+
+* `inventory_balances` solo acepta escrituras desde el trigger del ledger (`pg_trigger_depth()`), igual que `lpns.current_location_id`.
+* `wms_validate_movement` exige que `from_location_id` coincida con la ubicación real del LPN.
+* `transfers.origin_status` permite transferir pallets en `QUARANTINE/BLOCKED/DAMAGED` preservando su estado.
 
 ## Regla absoluta de liberación
 

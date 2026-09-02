@@ -215,3 +215,47 @@ Fortalezas: la suite cubre el flujo completo, carreras reales (20 asignaciones, 
 10. **KPIs/dashboard**: sin prueba de `/kpis` (habría detectado que `loading_accuracy_pct` es siempre 100 % y `errors_by_user` vacío).
 11. **UoM**: no hay prueba de escaneo de cantidad en surtido con `uom_code: 'CASE'` omitido, ni de conversión con barcode de caja en verificación frente a piezas.
 12. **Reglas de estado no probadas**: asignar desde `IMPORTED` (A12), transferir cuarentena (A11), `COUNT_ADJUST_IN` a LPN `STAGED` (A16), cancelar pedido con líneas `SHORT`, `unload` + reintento de `release`.
+
+
+---
+
+## 7. Estado de las correcciones (equipo de desarrollo, 2026-09-02)
+
+Todos los hallazgos CRÍTICOS y ALTOS y la mayoría de los MEDIOS/BAJOS fueron corregidos; cada corrección tiene una prueba de regresión en `apps/api/test/integration/audit-regressions.test.ts` (suite completa: 91 pruebas en verde sobre base de datos limpia).
+
+| Hallazgo | Corrección |
+|---|---|
+| A1 | Consulta reescrita con agregación por (pedido, SKU) y comparación de `picked`/`loaded` con el ledger; sin `.catch`; `ok` incluye discrepancias de líneas |
+| A2 | `RuleError.persistAfterRollback`: auditorías de escaneos bloqueados, incidencia `LOADING_ERROR`, estado `BLOCKED` + `release_check` + auditoría se persisten en una transacción posterior; precedencia del filtro de KPIs corregida (A20) |
+| A3 | `consumeAuthorization` recibe el actor y rechaza si el supervisor autorizante es el ejecutor o el surtidor; `createAuthorization` rechaza auto-solicitudes; `exception_type` validado contra la lista; `FORCE_RELEASE_NOT_ALLOWED` rechazado; `PUTAWAY_LOCATION_OVERRIDE` exige `putaway.override` |
+| A4 | Identidad `integration` sin roles, contraseña aleatoria y bloqueo permanente; se repara automáticamente si existía de una versión anterior |
+| A5 | `Idempotency-Key` obligatoria en todos los endpoints de movimiento (`400 IDEMPOTENCY_KEY_REQUIRED`) |
+| A6 | Put-away solo para pallets en RECEIVING/RETURNS (o con tarea legítima) y sin stock ALLOCATED/PICKING/STAGING/LOADED/IN_TRANSFER, verificado en start y confirm |
+| A7 | Transferencia rechazada desde RECEIVING/RETURNS (`USE_PUTAWAY`) y con tarea de put-away activa (`PUTAWAY_PENDING`) |
+| A8 | Allocation ya no bloquea saldos antes del LPN: lee candidatos sin bloqueo y re-lee bajo `lockLpn` → `getBalance` |
+| A9 | `TRUST_PROXY` configurable (por defecto `false`); intentos MFA fallidos bloquean la cuenta; `request_id` siempre del servidor (A29) |
+| A10/A34 | Triggers que impiden escribir `inventory_balances` y `lpns.current_location_id` fuera del ledger; validación de `from_location` |
+| A11 | `transfers.origin_status`: pallets QUARANTINE/BLOCKED/DAMAGED transferibles preservando estado |
+| A12 | Allocation exige `ACCEPTED` (o `PARTIALLY_ALLOCATED`/`PICKED` para olas adicionales) |
+| A13 | Código de producto en el paso LPN rechazado (`LPN_REQUIRED`) cuando hay más de un pallet del SKU en la ubicación |
+| A14 | No se reserva mientras hay tarea de surtido activa; al completar una tarea con reservas pendientes el pedido vuelve a `PARTIALLY_ALLOCATED` para una segunda ola; conversión de pallet completo re-verificada al escanear cantidad |
+| A15 | El cambio de contraseña conserva la sesión actual |
+| A16 | Ajustes de conteo omitidos (y línea a recuento) si el LPN no está `STORED` |
+| A18 | TTL de idempotencia por defecto 168 h |
+| A19 | Fechas de caducidad viajan como texto `YYYY-MM-DD` de extremo a extremo |
+| A21 | `session_ttl_hours` y `require_mfa_for_admin` implementados (caché 15 s); `count_variance_recount_threshold` y `allow_negative` eliminados de la API |
+| A22 | Comprobación muerta eliminada |
+| A23 | Cambios de UoM/barcodes validados en API e importaciones (`BARCODE_UOM_ORPHAN`) |
+| A24 | `uom_code` obligatorio en el paso QTY del surtido y en recepción de devoluciones |
+| A25 | Mensajes crudos de PostgreSQL ocultos en producción |
+| A26 | Recepción distribuye cantidades entre líneas de OC del mismo SKU; expectativas agregadas por SKU |
+| A27 | Inventario inicial valida capacidad y estado de la ubicación al aplicar |
+| A28 | Hueco de reabasto = máximo − actual |
+| A30 | Archivo huérfano eliminado si falla el INSERT del adjunto; nuevo `GET /attachments/:id/file` |
+| A31 | Host de impresora restringido a IPv4 privada o nombre de LAN |
+| A32 | Cancelar anexa el motivo a las notas en vez de sobrescribirlas |
+| A33 | `COOKIE_SECURE=false` en producción es fatal salvo `ALLOW_INSECURE_COOKIE=true` |
+| A35 | Coincidencia exacta de barcode antes que por código |
+| A36 | `.pgdata/` ignorado, sacado del índice y purgado del historial local no publicado |
+
+No corregidos (documentados): A17 (el rol SUPERVISOR sigue siendo amplio; la separación se aplica en código por A3), rate limiting por IP en memoria (SECURITY.md).

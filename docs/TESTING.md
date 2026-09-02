@@ -31,6 +31,7 @@ El proyecto `integration` de vitest aplica migraciones y seed base en `DATABASE_
 | Concurrencia | `test/concurrency/races.test.ts` | 20 pedidos por el mismo pallet (exactamente lo disponible), 25 escaneos idénticos en paralelo (1 movimiento), dos montacarguistas confirmando el mismo put-away, picking vs transferencia, 3 pickers sobre la misma tarea, 50 transferencias paralelas + 50 a la misma ubicación (1 gana), dos supervisores aprobando el mismo conteo, conteo con movimiento intermedio, dos importaciones idénticas simultáneas |
 | Red | `test/integration/network-and-integrations.test.ts` | Duplicado retardado, **reinicio del servidor** entre original y reintento, tormenta de reconexión (30 reintentos, 3 keys → 3 movimientos), sin key = sin protección (documentado), key por usuario; transferencia almacén→almacén; capa de integración SAE |
 | Seguridad | `test/security/security.test.ts` | Ver SECURITY.md |
+| Regresiones de auditoría | `test/integration/audit-regressions.test.ts` | Un test por hallazgo corregido de `docs/AUDIT_REPORT.md`: reconciliación detecta contadores manipulados (A1); auditoría/incidencia/estado BLOCKED persisten tras rollback (A2); auto-autorización, autorizador ≠ surtidor, tipos inválidos, liberación forzada (A3); identidad de integración sin login (A4); `Idempotency-Key` obligatoria en 13 endpoints (A5); put-away solo desde recepción y recepción solo sale por put-away (A6/A7); `X-Forwarded-For` ignorado y bloqueo por fuerza bruta MFA (A9); escrituras directas a saldos/ubicación rechazadas por BD (A10); transferencia de cuarentena preservando estado (A11); pedidos IMPORTED no reservables (A12); LPN obligatorio si hay dos pallets del SKU (A13); segunda ola de surtido (A14); cambio de contraseña conserva sesión (A15); OC con SKU repetido (A26); barcode exacto gana (A35) |
 | Fuzz / propiedades | `test/fuzz/fuzz.test.ts` | Payloads arbitrarios en todos los endpoints de escaneo (nunca 500), barcodes aleatorios (nunca crean inventario), bytes aleatorios en importaciones, CSV con celdas aleatorias (errores por fila), secuencias aleatorias de operaciones manteniendo `ledger == saldos` |
 | Carga | `test/load/run-load.ts` | Genera SKUs/LPNs/movimientos a escala (por defecto 2,000 SKUs, 20,000 LPNs, ≈300k movimientos), mide reconciliación, consultas del mapa y latencia HTTP con 50–100 usuarios concurrentes (autocannon); tormenta de 400 allocations concurrentes; comprueba reconciliación final |
 | E2E web | `apps/web/e2e/*.spec.ts` | Login, dashboard, recepción en modo almacén, put-away con error de ubicación, mapa 3D con búsqueda de SKU |
@@ -44,6 +45,20 @@ El proyecto `integration` de vitest aplica migraciones y seed base en `DATABASE_
 6. `allocations.qty = 0` al liberar una allocation no surtida → violación de CHECK. Corregido.
 7. **Bytes NUL** en cualquier string → error PostgreSQL 22021 → 500 (hallazgo de fuzzing). Ahora 400.
 8. Agotamiento del pool con 25 transacciones simultáneas esperando bloqueo → 500. Ahora pool mayor, `pg_advisory_xact_lock` por key de idempotencia (los duplicados esperan y replican sin ejecutar) y `503 SERVICE_BUSY` explícito.
+9. **Auditoría externa** (`docs/AUDIT_REPORT.md`, 36 hallazgos): `GET /inventory/reconcile` devolvía 500 por SQL inválido silenciado; incidencias/auditorías de intentos bloqueados se perdían en el rollback; un supervisor podía autoverificar su surtido; la identidad de integración era un supervisor con contraseña derivable de la API key; la clave de idempotencia era opcional; put-away servía para mover cualquier pallet; transferir un pallet con put-away pendiente dejaba capacidad reservada para siempre; `X-Forwarded-For` falsificaba la IP y no había bloqueo por fuerza bruta de TOTP; orden de bloqueos inconsistente en allocation (deadlocks); `.pgdata` versionado. Todo corregido con regresiones en `audit-regressions.test.ts` y el historial local reescrito para eliminar `.pgdata`.
+
+## Resultados de la última ejecución completa (2026-09-02)
+
+| Suite | Resultado |
+|---|---|
+| Unit shared | 22 tests ✅ |
+| Unit API | 16 tests ✅ |
+| Integración (7 archivos: e2e, edge, concurrencia, seguridad, red/integraciones, fuzz, regresiones de auditoría) | **91 tests ✅** sobre base de datos recién creada |
+| Playwright web (Chromium, contra API y Vite reales con datos demo) | **11 tests ✅** |
+| Carga `SCALE=0.05` | 0 discrepancias; 100/100 allocations concurrentes |
+| Backup/restore | idéntico (embebido por TEMPLATE y real `pg_dump`/`pg_restore` en contenedor) |
+| ESLint + tsc (api, shared, web) | limpio |
+| `npm audit --omit=dev` | 0 vulnerabilidades (overrides `uuid`, `mysql2`, `deepmerge-ts`) |
 
 ## Cobertura de requerimientos
 Ver [REQUIREMENTS_MATRIX.md](REQUIREMENTS_MATRIX.md): requerimiento → implementación → prueba.

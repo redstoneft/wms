@@ -43,7 +43,9 @@ Usuarios demo (`--demo`): `supervisor / supervisor-Demo-1!`, `recepcion / recepc
 | `API_PORT`, `API_HOST`, `LOG_LEVEL`, `NODE_ENV` | Servidor |
 | `UPLOAD_DIR` | Carpeta de fotos/adjuntos |
 | `RATE_LIMIT_MAX`, `LOGIN_RATE_LIMIT_MAX` | Límites por minuto |
-| `IDEMPOTENCY_TTL_HOURS` | Retención de claves de idempotencia (48) |
+| `IDEMPOTENCY_TTL_HOURS` | Retención de claves de idempotencia (168) |
+| `TRUST_PROXY` | `false` (defecto), `true` o lista de IPs/CIDR del proxy inverso |
+| `ALLOW_INSECURE_COOKIE` | Solo para redes privadas sin TLS; si no, `COOKIE_SECURE=false` es fatal en producción |
 | `INTEGRATION_API_KEY` | Habilita `/api/integrations/*` (SAE) |
 | `ERROR_WEBHOOK_URL` | Notificación de errores 500 |
 | `SEED_ADMIN_PASSWORD` | Contraseña inicial del admin al sembrar |
