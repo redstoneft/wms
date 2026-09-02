@@ -39,7 +39,9 @@ Ver WAREHOUSE_SETUP.md. Recomendación: preparar SKUs, barcodes, clientes, prove
 * Programar conteos cíclicos (por ubicación, SKU, zona, ABC, aleatorio) y revisar `Inventario → Reconciliación` (debe ser OK siempre).
 
 ## Integraciones (Aspel SAE)
-Configure `INTEGRATION_API_KEY` en el servidor. El conector externo envía pedidos a `POST /api/integrations/sae/orders` (cabecera `X-Api-Key`), consulta `GET /api/integrations/sae/orders/:numero/status` y `GET /api/integrations/inventory`. Los pedidos se crean como `source=SAE` y jamás se duplican por número. El WMS funciona igual sin SAE.
+**Entrada automática desde SAE** (`Admin → Integración SAE`): cada 30 minutos el WMS lee los espejos de SAE en Supabase y actualiza artículos (con modelo, capa caja/pieza, conversión y GTIN), clientes, proveedores, órdenes de compra abiertas y pedidos de clientes retail. El botón *Sincronizar ahora* fuerza una corrida; cada corrida muestra filas origen, creados, actualizados y errores por referencia (por ejemplo, un pedido cuya clave no existe en SAE). *Comparar existencias* muestra SAE vs WMS por clave sin modificar nada. Detalle de reglas en `docs/INTEGRATION_SAE.md`.
+
+**Salida hacia otros sistemas**: configure `INTEGRATION_API_KEY` en el servidor. El conector externo envía pedidos a `POST /api/integrations/sae/orders` (cabecera `X-Api-Key`), consulta `GET /api/integrations/sae/orders/:numero/status` y `GET /api/integrations/inventory`. Los pedidos se crean como `source=SAE` y jamás se duplican por número. El WMS funciona igual sin SAE.
 
 ## Mantenimiento
 * Backups automáticos (BACKUPS.md) y simulacro de restore mensual.

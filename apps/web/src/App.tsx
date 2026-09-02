@@ -35,6 +35,7 @@ const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
 const AuthorizationsPage = lazy(() => import('./pages/admin/AuthorizationsPage'));
 const AuditPage = lazy(() => import('./pages/admin/AuditPage'));
 const SlottingPage = lazy(() => import('./pages/admin/SlottingPage'));
+const SaePage = lazy(() => import('./pages/admin/SaePage'));
 // warehouse mode
 const WmHomePage = lazy(() => import('./wm/WmHomePage'));
 const WmReceivePage = lazy(() => import('./wm/WmReceivePage'));
@@ -141,6 +142,7 @@ export default function App() {
         <Route path="/admin/authorizations" element={<Office perms={['exceptions.authorize']}><AuthorizationsPage /></Office>} />
         <Route path="/admin/audit" element={<Office perms={['audit.read']}><AuditPage /></Office>} />
         <Route path="/admin/slotting" element={<Office perms={['layout.read']}><SlottingPage /></Office>} />
+        <Route path="/admin/sae" element={<Office perms={['imports.run']}><SaePage /></Office>} />
 
         <Route path="/wm" element={<Wm perms={[]}><WmHomePage /></Wm>} />
         <Route path="/wm/receive" element={<Wm perms={['receiving.scan']}><WmReceivePage /></Wm>} />

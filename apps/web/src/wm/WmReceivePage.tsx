@@ -1,5 +1,5 @@
 // /wm/receive — receiving by scanning: receipt → barcode → qty (+UoM) → new pallet | add to LPN → label → close LPN → complete.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import type { UomCode } from '@wms/shared';
@@ -42,16 +42,6 @@ function Flow() {
   const [differences, setDifferences] = useState<{ sku: string; expected: string; received: string }[] | null>(null);
 
   const receipts = useQuery({ queryKey: ['receipts', 'open'], queryFn: () => inboundApi.receipts({ status: 'OPEN,IN_PROGRESS', limit: 100 }), refetchInterval: 10_000 });
-  // SKU catalogue for barcode → SKU/UoM resolution before the qty step (see API_GAPS.md)
-  const skus = useQuery({ queryKey: ['skus', 'all'], queryFn: () => masterdataApi.skus({ limit: 500, active: 'true' }), staleTime: 60_000 });
-  const barcodeMap = useMemo(() => {
-    const m = new Map<string, { sku: Sku; uom: UomCode }>();
-    for (const s of skus.data?.items ?? []) {
-      m.set(s.code, { sku: s, uom: 'PIECE' });
-      for (const b of s.barcodes) m.set(b.barcode, { sku: s, uom: b.uom_code });
-    }
-    return m;
-  }, [skus.data]);
 
   const detail = useQuery({ queryKey: ['receipt', receipt?.id], queryFn: () => inboundApi.receipt(receipt!.id), enabled: !!receipt, refetchInterval: 8_000 });
 
@@ -71,9 +61,14 @@ function Flow() {
 
   const onProductScan = useCallback(
     async (code: string) => {
-      const hit = barcodeMap.get(code);
-      if (!hit) {
-        wm.fail(new ApiError(404, { error: 'BARCODE_UNKNOWN', message: `Código ${code} no corresponde a ningún SKU activo` }));
+      // Resolved by the server (exact barcode → SKU code): the catalogue can hold thousands of SKUs, never a truncated client list.
+      let hit: { sku: Sku; uom: UomCode };
+      try {
+        const r = await masterdataApi.skuByBarcode(code);
+        if (!r.sku.is_active) throw new ApiError(404, { error: 'BARCODE_UNKNOWN', message: `Código ${code} corresponde al SKU inactivo ${r.sku.code}` });
+        hit = { sku: await masterdataApi.sku(r.sku.id), uom: r.uom_code };
+      } catch (e) {
+        wm.fail(e instanceof ApiError ? e : new ApiError(404, { error: 'BARCODE_UNKNOWN', message: `Código ${code} no corresponde a ningún SKU activo` }));
         return;
       }
       setBarcode(code);
@@ -89,7 +84,7 @@ function Flow() {
         setStep('QTY');
       }
     },
-    [barcodeMap, currentLpn, openLpns, wm],
+    [currentLpn, openLpns, wm],
   );
 
   const submitQty = async (qty: string, uom: UomCode) => {

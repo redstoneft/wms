@@ -61,6 +61,7 @@ export const NAV: NavGroup[] = [
       { to: '/admin/users', label: 'Usuarios', icon: '☺', perms: ['users.manage'] },
       { to: '/admin/authorizations', label: 'Autorizaciones', icon: '✔', perms: ['exceptions.authorize'] },
       { to: '/admin/audit', label: 'Auditoría', icon: '≡', perms: ['audit.read'] },
+      { to: '/admin/sae', label: 'Integración SAE', icon: '⇄', perms: ['imports.run'] },
       { to: '/admin/slotting', label: 'Slotting', icon: '⊟', perms: ['layout.read'] },
       { to: '/admin/settings', label: 'Configuración', icon: '⚙', perms: ['settings.manage'] },
     ],

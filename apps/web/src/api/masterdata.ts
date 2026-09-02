@@ -1,3 +1,4 @@
+import type { UomCode } from '@wms/shared';
 import { api, type Query } from './client';
 import type { Paged, Party, Printer, QuarantineReason, Sku } from './types';
 
@@ -12,6 +13,8 @@ type PartyKind = 'customers' | 'suppliers' | 'carriers';
 export const masterdataApi = {
   skus: (q: ListQuery = {}) => api.get<Paged<Sku>>('/skus', q),
   sku: (idOrCode: string) => api.get<Sku>(`/skus/${encodeURIComponent(idOrCode)}`),
+  /** Server-side barcode resolution (exact barcode first, then SKU code). 404 BARCODE_UNKNOWN when nothing matches. */
+  skuByBarcode: (barcode: string) => api.get<{ sku: Pick<Sku, 'id' | 'code' | 'description' | 'requires_lot' | 'requires_expiry' | 'is_active'>; uom_code: UomCode; uoms: { uom_code: UomCode; base_qty: string }[] }>(`/skus/by-barcode/${encodeURIComponent(barcode)}`),
   createSku: (body: Record<string, unknown>) => api.post<Sku>('/skus', body),
   updateSku: (id: string, body: Record<string, unknown>) => api.patch<Sku>(`/skus/${id}`, body),
   parties: (kind: PartyKind, q: ListQuery = {}) => api.get<Paged<Party>>(`/${kind}`, q),

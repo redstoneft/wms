@@ -3,6 +3,8 @@ import { purgeExpiredIdempotencyKeys } from './lib/idempotency.js';
 import { getDb } from './db.js';
 import { evaluateReplenishmentRules } from './modules/replenishment/service.js';
 import { SYSTEM_ACTOR } from './lib/context.js';
+import { scheduledSaeSync } from './modules/sae/sync.js';
+import { saeConfig } from './modules/sae/supabase.js';
 
 /**
  * Lightweight in-process background jobs. Deliberately simple (no extra
@@ -31,6 +33,11 @@ export function startBackgroundJobs(log: FastifyBaseLogger): () => void {
     return r.count;
   });
   every(60_000, 'replenishment-scan', () => evaluateReplenishmentRules(SYSTEM_ACTOR));
+  const sae = saeConfig();
+  if ((sae.erp || sae.raw) && sae.intervalMinutes > 0) {
+    every(sae.intervalMinutes * 60_000, 'sae-sync', () => scheduledSaeSync(SYSTEM_ACTOR));
+    log.info({ minutes: sae.intervalMinutes }, 'SAE sync scheduled');
+  }
 
   return () => timers.forEach((t) => clearInterval(t));
 }

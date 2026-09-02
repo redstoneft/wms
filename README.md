@@ -31,6 +31,7 @@ Producción: `docker compose up -d` (ver [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md
 | [DEPLOYMENT](docs/DEPLOYMENT.md) | Docker Compose, systemd, monitoreo, escalado |
 | [WAREHOUSE_SETUP](docs/WAREHOUSE_SETUP.md) | Configurar almacén, zonas, racks, ubicaciones, maestros |
 | [ZEBRA_SETUP](docs/ZEBRA_SETUP.md) | Impresoras, etiquetas, reimpresión |
+| [INTEGRATION_SAE](docs/INTEGRATION_SAE.md) | Sincronización Aspel SAE → WMS (artículos, clientes, proveedores, OC, pedidos, existencias) |
 | [USER_GUIDE](docs/USER_GUIDE.md) · [ADMIN_GUIDE](docs/ADMIN_GUIDE.md) | Uso en oficina y administración |
 | [MANUAL_OPERACION](docs/MANUAL_OPERACION.md) | Manual para personal de piso (recepción, put-away, picking, verificación, carga, conteos, incidencias) |
 | [TESTING](docs/TESTING.md) | Suites, cómo ejecutarlas, bugs encontrados |

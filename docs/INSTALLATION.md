@@ -46,7 +46,11 @@ Usuarios demo (`--demo`): `supervisor / supervisor-Demo-1!`, `recepcion / recepc
 | `IDEMPOTENCY_TTL_HOURS` | Retención de claves de idempotencia (168) |
 | `TRUST_PROXY` | `false` (defecto), `true` o lista de IPs/CIDR del proxy inverso |
 | `ALLOW_INSECURE_COOKIE` | Solo para redes privadas sin TLS; si no, `COOKIE_SECURE=false` es fatal en producción |
-| `INTEGRATION_API_KEY` | Habilita `/api/integrations/*` (SAE) |
+| `INTEGRATION_API_KEY` | Habilita `/api/integrations/*` (salida hacia SAE u otros sistemas) |
+| `SAE_SUPABASE_URL` / `SAE_SUPABASE_KEY` | Proyecto Supabase del ERP (existencias, OC, `sku_alias`, `productos`, `pedidos`). Sin ellas la sincronización SAE queda desactivada |
+| `SAE_RAW_SUPABASE_URL` / `SAE_RAW_SUPABASE_KEY` | Espejo crudo de SAE (`sae_inve01`, `sae_clie01`, `sae_prov01`); clave de solo lectura |
+| `SAE_PO_SINCE_DAYS` | Antigüedad máxima de órdenes de compra a importar (60) |
+| `SAE_SYNC_INTERVAL_MINUTES` | Cadencia de la sincronización automática (30; 0 la desactiva) |
 | `ERROR_WEBHOOK_URL` | Notificación de errores 500 |
 | `SEED_ADMIN_PASSWORD` | Contraseña inicial del admin al sembrar |
 

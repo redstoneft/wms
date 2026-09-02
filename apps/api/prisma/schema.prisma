@@ -304,9 +304,16 @@ model skus {
   requires_lot       Boolean  @default(false)
   requires_expiry    Boolean  @default(false)
   allow_negative     Boolean  @default(false) // explicit rule, default never
+  external_source    String?  @db.VarChar(20) // e.g. SAE
+  external_ref       String?  @db.VarChar(64) // key in the external system
+  model_code         String?  @db.VarChar(64) // groups packaging variants of the same physical product
+  packaging_layer    String?  @db.VarChar(10) // BASE | PIEZA | CAJA (from SAE aliasing)
   is_active          Boolean  @default(true)
   created_at         DateTime @default(now()) @db.Timestamptz(6)
   updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([external_source, external_ref])
+  @@index([model_code])
 
   barcodes            sku_barcodes[]
   uoms                sku_uoms[]
@@ -349,6 +356,8 @@ model suppliers {
   name      String   @db.VarChar(200)
   tax_id    String?  @db.VarChar(40)
   contact   String?
+  external_source String? @db.VarChar(20)
+  external_ref    String? @db.VarChar(64)
   is_active Boolean  @default(true)
   created_at DateTime @default(now()) @db.Timestamptz(6)
 
@@ -363,6 +372,8 @@ model customers {
   name      String   @db.VarChar(200)
   tax_id    String?  @db.VarChar(40)
   address   String?
+  external_source String? @db.VarChar(20)
+  external_ref    String? @db.VarChar(64)
   is_active Boolean  @default(true)
   created_at DateTime @default(now()) @db.Timestamptz(6)
 
@@ -391,12 +402,16 @@ model purchase_orders {
   status        String   @default("OPEN") @db.VarChar(20) // OPEN | PARTIAL | RECEIVED | CLOSED | CANCELLED
   expected_date DateTime? @db.Date
   notes         String?
+  external_source String? @db.VarChar(20)
+  external_ref    String? @db.VarChar(64)
   created_at    DateTime @default(now()) @db.Timestamptz(6)
   created_by    String?  @db.Uuid
 
   supplier   suppliers              @relation(fields: [supplier_id], references: [id])
   lines      purchase_order_lines[]
   containers containers[]
+
+  @@index([external_source, external_ref])
 }
 
 model purchase_order_lines {
@@ -1089,4 +1104,23 @@ model sequences_meta {
   name        String @id @db.VarChar(40)
   prefix      String @db.VarChar(10)
   description String?
+}
+
+model integration_runs {
+  id           String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  source       String    @db.VarChar(20)
+  entity       String    @db.VarChar(30)
+  trigger      String    @default("SCHEDULED") @db.VarChar(20)
+  status       String    @default("RUNNING") @db.VarChar(20) // RUNNING | OK | FAILED
+  started_at   DateTime  @default(now()) @db.Timestamptz(6)
+  finished_at  DateTime? @db.Timestamptz(6)
+  source_rows  Int       @default(0)
+  created      Int       @default(0)
+  updated      Int       @default(0)
+  skipped      Int       @default(0)
+  errors       Json?
+  notes        String?
+  user_id      String?   @db.Uuid
+
+  @@index([source, entity, started_at(sort: Desc)])
 }

@@ -62,7 +62,7 @@ Realizada por un revisor independiente sobre `apps/api` y `packages/shared` sin 
 1. **Impresora Zebra real** y **terminales Zebra físicas** (escáner en modo teclado): diseño y pruebas en navegador únicamente. Validar en el primer día con hardware real (ZEBRA_SETUP.md).
 2. **Carga a escala completa** (20k LPNs / 300k movimientos): ejecutar `SCALE=1 npm run test:load -w apps/api` en el servidor de pruebas antes del go-live.
 3. **`docker compose up` completo con proxy HTTPS**: `db`, `api`, `backup` y las imágenes se validaron por separado en esta máquina (Docker Desktop estuvo inestable durante la sesión); la composición completa detrás de TLS debe validarse en el servidor destino.
-4. **Conector Aspel SAE real**: la capa de integración está probada con peticiones sintéticas; el conector que lee SAE no forma parte de este alcance.
+4. **Aspel SAE**: la sincronización SAE → WMS está implementada y ejecutada contra los datos reales (ver INTEGRATION_SAE.md). Lo que no existe es un canal de escritura hacia Firebird; la salida se expone por API para un conector externo.
 
 ## Recomendaciones antes del go-live
 * Cambiar contraseña de `admin`, inscribir MFA, crear usuarios reales por rol; **no** sembrar `--demo`.
@@ -83,3 +83,4 @@ Realizada por un revisor independiente sobre `apps/api` y `packages/shared` sin 
 | Restore drill (embebido y `pg_dump` real) | idéntico, triggers activos |
 | Imagen `wms-api` en modo producción | health OK, login OK |
 | Auditoría externa | 36 hallazgos; críticos/altos corregidos con regresiones |
+| Sincronización SAE real | 1,241 SKUs, 214 clientes, 38 proveedores, 16 OC, 4 pedidos en 8 s; segunda corrida 0 duplicados |

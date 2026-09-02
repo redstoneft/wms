@@ -223,7 +223,7 @@ export async function layoutRoutes(app: FastifyInstance) {
     const q = z.object({ warehouse_id: zUuid.optional() }).parse(req.query);
     const wh = q.warehouse_id
       ? await db.warehouses.findUnique({ where: { id: q.warehouse_id } })
-      : await db.warehouses.findFirst({ where: { is_active: true }, orderBy: { created_at: 'asc' } });
+      : await db.warehouses.findFirst({ where: { is_active: true }, orderBy: [{ locations: { _count: 'desc' } }, { created_at: 'asc' }] }); // default: the warehouse that actually has a layout
     if (!wh) throw new NotFoundError('warehouse');
     const [zones, racks, locations, occupancy] = await Promise.all([
       db.zones.findMany({ where: { warehouse_id: wh.id, is_active: true }, include: { aisles: true } }),
