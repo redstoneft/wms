@@ -232,7 +232,7 @@ export default function MapPage() {
           <Button size="sm" variant="secondary" onClick={() => void mapQ.refetch()} loading={mapQ.isFetching}>
             Actualizar
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => setFly({ seq: Date.now(), position: [model.width * 0.5, Math.max(model.width, model.depth) * 0.75, model.depth * 1.5], lookAt: [model.width / 2, 0, model.depth / 2] })}>
+          <Button size="sm" variant="secondary" onClick={() => setFly({ seq: Date.now(), position: [model.width * 1.25, Math.max(model.width, model.depth) * 1.0, -model.depth * 1.05], lookAt: [model.width / 2, 0, model.depth / 2] })}>
             Vista general
           </Button>
           {can('layout.manage') && (

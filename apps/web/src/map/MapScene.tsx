@@ -517,7 +517,7 @@ export function MapScene(props: MapSceneProps) {
   const { model, warehouse, zones, fly, onFar, far, editMode, selectedRackId, onSelectRack } = props;
   const controls = useRef<OrbitControlsImpl | null>(null);
   const center: Vec3 = [model.width / 2, 0, model.depth / 2];
-  const camPos: Vec3 = [model.width * 0.5, Math.max(model.width, model.depth) * 0.75, model.depth * 1.5];
+  const camPos: Vec3 = [model.width * 1.25, Math.max(model.width, model.depth) * 1.0, -model.depth * 1.05];
   const [ready, setReady] = useState(false);
   useEffect(() => setReady(true), []);
 
