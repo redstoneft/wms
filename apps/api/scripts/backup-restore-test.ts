@@ -110,7 +110,7 @@ async function main() {
   console.log(`[restore-test] identical=${same} triggers_work=${triggersWork} report → backups/LAST_RESTORE_TEST.json`);
   if (!same || !triggersWork) process.exit(1);
   if (!existsSync(dumpFile)) process.exit(1);
-  readFileSync(dumpFile).length; // ensure readable
+  if (readFileSync(dumpFile).length === 0) process.exit(1); // readable and not empty
 }
 
 main().catch((e) => {
