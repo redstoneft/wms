@@ -94,7 +94,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run build -w packages/shared
       - name: Migrate + seed demo
-        run: npx prisma migrate deploy && npx tsx prisma/seed.ts --demo
+        # the generated Prisma client is not versioned (see .gitignore)
+        run: npx prisma generate && npx prisma migrate deploy && npx tsx prisma/seed.ts --demo
         working-directory: apps/api
       - name: Start API
         run: (npx tsx src/server.ts > /tmp/api.log 2>&1 &) && for i in $(seq 1 30); do curl -sf localhost:4000/api/health/ready && break || sleep 1; done
