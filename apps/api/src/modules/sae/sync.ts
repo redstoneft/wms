@@ -113,6 +113,16 @@ export function groupProducts(articles: RawArticle[], aliases: Alias[], producto
     const al = aliasByKey.get(k);
     keys.push({ key: k, layer: al?.capa ?? null, article: a, model: al?.modelo || stripDots(k) || k });
   }
+  // keys the alias table does not know: "X-1" is SAE's piece variant of X when X exists as key or model
+  const known = new Set(keys.flatMap((k) => [k.key, k.model]));
+  for (const k of keys) {
+    if (aliasByKey.has(k.key)) continue;
+    const m = /^(.*)-1$/.exec(k.key)?.[1]?.trim();
+    if (m && known.has(m)) {
+      k.model = m;
+      k.layer = 'PIEZA';
+    }
+  }
   // sku_alias may point a "-1" key at a model that is itself just a key of a wider model (SST248V-20-1 → SST248V-20 → SST248V)
   const modelOfKey = new Map(keys.map((k) => [k.key, k.model]));
   for (const k of keys) {
