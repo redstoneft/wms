@@ -14,7 +14,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
   app.get('/inventory/skus', { preHandler: read }, async (req) => {
     const q = z.object({ q: z.string().trim().max(60).optional(), status: z.string().optional(), limit: z.coerce.number().int().min(1).max(1000).default(200), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
     return db.$queryRaw<Record<string, unknown>[]>`
-      SELECT s.id AS sku_id, s.code, s.description, s.abc_class, s.family,
+      SELECT s.id AS sku_id, s.code, s.gtin, s.description, s.abc_class, s.family,
              COALESCE(sum(b.qty) FILTER (WHERE b.status = 'AVAILABLE'), 0)::text AS available,
              COALESCE(sum(b.qty) FILTER (WHERE b.status = 'ALLOCATED'), 0)::text AS allocated,
              COALESCE(sum(b.qty) FILTER (WHERE b.status IN ('PICKING','STAGING','LOADED')), 0)::text AS outbound,
@@ -22,7 +22,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
              COALESCE(sum(b.qty) FILTER (WHERE b.status = 'IN_TRANSFER'), 0)::text AS in_transfer,
              COALESCE(sum(b.qty), 0)::text AS total, count(DISTINCT b.lpn_id)::int AS lpn_count
         FROM skus s LEFT JOIN inventory_balances b ON b.sku_id = s.id AND b.qty > 0
-       WHERE s.is_active AND (${q.q ?? null}::text IS NULL OR s.code ILIKE '%' || ${q.q ?? ''} || '%' OR s.description ILIKE '%' || ${q.q ?? ''} || '%')
+       WHERE s.is_active AND (${q.q ?? null}::text IS NULL OR s.code ILIKE '%' || ${q.q ?? ''} || '%' OR s.description ILIKE '%' || ${q.q ?? ''} || '%'
+             OR s.gtin = ${q.q ?? ''} OR EXISTS (SELECT 1 FROM sku_barcodes sb WHERE sb.sku_id = s.id AND sb.barcode ILIKE '%' || ${q.q ?? ''} || '%'))
        GROUP BY s.id HAVING (${q.status ?? null}::text IS NULL OR bool_or(b.status = ${q.status ?? null}))
        ORDER BY s.code LIMIT ${q.limit} OFFSET ${q.offset}`;
   });

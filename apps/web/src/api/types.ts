@@ -54,6 +54,7 @@ export interface SkuBarcode {
 export interface Sku {
   id: Uuid;
   code: string;
+  gtin: string | null;
   description: string;
   family: string | null;
   compatibility_group: string | null;
@@ -378,6 +379,7 @@ export interface LpnDetail extends Lpn {
 export interface InventorySkuRow {
   sku_id: Uuid;
   code: string;
+  gtin: string | null;
   description: string;
   abc_class: string;
   family: string | null;

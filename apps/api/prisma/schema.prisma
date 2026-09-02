@@ -306,6 +306,7 @@ model skus {
   allow_negative     Boolean  @default(false) // explicit rule, default never
   external_source    String?  @db.VarChar(20) // e.g. SAE
   external_ref       String?  @db.VarChar(64) // key in the external system
+  gtin               String?  @unique @db.VarChar(14) // product identity (GS1); SAE keys are aliases in sku_barcodes
   model_code         String?  @db.VarChar(64) // groups packaging variants of the same physical product
   packaging_layer    String?  @db.VarChar(10) // BASE | PIEZA | CAJA (from SAE aliasing)
   is_active          Boolean  @default(true)

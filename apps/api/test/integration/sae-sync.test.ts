@@ -151,33 +151,48 @@ describe('SAE → WMS synchronisation', () => {
     expect(JSON.stringify(r.body)).not.toContain('fake-key');
   });
 
-  it('imports SKUs with model/layer grouping, case conversions, GTIN barcodes; invalid and inactive rows are handled', async () => {
+  it('imports ONE SKU per product (GTIN/model) with every SAE key as alias barcode; legacy per-key SKUs are merged', async () => {
+    // a per-key SKU left by an older import (the CAJA variant), with a hand-added barcode and no inventory
+    await sql(`INSERT INTO skus (code, description, external_source, external_ref, model_code, packaging_layer) VALUES ('.SIC20G', 'SARTEN IMPERIAL 20CM GRIS (CAJA)', 'SAE', '.SIC20G', 'SIC20G', 'CAJA')`);
+    await sql(`INSERT INTO sku_uoms (sku_id, uom_code, base_qty) SELECT id, 'PIECE', 1 FROM skus WHERE code = '.SIC20G'`);
+    await sql(`INSERT INTO sku_barcodes (sku_id, barcode, uom_code) SELECT id, 'LEGACY-CAJA-BC', 'PIECE' FROM skus WHERE code = '.SIC20G'`);
     const r = await sup.post('/sae/sync', { entities: ['skus'] });
     expect(r.status).toBe(200);
     const res = r.body.results[0];
     expect(res.entity).toBe('skus');
     expect(res.status).toBe('OK');
-    expect(res.source_rows).toBe(6);
-    expect(res.created).toBe(5); // 'bad key!' rejected
+    expect(res.source_rows).toBe(6); // 6 SAE keys …
+    expect(res.created).toBe(3); // … = 3 products: SIC20G (3 keys), CMET24R, BAJA1; 'bad key!' rejected; the legacy '.SIC20G' SKU is folded into SIC20G
     expect(res.errors.some((e: any) => e.ref === 'bad key!')).toBe(true);
-    const skus = await sql<{ code: string; model_code: string; packaging_layer: string | null; is_active: boolean; family: string | null; requires_lot: boolean }>(`SELECT code, model_code, packaging_layer, is_active, family, requires_lot FROM skus WHERE external_source = 'SAE' ORDER BY code`);
+    expect(res.notes).toContain('fusionados=1');
+    const skus = await sql<{ code: string; gtin: string | null; model_code: string; is_active: boolean; family: string | null; requires_lot: boolean }>(`SELECT code, gtin, model_code, is_active, family, requires_lot FROM skus WHERE external_source = 'SAE' ORDER BY code`);
+    expect(skus.map((s) => s.code)).toEqual(['BAJA1', 'CMET24R', 'SIC20G']); // no '.SIC20G', no 'SIC20G-GRIS-1', padded 'CMET24R.' → model CMET24R
     const byCode = Object.fromEntries(skus.map((s) => [s.code, s]));
-    expect(byCode['SIC20G']).toMatchObject({ model_code: 'SIC20G', packaging_layer: 'BASE', is_active: true, family: 'IMP' });
-    expect(byCode['.SIC20G']).toMatchObject({ model_code: 'SIC20G', packaging_layer: 'CAJA' });
-    expect(byCode['SIC20G-GRIS-1']).toMatchObject({ model_code: 'SIC20G', packaging_layer: 'PIEZA' });
-    expect(byCode['CMET24R.']).toMatchObject({ requires_lot: true, family: 'METAL' }); // padded key trimmed
-    expect(byCode['BAJA1']?.is_active).toBe(false);
+    expect(byCode['SIC20G']).toMatchObject({ gtin: '7500462718695', model_code: 'SIC20G', is_active: true, family: 'IMP' });
+    expect(byCode['CMET24R']).toMatchObject({ gtin: '7500462700001', requires_lot: true, family: 'METAL' }); // GTIN registered under the model name
+    expect(byCode['BAJA1']).toMatchObject({ is_active: false, gtin: null });
     const uoms = await sql<{ code: string; uom_code: string; base_qty: bigint }>(`SELECT s.code, u.uom_code, u.base_qty FROM sku_uoms u JOIN skus s ON s.id = u.sku_id WHERE s.external_source = 'SAE' ORDER BY s.code, u.uom_code`);
     expect(uoms.filter((u) => u.code === 'SIC20G').map((u) => `${u.uom_code}=${u.base_qty}`)).toEqual(['CASE=6', 'PIECE=1']); // from pedido_lineas
-    expect(uoms.filter((u) => u.code === 'CMET24R.').map((u) => `${u.uom_code}=${u.base_qty}`)).toEqual(['CASE=12', 'PIECE=1']); // from uni_emp
-    expect(uoms.filter((u) => u.code === 'SIC20G-GRIS-1').map((u) => `${u.uom_code}=${u.base_qty}`)).toEqual(['CASE=6', 'PIECE=1']); // via alias model
-    const bc = await sql<{ code: string; barcode: string }>(`SELECT s.code, b.barcode FROM sku_barcodes b JOIN skus s ON s.id = b.sku_id WHERE b.barcode IN ('7500462718695','7500462700001')`);
-    expect(bc.find((b) => b.barcode === '7500462718695')?.code).toBe('SIC20G');
-    expect(bc.find((b) => b.barcode === '7500462700001')?.code).toBe('CMET24R.');
+    expect(uoms.filter((u) => u.code === 'CMET24R').map((u) => `${u.uom_code}=${u.base_qty}`)).toEqual(['CASE=12', 'PIECE=1']); // from uni_emp
+    // every SAE key (and the GTIN) resolves to the product, with the packaging level of the key
+    const bc = await sql<{ code: string; barcode: string; uom_code: string }>(`SELECT s.code, b.barcode, b.uom_code FROM sku_barcodes b JOIN skus s ON s.id = b.sku_id WHERE s.external_source = 'SAE' ORDER BY b.barcode`);
+    const bcOf = (b: string) => bc.find((x) => x.barcode === b);
+    expect(bcOf('7500462718695')).toMatchObject({ code: 'SIC20G', uom_code: 'PIECE' });
+    expect(bcOf('SIC20G')).toMatchObject({ code: 'SIC20G', uom_code: 'PIECE' });
+    expect(bcOf('.SIC20G')).toMatchObject({ code: 'SIC20G', uom_code: 'CASE' }); // CAJA key → cases
+    expect(bcOf('SIC20G-GRIS-1')).toMatchObject({ code: 'SIC20G', uom_code: 'PIECE' });
+    expect(bcOf('LEGACY-CAJA-BC')).toMatchObject({ code: 'SIC20G' }); // hand-added barcode survived the merge
+    expect(bcOf('7500462700001')).toMatchObject({ code: 'CMET24R', uom_code: 'PIECE' });
+    expect(bcOf('CMET24R.')).toMatchObject({ code: 'CMET24R' });
+    // scanning any key on the floor resolves to the product
+    const scan = await sup.get('/skus/by-barcode/.SIC20G');
+    expect(scan.body).toMatchObject({ sku: { code: 'SIC20G' }, uom_code: 'CASE' });
     // idempotent
     const again = await sup.post('/sae/sync', { entities: ['skus'] });
-    expect(again.body.results[0]).toMatchObject({ created: 0, updated: 5 });
-    expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM skus WHERE external_source = 'SAE'`))[0]!.n).toBe(5n);
+    expect(again.body.results[0]).toMatchObject({ created: 0, updated: 3 });
+    expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM skus WHERE external_source = 'SAE'`))[0]!.n).toBe(3n);
+    const merges = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM audit_logs WHERE action = 'sku.merge'`);
+    expect(merges[0]!.n).toBeGreaterThanOrEqual(1n);
   });
 
   it('imports customers (SAE + retail platform) and suppliers idempotently', async () => {
@@ -208,7 +223,7 @@ describe('SAE → WMS synchronisation', () => {
     expect(po[0]).toMatchObject({ po_number: '0000000337', supplier_code: '30' });
     expect(po[0]!.notes).toContain('PI-2026-77');
     const lines = await sql<{ code: string; ordered_qty: bigint }>(`SELECT s.code, l.ordered_qty FROM purchase_order_lines l JOIN skus s ON s.id = l.sku_id JOIN purchase_orders p ON p.id = l.po_id WHERE p.po_number = '0000000337' ORDER BY s.code`);
-    expect(lines.map((l) => `${l.code}=${l.ordered_qty}`)).toEqual(['SIC20G=600', 'SIC20G-GRIS-1=100']);
+    expect(lines.map((l) => `${l.code}=${l.ordered_qty}`)).toEqual(['SIC20G=700']); // 550 + 50 + 100 (PIEZA key of the same product)
     const again = await sup.post('/sae/sync', { entities: ['purchase_orders'] });
     expect(again.body.results[0]).toMatchObject({ created: 0, updated: 1 });
     expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM purchase_orders WHERE external_source = 'SAE'`))[0]!.n).toBe(1n);
@@ -225,7 +240,7 @@ describe('SAE → WMS synchronisation', () => {
     expect(o[0]).toMatchObject({ order_number: '8834970889', status: 'IMPORTED', priority: 5, customer: 'WMT', external_ref: 'p-1', source: 'SAE' });
     expect(o[0]!.destination).toContain('CEDIS Cuautitlán');
     const lines = await sql<{ code: string; required_qty: bigint }>(`SELECT s.code, l.required_qty FROM order_lines l JOIN skus s ON s.id = l.sku_id JOIN orders o ON o.id = l.order_id WHERE o.order_number = '8834970889' ORDER BY l.line_no`);
-    expect(lines.map((l) => `${l.code}=${l.required_qty}`)).toEqual(['SIC20G=198', 'SIC20G-GRIS-1=96']);
+    expect(lines.map((l) => `${l.code}=${l.required_qty}`)).toEqual(['SIC20G=294']); // two keys of the same product → one line
     // re-run: still one order; then the platform cancels p-1 → WMS order cancelled
     await sup.post('/sae/sync', { entities: ['customer_orders'] });
     expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM orders WHERE source = 'SAE' AND external_ref LIKE 'p-%'`))[0]!.n).toBe(1n);
@@ -244,9 +259,11 @@ describe('SAE → WMS synchronisation', () => {
     const before = (await sql<{ n: bigint }>(`SELECT count(*) AS n FROM inventory_movements`))[0]!.n;
     const r = await sup.get('/sae/stock-compare');
     expect(r.status).toBe(200);
-    expect(r.body.skus_sae).toBe(3);
+    expect(r.body.skus_sae).toBe(3); // SAE keys
     const sic = r.body.differences.find((d: any) => d.sku === 'SIC20G');
-    expect(sic).toMatchObject({ in_wms: true, sae_existencia: '180', wms_total: '0', diff: '-180' });
+    // 180 (base) + 0 cases × 6 + 48 (piece key) = 228 pieces of the product
+    expect(sic).toMatchObject({ in_wms: true, gtin: '7500462718695', sae_existencia: '228', wms_total: '0', diff: '-228' });
+    expect(sic.sae_keys).toHaveLength(3);
     expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM inventory_movements`))[0]!.n).toBe(before);
   });
 

@@ -67,21 +67,160 @@ async function withRun(entity: SaeEntity, trigger: 'SCHEDULED' | 'MANUAL', ctx: 
 }
 
 // ---------------------------------------------------------------------------
-// SKUs
+// SKUs — ONE WMS SKU PER PHYSICAL PRODUCT
+//
+// SAE registers the same product under several keys (BASE, PIEZA "-1", CAJA
+// "." variants, customer item numbers such as 636570). The WMS keeps a single
+// SKU per product, identified by its GTIN when the platform knows it, otherwise
+// by the SAE model (sku_alias.modelo, or the key without leading/trailing dots).
+// Every SAE key becomes an alias barcode of that SKU with the packaging level it
+// represents (CAJA → CASE when the case size is known), so scanning or importing
+// any of the keys resolves to the same inventory line.
 // ---------------------------------------------------------------------------
 interface RawArticle { cve_art: string; descr: string | null; lin_prod: string | null; uni_med: string | null; uni_emp: number | null; fac_conv: number | null; peso: number | null; con_lote: string | null; status: string }
 interface Alias { cve_art: string; modelo: string; capa: string }
 interface Producto { sku_interno: string; gtin: string | null; activo: boolean }
-interface PedidoLinea { sku_interno: string; piezas_por_caja: number | null }
+interface PedidoLinea { sku_interno: string; gtin: string | null; piezas_por_caja: number | null }
 
-/** Case size per SAE code: customer order lines are the most reliable source, then SAE's packaging unit. */
-function caseQtyFor(code: string, model: string | null, ppcByCode: Map<string, number>, ppcByModel: Map<string, number>, article: RawArticle): bigint | null {
-  const stripped = code.replace(/^\.+/, '').replace(/\.+$/, '');
-  const fromOrders = ppcByCode.get(code) ?? ppcByCode.get(stripped) ?? (model ? ppcByModel.get(model) : undefined);
-  if (fromOrders && fromOrders > 1) return BigInt(Math.round(fromOrders));
-  const emp = num(article.uni_emp);
-  if (emp > 1 && Number.isInteger(emp)) return BigInt(emp);
-  return null;
+const SAE_KEY_RE = /^[A-Za-z0-9.][A-Za-z0-9._\-/ ]*$/;
+const GTIN_RE = /^[0-9]{8,14}$/;
+/** SAE keys may contain spaces; WMS codes/barcodes cannot. Same normalisation everywhere. */
+export const saeKeyBarcode = (k: string) => key(k).replace(/\s+/g, '_');
+const stripDots = (k: string) => k.replace(/^\.+/, '').replace(/\.+$/, '');
+
+interface ProductKey { key: string; layer: string | null; article: RawArticle; model: string }
+/** caseGtins: GTINs the platform attached to CAJA keys of the product (the case-level barcode, not another product). */
+interface Product { code: string; model: string; gtin: string | null; caseGtins: string[]; keys: ProductKey[]; base: RawArticle; caseQty: bigint | null }
+
+/** Groups SAE articles into physical products. Identity: the key's own GTIN first; keys without GTIN follow their model,
+ *  and a model joins the GTIN of its BASE key (or of the model name in the catalogue). Pure; anomalies go to the counters. */
+export function groupProducts(articles: RawArticle[], aliases: Alias[], productos: Producto[], lineas: PedidoLinea[], c: Counters): Product[] {
+  const aliasByKey = new Map(aliases.map((a) => [key(a.cve_art), { modelo: key(a.modelo), capa: key(a.capa).toUpperCase() }]));
+  const gtinByKey = new Map<string, string>();
+  for (const p of productos) if (p.activo !== false && GTIN_RE.test(key(p.gtin))) gtinByKey.set(key(p.sku_interno), key(p.gtin));
+  for (const l of lineas) if (GTIN_RE.test(key(l.gtin)) && key(l.sku_interno) && !gtinByKey.has(key(l.sku_interno))) gtinByKey.set(key(l.sku_interno), key(l.gtin));
+  const ppcByKey = new Map<string, number>();
+  for (const l of lineas) if (num(l.piezas_por_caja) > 1) ppcByKey.set(key(l.sku_interno), num(l.piezas_por_caja));
+
+  type K = ProductKey;
+  const keys: K[] = [];
+  for (const a of articles) {
+    const k = key(a.cve_art);
+    if (!k || !SAE_KEY_RE.test(k)) {
+      c.err(k || '(vacío)', 'clave SAE inválida para el WMS');
+      continue;
+    }
+    const al = aliasByKey.get(k);
+    keys.push({ key: k, layer: al?.capa ?? null, article: a, model: al?.modelo || stripDots(k) || k });
+  }
+  // sku_alias may point a "-1" key at a model that is itself just a key of a wider model (SST248V-20-1 → SST248V-20 → SST248V)
+  const modelOfKey = new Map(keys.map((k) => [k.key, k.model]));
+  for (const k of keys) {
+    let m = k.model;
+    for (let hops = 0; hops < 5; hops++) {
+      const up = modelOfKey.get(m);
+      if (!up || up === m) break;
+      m = up;
+    }
+    k.model = m;
+  }
+  // GTIN of a model = GTIN of its BASE key, else of the model name itself in the catalogue
+  const modelGtin = new Map<string, string>();
+  for (const k of keys) if (k.layer === 'BASE' && gtinByKey.has(k.key) && !modelGtin.has(k.model)) modelGtin.set(k.model, gtinByKey.get(k.key)!);
+  for (const k of keys) if (!modelGtin.has(k.model) && gtinByKey.has(k.model)) modelGtin.set(k.model, gtinByKey.get(k.model)!);
+  for (const k of keys) if (!modelGtin.has(k.model) && k.key === k.model && gtinByKey.has(k.key)) modelGtin.set(k.model, gtinByKey.get(k.key)!);
+
+  const groups = new Map<string, { gtin: string | null; caseGtins: Set<string>; keys: K[] }>();
+  for (const k of keys) {
+    const own = gtinByKey.get(k.key);
+    const mg = modelGtin.get(k.model);
+    let gtin = own ?? mg ?? null;
+    let caseGtin: string | undefined;
+    if (own && mg && own !== mg) {
+      if (k.layer === 'CAJA') {
+        // the platform gave the CAJA key its own GTIN: that is the case-level barcode of the same product
+        gtin = mg;
+        caseGtin = own;
+      } else c.errors.push({ ref: k.key, message: `GTIN ${own} distinto del GTIN ${mg} del modelo ${k.model}: se trata como producto aparte` });
+    }
+    const id = gtin ? `g:${gtin}` : `m:${k.model}`;
+    let g = groups.get(id);
+    if (!g) groups.set(id, (g = { gtin, caseGtins: new Set(), keys: [] }));
+    g.keys.push(k);
+    if (caseGtin) g.caseGtins.add(caseGtin);
+  }
+  const usedCodes = new Set<string>();
+  const out: Product[] = [];
+  for (const g of groups.values()) {
+    const ks = g.keys;
+    // representative key: BASE key named like its model, BASE, key named like its model, active, first
+    const rep = ks.find((x) => x.layer === 'BASE' && x.key === x.model) ?? ks.find((x) => x.layer === 'BASE') ?? ks.find((x) => x.key === x.model) ?? ks.find((x) => key(x.article.status) === 'A') ?? ks[0]!;
+    // code: the model when the model belongs to this product, else the representative key without dots
+    const model = g.gtin && modelGtin.get(rep.model) !== g.gtin ? stripDots(rep.key) || rep.key : rep.model;
+    let code = saeKeyBarcode(model).slice(0, 64);
+    if (usedCodes.has(code)) {
+      c.errors.push({ ref: rep.key, message: `código ${code} ya usado por otro producto en esta corrida; se usa ${code}~${g.gtin ?? rep.key}` });
+      code = `${code}~${g.gtin ?? saeKeyBarcode(rep.key)}`.slice(0, 64);
+    }
+    usedCodes.add(code);
+    const fromOrders = ks.map((x) => ppcByKey.get(x.key) ?? ppcByKey.get(stripDots(x.key))).find((v) => v && v > 1) ?? ppcByKey.get(model);
+    const emp = (layers: (string | null)[]) => ks.filter((x) => layers.includes(x.layer)).map((x) => num(x.article.uni_emp)).find((v) => v > 1 && Number.isInteger(v));
+    const v = fromOrders ?? emp(['BASE', 'PIEZA', null]) ?? emp(['CAJA']);
+    out.push({ code, model, gtin: g.gtin, caseGtins: [...g.caseGtins], keys: ks, base: rep.article, caseQty: v ? BigInt(Math.round(v)) : null });
+  }
+  return out.sort((a, b) => a.code.localeCompare(b.code));
+}
+
+/** A per-key SKU left by the previous import (or created by hand) is folded into the product when it carries no physical trace. */
+async function absorbLegacySku(tx: Tx, ctx: ActorContext, legacy: { id: string; code: string }, target: { id: string; code: string }, c: Counters): Promise<boolean> {
+  const traces = await Promise.all([
+    tx.inventory_balances.count({ where: { sku_id: legacy.id, qty: { gt: 0n } } }),
+    tx.inventory_movements.count({ where: { sku_id: legacy.id } }),
+    tx.allocations.count({ where: { sku_id: legacy.id } }),
+    tx.pick_task_lines.count({ where: { sku_id: legacy.id } }),
+    tx.receipt_lines.count({ where: { sku_id: legacy.id } }),
+    tx.count_lines.count({ where: { sku_id: legacy.id } }),
+    tx.return_lines.count({ where: { sku_id: legacy.id } }),
+    tx.verification_lines.count({ where: { sku_id: legacy.id } }),
+    tx.replenishment_rules.count({ where: { sku_id: legacy.id } }),
+    tx.replenishment_tasks.count({ where: { sku_id: legacy.id } }),
+  ]);
+  if (traces.some((n) => n > 0)) {
+    c.errors.push({ ref: legacy.code, message: `clave duplicada del producto ${target.code} con inventario o movimientos: no se fusionó (requiere conteo/ajuste manual)` });
+    return false;
+  }
+  const ols = await tx.order_lines.findMany({ where: { sku_id: legacy.id }, include: { order: { select: { status: true, order_number: true } } } });
+  const busy = ols.find((l) => !['IMPORTED', 'CANCELLED'].includes(l.order.status));
+  if (busy) {
+    c.errors.push({ ref: legacy.code, message: `clave duplicada del producto ${target.code} usada por el pedido ${busy.order.order_number} en proceso: no se fusionó` });
+    return false;
+  }
+  const pls = await tx.purchase_order_lines.findMany({ where: { sku_id: legacy.id }, include: { po: { select: { status: true, po_number: true } } } });
+  const busyPo = pls.find((l) => l.po.status !== 'OPEN' || l.received_qty > 0n);
+  if (busyPo) {
+    c.errors.push({ ref: legacy.code, message: `clave duplicada del producto ${target.code} usada por la OC ${busyPo.po.po_number} con recepciones: no se fusionó` });
+    return false;
+  }
+  for (const l of ols) {
+    const twin = await tx.order_lines.findFirst({ where: { order_id: l.order_id, sku_id: target.id } });
+    if (twin) {
+      await tx.order_lines.update({ where: { id: twin.id }, data: { required_qty: { increment: l.required_qty }, uom_qty: { increment: l.uom_qty } } });
+      await tx.order_lines.delete({ where: { id: l.id } });
+    } else await tx.order_lines.update({ where: { id: l.id }, data: { sku_id: target.id } });
+  }
+  for (const l of pls) {
+    const twin = await tx.purchase_order_lines.findFirst({ where: { po_id: l.po_id, sku_id: target.id } });
+    if (twin) {
+      await tx.purchase_order_lines.update({ where: { id: twin.id }, data: { ordered_qty: { increment: l.ordered_qty }, uom_qty: { increment: l.uom_qty } } });
+      await tx.purchase_order_lines.delete({ where: { id: l.id } });
+    } else await tx.purchase_order_lines.update({ where: { id: l.id }, data: { sku_id: target.id } });
+  }
+  await tx.incidents.updateMany({ where: { sku_id: legacy.id }, data: { sku_id: target.id } });
+  await tx.sku_barcodes.updateMany({ where: { sku_id: legacy.id }, data: { sku_id: target.id } }); // barcodes are globally unique: no clash possible
+  await tx.sku_uoms.deleteMany({ where: { sku_id: legacy.id } });
+  await tx.skus.delete({ where: { id: legacy.id } });
+  await audit(tx, ctx, { action: 'sku.merge', entity_type: 'sku', entity_id: target.id, before: { merged_sku: legacy.code, merged_sku_id: legacy.id, order_lines: ols.length, po_lines: pls.length }, after: { code: target.code }, reason: 'SAE: clave duplicada del mismo producto (GTIN/modelo)' });
+  return true;
 }
 
 export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL' = 'MANUAL'): Promise<SyncResult> {
@@ -93,82 +232,90 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
     c.source_rows = articles.length;
     const aliases = erp ? await fetchAll<Alias>(erp, 'sku_alias', { select: 'cve_art,modelo,capa' }) : [];
     const productos = erp ? await fetchAll<Producto>(erp, 'productos', { select: 'sku_interno,gtin,activo' }) : [];
-    const lineas = erp ? await fetchAll<PedidoLinea>(erp, 'pedido_lineas', { select: 'sku_interno,piezas_por_caja' }) : [];
-    const aliasByCode = new Map(aliases.map((a) => [key(a.cve_art), a]));
-    const gtinByCode = new Map(productos.filter((p) => p.gtin && p.activo !== false).map((p) => [key(p.sku_interno), key(p.gtin)]));
-    const ppcByCode = new Map<string, number>();
-    const ppcByModel = new Map<string, number>();
-    for (const l of lineas) {
-      const ppc = num(l.piezas_por_caja);
-      if (ppc > 1) {
-        ppcByCode.set(key(l.sku_interno), ppc);
-        const a = aliasByCode.get(key(l.sku_interno));
-        if (a) ppcByModel.set(key(a.modelo), ppc);
-      }
-    }
+    const lineas = erp ? await fetchAll<PedidoLinea>(erp, 'pedido_lineas', { select: 'sku_interno,gtin,piezas_por_caja' }) : [];
+    const products = groupProducts(articles, aliases, productos, lineas, c);
+    const productRefs = new Set(products.map((p) => p.model)); // external_refs that are products in this run: never treated as legacy
     const seen = new Set<string>();
+    let merged = 0;
+    let aliasCount = 0;
     const db = getDb();
-    for (const a of articles) {
-      const code = key(a.cve_art);
-      // SAE keys may start with '.' (packaging variants) and contain spaces (normalised to '_')
-      if (!code || !/^[A-Za-z0-9.][A-Za-z0-9._\-/ ]*$/.test(code)) {
-        c.err(code || '(vacío)', 'clave SAE inválida para el WMS');
-        continue;
-      }
-      const safeCode = code.replace(/\s+/g, '_');
-      seen.add(safeCode);
-      const alias = aliasByCode.get(code);
-      const model = alias ? key(alias.modelo) : safeCode.replace(/^\.+/, '').replace(/\.+$/, '');
-      const layer = alias ? key(alias.capa) : null;
-      const active = key(a.status) === 'A';
+    for (const p of products) {
+      seen.add(p.model);
       try {
         await withTx(async (tx) => {
-          const existing = (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: code } })) ?? (await tx.skus.findUnique({ where: { code: safeCode } }));
+          const existing =
+            (p.gtin ? await tx.skus.findUnique({ where: { gtin: p.gtin } }) : null) ??
+            (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: p.model } })) ??
+            (await tx.skus.findUnique({ where: { code: p.code } }));
+          const a = p.base;
           const data = {
-            description: (a.descr ?? code).trim().slice(0, 300) || code,
+            description: (a.descr ?? p.model).trim().slice(0, 300) || p.model,
             family: a.lin_prod ? key(a.lin_prod).slice(0, 60) : null,
             unit_weight_kg: num(a.peso) > 0 ? num(a.peso) : undefined,
-            requires_lot: key(a.con_lote) === 'S',
+            requires_lot: p.keys.some((k) => key(k.article.con_lote) === 'S'),
             external_source: 'SAE',
-            external_ref: code,
-            model_code: model.slice(0, 64),
-            packaging_layer: layer ? layer.slice(0, 10) : null,
-            is_active: active,
+            external_ref: p.model.slice(0, 64),
+            model_code: p.model.slice(0, 64),
+            packaging_layer: null,
+            gtin: p.gtin,
+            is_active: p.keys.some((k) => key(k.article.status) === 'A'),
           };
-          let skuId: string;
+          let sku: { id: string; code: string };
           if (existing) {
+            if (existing.gtin && p.gtin && existing.gtin !== p.gtin) c.errors.push({ ref: p.model, message: `el WMS tiene GTIN ${existing.gtin} y SAE/plataforma ${p.gtin}; se actualizó al de la plataforma` });
             await tx.skus.update({ where: { id: existing.id }, data });
-            skuId = existing.id;
+            sku = { id: existing.id, code: existing.code };
             c.updated++;
           } else {
-            const created = await tx.skus.create({ data: { code: safeCode, abc_class: 'C', ...data, uoms: { create: [{ uom_code: 'PIECE', base_qty: 1n }] } } });
-            skuId = created.id;
+            sku = await tx.skus.create({ data: { code: p.code, abc_class: 'C', ...data, uoms: { create: [{ uom_code: 'PIECE', base_qty: 1n }] } }, select: { id: true, code: true } });
             c.created++;
           }
-          // UoM: PIECE always; CASE only when we can determine it and it is not already defined
-          await tx.sku_uoms.upsert({ where: { sku_id_uom_code: { sku_id: skuId, uom_code: 'PIECE' } }, create: { sku_id: skuId, uom_code: 'PIECE', base_qty: 1n }, update: {} });
-          const caseQty = caseQtyFor(code, model, ppcByCode, ppcByModel, a);
-          if (caseQty) {
-            const cur = await tx.sku_uoms.findUnique({ where: { sku_id_uom_code: { sku_id: skuId, uom_code: 'CASE' } } });
-            if (!cur) await tx.sku_uoms.create({ data: { sku_id: skuId, uom_code: 'CASE', base_qty: caseQty } });
-            else if (cur.base_qty !== caseQty) c.errors.push({ ref: code, message: `CASE en WMS = ${cur.base_qty} pero SAE/pedidos indican ${caseQty}; no se cambió (revisar)` });
+          // SAE SKUs that stood for one of this product's keys or models (per-key rows of the first import, or a model
+          // that the platform later tied to this GTIN) fold into the product — never another product of this run
+          const refs = [...new Set(p.keys.flatMap((k) => [k.key, k.model]))].filter((r) => !productRefs.has(r) || r === p.model);
+          const legacy = await tx.skus.findMany({ where: { external_source: 'SAE', external_ref: { in: refs }, id: { not: sku.id } }, select: { id: true, code: true, external_ref: true } });
+          for (const l of legacy) if (!productRefs.has(l.external_ref!) || l.external_ref === p.model) if (await absorbLegacySku(tx, ctx, l, sku, c)) merged++;
+          // UoM: PIECE always; CASE only when known and not already defined differently
+          await tx.sku_uoms.upsert({ where: { sku_id_uom_code: { sku_id: sku.id, uom_code: 'PIECE' } }, create: { sku_id: sku.id, uom_code: 'PIECE', base_qty: 1n }, update: {} });
+          let hasCase = false;
+          const cur = await tx.sku_uoms.findUnique({ where: { sku_id_uom_code: { sku_id: sku.id, uom_code: 'CASE' } } });
+          if (cur) {
+            hasCase = true;
+            if (p.caseQty && cur.base_qty !== p.caseQty) c.errors.push({ ref: p.model, message: `CASE en WMS = ${cur.base_qty} pero SAE/pedidos indican ${p.caseQty}; no se cambió (revisar)` });
+          } else if (p.caseQty) {
+            await tx.sku_uoms.create({ data: { sku_id: sku.id, uom_code: 'CASE', base_qty: p.caseQty } });
+            hasCase = true;
           }
-          // GTIN as PIECE barcode
-          // exact code first; the stripped code only for the BASE article (never for CAJA/PIEZA variants)
-          const stripped = code.replace(/^\.+/, '').replace(/\.+$/, '');
-          const gtin = gtinByCode.get(code) ?? ((!layer || layer === 'BASE') && stripped !== code ? gtinByCode.get(stripped) : undefined);
-          if (gtin && /^[0-9]{8,14}$/.test(gtin)) {
-            const clash = await tx.sku_barcodes.findUnique({ where: { barcode: gtin } });
-            if (!clash) await tx.sku_barcodes.create({ data: { sku_id: skuId, barcode: gtin, uom_code: 'PIECE' } });
-            else if (clash.sku_id !== skuId) c.errors.push({ ref: code, message: `GTIN ${gtin} ya pertenece a otro SKU; no se asignó` });
+          // barcodes: the GTIN (piece) and every SAE key with its packaging level
+          const wanted: { barcode: string; uom_code: string; ref: string }[] = [];
+          if (p.gtin) wanted.push({ barcode: p.gtin, uom_code: 'PIECE', ref: p.model });
+          for (const cg of p.caseGtins) {
+            if (!hasCase) c.errors.push({ ref: cg, message: `GTIN de caja del producto ${sku.code} sin conversión de caja conocida: se registra como pieza` });
+            wanted.push({ barcode: cg, uom_code: hasCase ? 'CASE' : 'PIECE', ref: p.model });
+          }
+          for (const k of p.keys) {
+            const bc = saeKeyBarcode(k.key).slice(0, 64);
+            if (bc.length < 3 || bc === p.gtin) continue;
+            if (k.layer === 'CAJA' && !hasCase) c.errors.push({ ref: k.key, message: `clave de caja del producto ${sku.code} sin conversión de caja conocida: se registra como pieza` });
+            wanted.push({ barcode: bc, uom_code: k.layer === 'CAJA' && hasCase ? 'CASE' : 'PIECE', ref: k.key });
+          }
+          for (const w of wanted) {
+            const clash = await tx.sku_barcodes.findUnique({ where: { barcode: w.barcode }, include: { sku: { select: { code: true, external_source: true } } } });
+            if (!clash) await tx.sku_barcodes.create({ data: { sku_id: sku.id, barcode: w.barcode, uom_code: w.uom_code } });
+            else if (clash.sku_id !== sku.id) {
+              // SAE aliases follow SAE: a key that now belongs to another product moves with it. Hand-made SKUs are never touched.
+              if (clash.sku.external_source === 'SAE') await tx.sku_barcodes.update({ where: { id: clash.id }, data: { sku_id: sku.id, uom_code: w.uom_code } });
+              else c.errors.push({ ref: w.ref, message: `código ${w.barcode} ya pertenece al SKU ${clash.sku.code} (no SAE); no se asignó a ${sku.code}` });
+            } else if (clash.uom_code !== w.uom_code) await tx.sku_barcodes.update({ where: { id: clash.id }, data: { uom_code: w.uom_code } });
+            else aliasCount++;
           }
         });
       } catch (e) {
-        c.err(code, (e as Error).message.slice(0, 200));
+        c.err(p.model, (e as Error).message.slice(0, 200));
       }
     }
-    // SAE articles that disappeared from the feed: deactivate only when they hold no inventory
-    const stale = await db.skus.findMany({ where: { external_source: 'SAE', is_active: true, code: { notIn: [...seen] } }, select: { id: true, code: true } });
+    // SAE products that disappeared from the feed: deactivate only when they hold no inventory
+    const stale = await db.skus.findMany({ where: { external_source: 'SAE', is_active: true, external_ref: { notIn: [...seen] } }, select: { id: true, code: true } });
     let deactivated = 0;
     for (const s of stale) {
       const inv = await db.inventory_balances.count({ where: { sku_id: s.id, qty: { gt: 0n } } });
@@ -177,8 +324,29 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
         deactivated++;
       } else c.errors.push({ ref: s.code, message: 'ya no existe en SAE pero tiene inventario en el WMS; sigue activo' });
     }
-    return `alias=${aliases.length} gtin=${gtinByCode.size} ppc=${ppcByCode.size} desactivados=${deactivated}`;
+    return `productos=${products.length} claves=${articles.length} con_gtin=${products.filter((p) => p.gtin).length} fusionados=${merged} alias_ok=${aliasCount} desactivados=${deactivated}`;
   });
+}
+
+/** Any SAE key / GTIN / model → the WMS product it belongs to (with the packaging level the key represents). */
+export async function resolveSaeKey(tx: Tx, saeKey: string, gtin?: string | null): Promise<{ id: string; code: string; is_active: boolean; uom_code: string } | null> {
+  const k = key(saeKey);
+  const bc = saeKeyBarcode(k);
+  if (bc) {
+    const b = await tx.sku_barcodes.findUnique({ where: { barcode: bc }, include: { sku: { select: { id: true, code: true, is_active: true } } } });
+    if (b) return { ...b.sku, uom_code: b.uom_code };
+  }
+  if (gtin && GTIN_RE.test(key(gtin))) {
+    const s = await tx.skus.findUnique({ where: { gtin: key(gtin) }, select: { id: true, code: true, is_active: true } });
+    if (s) return { ...s, uom_code: 'PIECE' };
+    const b = await tx.sku_barcodes.findUnique({ where: { barcode: key(gtin) }, include: { sku: { select: { id: true, code: true, is_active: true } } } });
+    if (b) return { ...b.sku, uom_code: 'PIECE' };
+  }
+  for (const cnd of [...new Set([k, stripDots(k)])].filter(Boolean)) {
+    const s = (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: cnd }, select: { id: true, code: true, is_active: true } })) ?? (await tx.skus.findUnique({ where: { code: saeKeyBarcode(cnd) }, select: { id: true, code: true, is_active: true } }));
+    if (s) return { ...s, uom_code: 'PIECE' };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,14 +453,16 @@ export async function syncPurchaseOrders(ctx: ActorContext, trigger: 'SCHEDULED'
             agg.set(key(l.cve_art), (agg.get(key(l.cve_art)) ?? 0n) + q);
           }
           if (agg.size === 0) throw new Error('sin líneas con cantidad > 0');
-          const resolved: { sku_id: string; qty: bigint }[] = [];
+          // several SAE keys may be the same product: aggregate again per WMS SKU (quantities are pieces)
+          const perSku = new Map<string, bigint>();
           const missing: string[] = [];
           for (const [art, qty] of agg) {
-            const sku = (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: art } })) ?? (await tx.skus.findUnique({ where: { code: art.replace(/\s+/g, '_') } }));
+            const sku = await resolveSaeKey(tx, art);
             if (!sku) missing.push(art);
-            else resolved.push({ sku_id: sku.id, qty });
+            else perSku.set(sku.id, (perSku.get(sku.id) ?? 0n) + qty);
           }
           if (missing.length) throw new Error(`SKUs no encontrados: ${missing.join(', ')}`);
+          const resolved = [...perSku].map(([sku_id, qty]) => ({ sku_id, qty }));
           const existing = (await tx.purchase_orders.findFirst({ where: { external_source: 'SAE', external_ref: number } })) ?? (await tx.purchase_orders.findUnique({ where: { po_number: number } }));
           const header = { supplier_id: supplier.id, expected_date: po.fecha_rec ? new Date(po.fecha_rec) : po.fecha ? new Date(po.fecha) : null, notes: key(po.su_refer) ? `Ref. proveedor: ${key(po.su_refer)}` : null, external_source: 'SAE', external_ref: number };
           if (existing) {
@@ -327,21 +497,6 @@ interface Cedis { codigo: string; nombre: string | null; ciudad: string | null; 
 
 const CANCELLED_STATES = new Set(['cancelado', 'cancelada', 'rechazado', 'rechazada']);
 const CLOSED_STATES = new Set(['surtido', 'embarcado', 'facturado', 'entregado', 'cerrado', 'completado']);
-
-async function resolveSkuForOrder(tx: Tx, skuInterno: string, gtin: string | null): Promise<{ id: string; code: string } | null> {
-  const code = key(skuInterno);
-  const candidates = [code, `.${code}`, `${code}.`].filter(Boolean);
-  for (const cnd of candidates) {
-    const s = (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: cnd, is_active: true } })) ?? (await tx.skus.findFirst({ where: { code: cnd, is_active: true } }));
-    if (s) return { id: s.id, code: s.code };
-  }
-  if (gtin) {
-    const b = await tx.sku_barcodes.findUnique({ where: { barcode: key(gtin) }, include: { sku: true } });
-    if (b?.sku.is_active) return { id: b.sku.id, code: b.sku.code };
-  }
-  const base = await tx.skus.findFirst({ where: { model_code: code, packaging_layer: 'BASE', is_active: true } });
-  return base ? { id: base.id, code: base.code } : null;
-}
 
 export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL' = 'MANUAL'): Promise<SyncResult> {
   const cfg = saeConfig();
@@ -389,18 +544,22 @@ export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED'
           if (!customer) throw new Error(`cliente ${p.cliente_id} no sincronizado (ejecute clientes)`);
           const ls = byPedido.get(p.id) ?? [];
           if (!ls.length) throw new Error('pedido sin líneas');
-          const resolved: { sku_code: string; qty: bigint; ppc: number }[] = [];
+          // lines are pieces (cantidad_surtir); several keys of the same product collapse into one WMS line
+          const perSku = new Map<string, { sku_code: string; qty: bigint }>();
           const missing: string[] = [];
           for (const l of ls) {
             const qty = BigInt(Math.round(num(l.cantidad_surtir ?? l.cantidad)));
             if (qty <= 0n) continue;
-            const sku = l.sku_interno ? await resolveSkuForOrder(tx, l.sku_interno, l.gtin) : null;
-            if (!sku) {
-              missing.push(`${l.num_linea}:${key(l.sku_interno) || key(l.sku_cliente) || key(l.gtin)}`);
+            const sku = l.sku_interno || l.gtin ? await resolveSaeKey(tx, l.sku_interno ?? '', l.gtin) : null;
+            if (!sku || !sku.is_active) {
+              missing.push(`${l.num_linea}:${key(l.sku_interno) || key(l.sku_cliente) || key(l.gtin)}${sku ? ' (inactivo)' : ''}`);
               continue;
             }
-            resolved.push({ sku_code: sku.code, qty, ppc: num(l.piezas_por_caja) });
+            const cur = perSku.get(sku.id);
+            if (cur) cur.qty += qty;
+            else perSku.set(sku.id, { sku_code: sku.code, qty });
           }
+          const resolved = [...perSku.values()];
           if (missing.length) throw new Error(`líneas sin SKU en el WMS: ${missing.join(', ')}`);
           if (!resolved.length) throw new Error('sin líneas con cantidad > 0');
           const cd = p.cedis_codigo ? cedisByCode.get(key(p.cedis_codigo)) : undefined;
@@ -437,32 +596,47 @@ interface SaeStock { cve_art: string; descripcion: string | null; existencia: nu
 
 const abs = (v: bigint) => (v < 0n ? -v : v);
 
+/** SAE existencias (per key, in the key's unit) vs WMS totals per product (pieces). Never applied. */
 export async function compareStock() {
   const cfg = saeConfig();
   const erp = requireSource(cfg.erp, 'erp');
   const rows = await fetchAll<SaeStock>(erp, 'sae_inventario', { select: 'cve_art,descripcion,existencia,actualizado_en', order: 'cve_art' });
   const db = getDb();
-  const wms = await db.$queryRaw<{ sku_id: string; code: string; external_ref: string | null; total: bigint; available: bigint }[]>`
-    SELECT s.id AS sku_id, s.code, s.external_ref, COALESCE(sum(b.qty), 0)::bigint AS total, COALESCE(sum(b.qty) FILTER (WHERE b.status = 'AVAILABLE'), 0)::bigint AS available
+  const wms = await db.$queryRaw<{ sku_id: string; code: string; gtin: string | null; description: string; total: bigint; available: bigint }[]>`
+    SELECT s.id AS sku_id, s.code, s.gtin, s.description, COALESCE(sum(b.qty), 0)::bigint AS total, COALESCE(sum(b.qty) FILTER (WHERE b.status = 'AVAILABLE'), 0)::bigint AS available
       FROM skus s LEFT JOIN inventory_balances b ON b.sku_id = s.id AND b.qty > 0
      WHERE s.external_source = 'SAE' GROUP BY s.id`;
-  const byRef = new Map(wms.map((w) => [w.external_ref ?? w.code, w]));
-  const lines = rows.map((r) => {
-    const code = key(r.cve_art);
-    const w = byRef.get(code);
-    const sae = BigInt(Math.round(num(r.existencia)));
-    const total = w?.total ?? 0n;
-    return { sku: code, description: r.descripcion, in_wms: !!w, sae_existencia: sae, wms_total: total, wms_available: w?.available ?? 0n, diff: total - sae };
-  });
-  const differing = lines.filter((l) => l.diff !== 0n);
+  const aliases = await db.$queryRaw<{ barcode: string; sku_id: string; factor: bigint | null }[]>`
+    SELECT b.barcode, b.sku_id, u.base_qty AS factor FROM sku_barcodes b JOIN skus s ON s.id = b.sku_id
+      LEFT JOIN sku_uoms u ON u.sku_id = b.sku_id AND u.uom_code = b.uom_code WHERE s.external_source = 'SAE'`;
+  const bySku = new Map(wms.map((w) => [w.sku_id, w]));
+  const byAlias = new Map(aliases.map((a) => [a.barcode, a]));
+  type Line = { sku: string; gtin: string | null; description: string | null; in_wms: boolean; sae_existencia: bigint; wms_total: bigint; wms_available: bigint; diff: bigint; sae_keys: { key: string; existencia: bigint; factor: bigint }[] };
+  const lines = new Map<string, Line>();
+  for (const r of rows) {
+    const k = key(r.cve_art);
+    const alias = byAlias.get(saeKeyBarcode(k));
+    const w = alias ? bySku.get(alias.sku_id) : undefined;
+    const factor = alias?.factor ?? 1n;
+    const existencia = BigInt(Math.round(num(r.existencia)));
+    const id = w ? w.sku_id : `sae:${k}`;
+    let line = lines.get(id);
+    if (!line) lines.set(id, (line = { sku: w?.code ?? k, gtin: w?.gtin ?? null, description: w?.description ?? r.descripcion, in_wms: !!w, sae_existencia: 0n, wms_total: w?.total ?? 0n, wms_available: w?.available ?? 0n, diff: 0n, sae_keys: [] }));
+    line.sae_existencia += existencia * factor;
+    line.sae_keys.push({ key: k, existencia, factor });
+  }
+  for (const l of lines.values()) l.diff = l.wms_total - l.sae_existencia;
+  const all = [...lines.values()];
+  const differing = all.filter((l) => l.diff !== 0n);
   return {
     checked_at: new Date().toISOString(),
     sae_updated_at: rows[0]?.actualizado_en ?? null,
     skus_sae: rows.length,
-    skus_matching: lines.length - differing.length,
+    products: all.length,
+    skus_matching: all.length - differing.length,
     skus_differing: differing.length,
-    sae_units: lines.reduce((a, l) => a + l.sae_existencia, 0n),
-    wms_units: lines.reduce((a, l) => a + l.wms_total, 0n),
+    sae_units: all.reduce((a, l) => a + l.sae_existencia, 0n),
+    wms_units: all.reduce((a, l) => a + l.wms_total, 0n),
     differences: differing.sort((a, b) => (abs(b.diff) > abs(a.diff) ? 1 : abs(b.diff) < abs(a.diff) ? -1 : a.sku.localeCompare(b.sku))).slice(0, 2000),
   };
 }

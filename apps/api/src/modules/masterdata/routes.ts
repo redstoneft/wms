@@ -19,7 +19,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
   app.get('/skus', { preHandler: app.requirePermission('masterdata.read') }, async (req) => {
     const q = zList.parse(req.query);
     const where = {
-      ...(q.q ? { OR: [{ code: { contains: q.q, mode: 'insensitive' as const } }, { description: { contains: q.q, mode: 'insensitive' as const } }] } : {}),
+      ...(q.q ? { OR: [{ code: { contains: q.q, mode: 'insensitive' as const } }, { description: { contains: q.q, mode: 'insensitive' as const } }, { gtin: q.q }, { barcodes: { some: { barcode: { contains: q.q, mode: 'insensitive' as const } } } }] } : {}),
       ...(q.active ? { is_active: q.active === 'true' } : {}),
     };
     const [items, total] = await Promise.all([

@@ -62,6 +62,7 @@ function Skus() {
         onRowClick={can('masterdata.manage') ? (s) => setEdit({ ...s }) : undefined}
         columns={[
           { key: 'c', header: 'SKU', render: (s) => <span className="font-mono font-semibold">{s.code}</span> },
+          { key: 'g', header: 'GTIN', render: (s) => <span className="font-mono text-xs">{s.gtin ?? '—'}</span> },
           { key: 'd', header: 'Descripción', render: (s) => s.description },
           { key: 'f', header: 'Familia', render: (s) => s.family ?? '—' },
           { key: 'a', header: 'ABC', render: (s) => s.abc_class, align: 'center' },

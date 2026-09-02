@@ -48,7 +48,8 @@ export interface SaeStockCompare {
   skus_differing: number;
   sae_units: string | number;
   wms_units: string | number;
-  differences: { sku: string; description: string | null; in_wms: boolean; sae_existencia: string | number; wms_total: string | number; wms_available: string | number; diff: string | number }[];
+  products: number;
+  differences: { sku: string; gtin: string | null; description: string | null; in_wms: boolean; sae_existencia: string | number; wms_total: string | number; wms_available: string | number; diff: string | number; sae_keys: { key: string; existencia: string | number; factor: string | number }[] }[];
 }
 
 export const saeApi = {

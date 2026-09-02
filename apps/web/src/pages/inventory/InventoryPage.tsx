@@ -105,6 +105,7 @@ function BySku() {
         onRowClick={(r) => nav(`/timeline/${r.code}`)}
         columns={[
           { key: 'c', header: 'SKU', render: (r) => <span className="font-mono font-semibold">{r.code}</span> },
+          { key: 'g', header: 'GTIN', render: (r) => <span className="font-mono text-xs">{r.gtin ?? '—'}</span> },
           { key: 'd', header: 'Descripción', render: (r) => r.description },
           { key: 'f', header: 'Familia', render: (r) => r.family ?? '—' },
           { key: 'a', header: 'ABC', render: (r) => r.abc_class, align: 'center' },

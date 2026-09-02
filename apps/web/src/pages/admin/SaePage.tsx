@@ -200,7 +200,7 @@ function StockCompare({ data, loading, error, onRefresh }: { data: SaeStockCompa
       </Alert>
       {data && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <Stat label="Claves en SAE" value={fmtQty(data.skus_sae)} sub={data.sae_updated_at ? `SAE al ${fmtDateTime(data.sae_updated_at)}` : undefined} />
+          <Stat label="Productos" value={fmtQty(data.products)} sub={`${fmtQty(data.skus_sae)} claves SAE${data.sae_updated_at ? ` · SAE al ${fmtDateTime(data.sae_updated_at)}` : ''}`} />
           <Stat label="Coinciden" value={fmtQty(data.skus_matching)} tone="ok" />
           <Stat label="Difieren" value={fmtQty(data.skus_differing)} tone={data.skus_differing ? 'warn' : 'ok'} />
           <Stat label="Unidades SAE" value={fmtQty(data.sae_units)} />
@@ -224,8 +224,9 @@ function StockCompare({ data, loading, error, onRefresh }: { data: SaeStockCompa
           rowKey={(r) => r.sku}
           empty="Sin diferencias"
           columns={[
-            { key: 'sku', header: 'Clave', render: (r) => <span className="font-mono">{r.sku}</span> },
+            { key: 'sku', header: 'Producto', render: (r) => <div><span className="font-mono">{r.sku}</span>{r.gtin && <div className="font-mono text-[11px] text-slate-500">{r.gtin}</div>}</div> },
             { key: 'desc', header: 'Descripción', render: (r) => r.description ?? '' },
+            { key: 'keys', header: 'Claves SAE (existencia)', render: (r) => <span className="font-mono text-xs">{r.sae_keys.map((k) => `${k.key} ${fmtQty(k.existencia)}${Number(k.factor) > 1 ? `×${k.factor}` : ''}`).join(' · ')}</span> },
             { key: 'in', header: 'En WMS', render: (r) => (r.in_wms ? <Badge tone="emerald">sí</Badge> : <Badge tone="slate">no</Badge>) },
             { key: 'sae', header: 'SAE', align: 'right', render: (r) => fmtQty(r.sae_existencia) },
             { key: 'wms', header: 'WMS total', align: 'right', render: (r) => fmtQty(r.wms_total) },
