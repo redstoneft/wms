@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+apps/api/src/generated/
+apps/api/uploads/
+apps/web/playwright-report/
+apps/web/test-results/
+backups/*
+!backups/.gitkeep
+.turbo/

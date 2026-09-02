@@ -1,0 +1,87 @@
+# WMS — local/production compose.
+# Services: PostgreSQL 18, API (Fastify), Web (static SPA behind nginx), backup sidecar.
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: wms-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-production}
+      POSTGRES_DB: ${POSTGRES_DB:-wms}
+    command: >
+      postgres -c shared_buffers=256MB -c max_connections=200
+               -c log_min_duration_statement=500 -c wal_level=replica
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - wms_pgdata:/var/lib/postgresql
+      - ./scripts/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wms} -d ${POSTGRES_DB:-wms}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: wms-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      API_HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wms}:${POSTGRES_PASSWORD:-change-me-in-production}@db:5432/${POSTGRES_DB:-wms}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      UPLOAD_DIR: /data/uploads
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - wms_uploads:/data/uploads
+    ports:
+      - "${API_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: wms-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+  backup:
+    image: postgres:18-alpine
+    container_name: wms-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-wms}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-change-me-in-production}
+      PGDATABASE: ${POSTGRES_DB:-wms}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-21600}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup-loop.sh:/backup-loop.sh:ro
+    entrypoint: ["sh", "/backup-loop.sh"]
+
+volumes:
+  wms_pgdata:
+  wms_uploads:

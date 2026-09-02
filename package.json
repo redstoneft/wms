@@ -1,0 +1,28 @@
+{
+  "name": "wms",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Warehouse Management System — ledger-based inventory, LPN traceability, 3D digital twin",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "npm run test:unit -w packages/shared && npm run test:unit -w apps/api",
+    "test:integration": "npm run test:integration -w apps/api",
+    "test:e2e": "npm run test:e2e -w apps/web",
+    "db:migrate": "npm run db:migrate -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api",
+    "db:reset": "npm run db:reset -w apps/api"
+  }
+}
