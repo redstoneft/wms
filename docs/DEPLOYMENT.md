@@ -29,6 +29,19 @@ docker compose up -d api web     # las migraciones se aplican solas; el ledger n
 ```
 Antes de actualizar en producción: `scripts/backup.sh` y comprobar `GET /api/inventory/reconcile`.
 
+## Instalación real (2 de septiembre de 2026)
+
+| Elemento | Valor |
+|---|---|
+| URL | `https://wms.104-248-116-147.sslip.io` (DNS automático de sslip.io hacia la IP del servidor; se puede cambiar por un dominio propio repitiendo el paso de certbot) |
+| Servidor | ClawCloud `104.248.116.147` (Ubuntu 24.04, 2 vCPU, 2 GB + 2 GB swap), usuario `openclaw`, código en `~/wms` |
+| Contenedores | `docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.production up -d` → `wms-db`, `wms-api`, `wms-web` (solo `127.0.0.1:8081`), `wms-backup` (dumps en `~/wms/backups`) |
+| TLS | nginx del sistema (`/etc/nginx/sites-enabled/wms`) con certificado Let's Encrypt (certbot, renovación automática), proxy a `127.0.0.1:8081` |
+| Secretos | `~/wms/.env.production` (chmod 600, fuera de git): contraseña de PostgreSQL, `APP_ENCRYPTION_KEY`, `SEED_ADMIN_PASSWORD`, `INTEGRATION_API_KEY`, claves SAE |
+| Actualizar | `rsync` del repo a `~/wms` (excluyendo `node_modules`, `.env*`, `dist`) → `docker compose … up -d --build api web` → verificar `/api/health/ready` y `/api/inventory/reconcile` |
+
+`docker-compose.prod.yml` quita los puertos publicados de `db` y `api` y deja `web` solo en localhost: nada del WMS es accesible sin pasar por el nginx con TLS.
+
 ## Sin Docker (systemd)
 ```bash
 npm ci && npm run build

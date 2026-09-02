@@ -48,6 +48,14 @@ services:
       ERROR_WEBHOOK_URL: ${ERROR_WEBHOOK_URL:-}
       UPLOAD_DIR: /data/uploads
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      # Aspel SAE mirrors (optional): without them the SAE sync stays off
+      SAE_SUPABASE_URL: ${SAE_SUPABASE_URL:-}
+      SAE_SUPABASE_KEY: ${SAE_SUPABASE_KEY:-}
+      SAE_RAW_SUPABASE_URL: ${SAE_RAW_SUPABASE_URL:-}
+      SAE_RAW_SUPABASE_KEY: ${SAE_RAW_SUPABASE_KEY:-}
+      SAE_PO_SINCE_DAYS: ${SAE_PO_SINCE_DAYS:-60}
+      SAE_SYNC_INTERVAL_MINUTES: ${SAE_SYNC_INTERVAL_MINUTES:-30}
     volumes:
       - wms_uploads:/data/uploads
     ports:

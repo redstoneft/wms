@@ -1,0 +1,10 @@
+# Production overlay: nothing but the SPA is exposed, and only on localhost for the host's nginx/TLS proxy.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.production up -d --build
+services:
+  db:
+    ports: !override []
+  api:
+    ports: !override []
+  web:
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-8081}:80"
