@@ -7,6 +7,8 @@ COPY apps/api/package.json apps/api/
 RUN npm ci --no-audit --no-fund --workspace=packages/shared --workspace=apps/api
 COPY packages/shared packages/shared
 COPY apps/api apps/api
+# prisma.config.ts resolves DATABASE_URL at generate time; a placeholder is enough (no connection is made)
+ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
 RUN npm run build -w packages/shared \
  && npm run build -w apps/api
 
