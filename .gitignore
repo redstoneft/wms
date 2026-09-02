@@ -1,15 +1,21 @@
+# dependencies / builds
 node_modules/
 dist/
-.next/
-coverage/
-*.log
+apps/api/src/generated/
+*.tsbuildinfo
+# local secrets and data
 .env
 .env.*
 !.env.example
-apps/api/src/generated/
+.pgdata/
+backups/*.dump
+backups/*.sha256
 apps/api/uploads/
-apps/web/playwright-report/
-apps/web/test-results/
-backups/*
-!backups/.gitkeep
-.turbo/
+# test artifacts
+test-results/
+playwright-report/
+coverage/
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

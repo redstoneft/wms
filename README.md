@@ -7,7 +7,7 @@ Sistema de gestión de almacén para operación física real: recepción de cont
 ## Arranque rápido
 
 ```bash
-cd wms && cp .env.example .env         # poner APP_ENCRYPTION_KEY (openssl rand -base64 32)
+cp .env.example .env         # poner APP_ENCRYPTION_KEY (openssl rand -base64 32)
 npm install
 docker compose up -d db                # o: npx tsx apps/api/scripts/dev-db.ts (PostgreSQL 18 embebido)
 npm run build -w packages/shared
