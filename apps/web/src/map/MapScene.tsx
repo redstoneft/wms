@@ -6,7 +6,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
-import type { Zone } from '../api/types';
+import type { Warehouse, WarehouseFeatures, Zone } from '../api/types';
 import { HIGHLIGHT_COLOR, PALLET_BASE_COLOR, PALLET_LOAD_COLOR, SELECT_COLOR, STATUS_COLORS, type FrameInstance, type SceneModel, type Vec3 } from './mapModel';
 
 export interface FlyTarget {
@@ -21,6 +21,7 @@ export interface HoverInfo {
 }
 export interface MapSceneProps {
   model: SceneModel;
+  warehouse: Warehouse;
   zones: Zone[];
   visible: Set<string> | null; // null = everything visible
   highlight: Set<string>;
@@ -94,6 +95,122 @@ function Zones({ zones }: { zones: Zone[] }) {
           </group>
         );
       })}
+    </group>
+  );
+}
+
+// ---------------------------------------------------------------- building (survey geometry)
+const OPENING_STYLE: Record<string, { color: string; height: number }> = {
+  PORTON: { color: '#0ea5e9', height: 4.5 },
+  PUERTA: { color: '#38bdf8', height: 2.2 },
+  RAMPA: { color: '#f59e0b', height: 0.3 },
+  ANDEN: { color: '#f59e0b', height: 1.2 },
+};
+const CONTEXT_STYLE: Record<string, string> = { PATIO: '#d6d3d1', VECINO: '#fda4af', OFICINAS: '#c4b5fd', EXTERIOR: '#e7e5e4', OTRO: '#e2e8f0' };
+
+/** Walls, structural columns, doors/ramps, gable ridges, neighbouring areas and the north arrow, from `warehouse.features`. */
+function Building({ warehouse, width, depth, height }: { warehouse: Warehouse; width: number; depth: number; height: number }) {
+  const f: WarehouseFeatures | null | undefined = warehouse.features;
+  const wallT = 0.25;
+  const walls: { pos: Vec3; size: Vec3 }[] = [
+    { pos: [width / 2, height / 2, 0], size: [width + wallT, height, wallT] },
+    { pos: [width / 2, height / 2, depth], size: [width + wallT, height, wallT] },
+    { pos: [0, height / 2, depth / 2], size: [wallT, height, depth] },
+    { pos: [width, height / 2, depth / 2], size: [wallT, height, depth] },
+  ];
+  const openingBox = (o: WarehouseFeatures['openings'][number]): { pos: Vec3; size: Vec3 } => {
+    const st = OPENING_STYLE[o.kind] ?? OPENING_STYLE.PUERTA!;
+    const h = o.kind === 'RAMPA' ? 0.3 : st.height;
+    const out = o.kind === 'RAMPA' || o.kind === 'ANDEN' ? 3 : 0.5; // ramps/docks protrude outside
+    switch (o.side) {
+      case 'FRONT': return { pos: [o.from + o.width / 2, h / 2, -out / 2], size: [o.width, h, out] };
+      case 'BACK': return { pos: [o.from + o.width / 2, h / 2, depth + out / 2], size: [o.width, h, out] };
+      case 'LEFT': return { pos: [-out / 2, h / 2, o.from + o.width / 2], size: [out, h, o.width] };
+      default: return { pos: [width + out / 2, h / 2, o.from + o.width / 2], size: [out, h, o.width] };
+    }
+  };
+  const northDeg = f?.north_deg;
+  return (
+    <group>
+      {walls.map((w, i) => (
+        <mesh key={i} position={w.pos}>
+          <boxGeometry args={w.size} />
+          <meshStandardMaterial color="#94a3b8" transparent opacity={0.13} depthWrite={false} />
+        </mesh>
+      ))}
+      {f?.columns.map((c, i) => (
+        <mesh key={`c${i}`} position={[c.x, height / 2, c.y]}>
+          <boxGeometry args={[c.size, height, c.size]} />
+          <meshStandardMaterial color={c.estimated ? '#cbd5e1' : '#64748b'} transparent={!!c.estimated} opacity={c.estimated ? 0.55 : 1} />
+        </mesh>
+      ))}
+      {f?.roof?.spans_x.map((x, i) => (
+        <group key={`r${i}`}>
+          <mesh position={[x, height + 0.05, depth / 2]}>
+            <boxGeometry args={[0.15, 0.1, depth]} />
+            <meshBasicMaterial color="#475569" />
+          </mesh>
+        </group>
+      ))}
+      {f?.openings.map((o, i) => {
+        const b = openingBox(o);
+        const st = OPENING_STYLE[o.kind] ?? OPENING_STYLE.PUERTA!;
+        return (
+          <group key={`o${i}`} position={b.pos}>
+            <mesh>
+              <boxGeometry args={b.size} />
+              <meshStandardMaterial color={st.color} transparent opacity={o.estimated ? 0.45 : 0.8} />
+            </mesh>
+            <Html position={[0, b.size[1] / 2 + 0.4, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+              <div className="whitespace-nowrap rounded bg-sky-900/80 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                {o.label ?? o.kind}
+                {o.estimated ? ' (aprox.)' : ''}
+              </div>
+            </Html>
+          </group>
+        );
+      })}
+      {f?.context.map((c, i) => (
+        <group key={`x${i}`} position={[c.x + c.w / 2, -0.005, c.y + c.d / 2]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[c.w, c.d]} />
+            <meshBasicMaterial color={CONTEXT_STYLE[c.kind] ?? '#e2e8f0'} transparent opacity={0.45} depthWrite={false} />
+          </mesh>
+          <lineSegments rotation={[-Math.PI / 2, 0, 0]}>
+            <edgesGeometry args={[new THREE.PlaneGeometry(c.w, c.d)]} />
+            <lineBasicMaterial color="#78716c" />
+          </lineSegments>
+          <Html position={[0, 0.05, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+            <div className="whitespace-nowrap rounded bg-white/85 px-1.5 py-0.5 text-[10px] font-semibold text-stone-600">{c.label}</div>
+          </Html>
+        </group>
+      ))}
+      {f?.exclusions.map((e, i) => (
+        <group key={`e${i}`} position={[e.x + e.w / 2, 0.01, e.y + e.d / 2]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[e.w, e.d]} />
+            <meshBasicMaterial color="#fecaca" transparent opacity={0.6} depthWrite={false} />
+          </mesh>
+          <Html position={[0, 0.05, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+            <div className="whitespace-nowrap rounded bg-rose-700/85 px-1.5 py-0.5 text-[10px] font-semibold text-white">{e.label}</div>
+          </Html>
+        </group>
+      ))}
+      {northDeg !== undefined && (
+        <group position={[-3, 0.05, -3]} rotation={[0, (northDeg * Math.PI) / 180, 0]}>
+          <mesh position={[0, 0, 1]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.08, 0.08, 2, 8]} />
+            <meshBasicMaterial color="#0f172a" />
+          </mesh>
+          <mesh position={[0, 0, 2.4]} rotation={[Math.PI / 2, 0, 0]}>
+            <coneGeometry args={[0.35, 0.9, 12]} />
+            <meshBasicMaterial color="#dc2626" />
+          </mesh>
+          <Html position={[0, 0.3, 3.3]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+            <div className="rounded bg-slate-900/80 px-1.5 py-0.5 text-[11px] font-black text-white">N</div>
+          </Html>
+        </group>
+      )}
     </group>
   );
 }
@@ -397,7 +514,7 @@ function CameraRig({ fly, controls, center, onFar, far }: { fly: FlyTarget | nul
 
 // ---------------------------------------------------------------- root
 export function MapScene(props: MapSceneProps) {
-  const { model, zones, fly, onFar, far, editMode, selectedRackId, onSelectRack } = props;
+  const { model, warehouse, zones, fly, onFar, far, editMode, selectedRackId, onSelectRack } = props;
   const controls = useRef<OrbitControlsImpl | null>(null);
   const center: Vec3 = [model.width / 2, 0, model.depth / 2];
   const camPos: Vec3 = [model.width * 0.5, Math.max(model.width, model.depth) * 0.75, model.depth * 1.5];
@@ -419,6 +536,7 @@ export function MapScene(props: MapSceneProps) {
       <directionalLight position={[model.width, 60, model.depth * 0.3]} intensity={1.1} />
       <hemisphereLight args={['#ffffff', '#cbd5e1', 0.5]} />
       <Floor width={model.width} depth={model.depth} />
+      <Building warehouse={warehouse} width={model.width} depth={model.depth} height={model.height} />
       <Zones zones={zones} />
       <Frames items={model.uprights} color="#2563eb" editMode={editMode} onSelectRack={onSelectRack} selectedRackId={selectedRackId} />
       <Frames items={model.beams} color="#f59e0b" editMode={editMode} onSelectRack={onSelectRack} selectedRackId={selectedRackId} />

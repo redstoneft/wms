@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
+import { Prisma } from '../../generated/prisma/client.js';
 import { z } from 'zod';
-import { zCreateAisle, zCreateAreaLocation, zCreateRack, zCreateZone, zUpdateLocation, zUpdateRack, zUpdateZone, zUuid } from '@wms/shared';
+import { zCreateAisle, zCreateAreaLocation, zCreateRack, zCreateZone, zUpdateLocation, zUpdateRack, zUpdateZone, zUuid, zWarehouseFeatures } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
@@ -21,10 +22,13 @@ export async function layoutRoutes(app: FastifyInstance) {
         width_m: z.number().positive().max(10000).default(60),
         depth_m: z.number().positive().max(10000).default(40),
         height_m: z.number().positive().max(100).default(10),
+        features: zWarehouseFeatures.optional(),
+        is_default: z.boolean().optional(),
       })
       .parse(req.body);
     const w = await withTx(async (tx) => {
-      const r = await tx.warehouses.create({ data: body });
+      if (body.is_default) await tx.warehouses.updateMany({ where: { is_default: true }, data: { is_default: false } });
+      const r = await tx.warehouses.create({ data: { ...body, features: body.features ?? undefined } });
       await audit(tx, req.actor!, { action: 'warehouse.create', entity_type: 'warehouse', entity_id: r.id, after: r });
       return r;
     });
@@ -34,12 +38,22 @@ export async function layoutRoutes(app: FastifyInstance) {
   app.patch('/warehouses/:id', { preHandler: manage }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
     const body = z
-      .object({ name: z.string().trim().min(1).max(120).optional(), address: z.string().trim().max(500).optional(), width_m: z.number().positive().optional(), depth_m: z.number().positive().optional(), height_m: z.number().positive().optional() })
+      .object({
+        name: z.string().trim().min(1).max(120).optional(),
+        address: z.string().trim().max(500).optional(),
+        width_m: z.number().positive().optional(),
+        depth_m: z.number().positive().optional(),
+        height_m: z.number().positive().optional(),
+        features: zWarehouseFeatures.nullable().optional(),
+        is_default: z.boolean().optional(),
+      })
       .parse(req.body);
     return withTx(async (tx) => {
       const before = await tx.warehouses.findUnique({ where: { id } });
       if (!before) throw new NotFoundError('warehouse', id);
-      const after = await tx.warehouses.update({ where: { id }, data: body });
+      if (body.is_default) await tx.warehouses.updateMany({ where: { is_default: true, id: { not: id } }, data: { is_default: false } });
+      const { features, ...rest } = body;
+      const after = await tx.warehouses.update({ where: { id }, data: { ...rest, ...(features === undefined ? {} : { features: features ?? Prisma.DbNull }) } });
       await audit(tx, req.actor!, { action: 'warehouse.update', entity_type: 'warehouse', entity_id: id, before, after });
       return after;
     });
@@ -223,7 +237,7 @@ export async function layoutRoutes(app: FastifyInstance) {
     const q = z.object({ warehouse_id: zUuid.optional() }).parse(req.query);
     const wh = q.warehouse_id
       ? await db.warehouses.findUnique({ where: { id: q.warehouse_id } })
-      : await db.warehouses.findFirst({ where: { is_active: true }, orderBy: [{ locations: { _count: 'desc' } }, { created_at: 'asc' }] }); // default: the warehouse that actually has a layout
+      : await db.warehouses.findFirst({ where: { is_active: true }, orderBy: [{ is_default: 'desc' }, { locations: { _count: 'desc' } }, { created_at: 'asc' }] }); // default: the flagged warehouse, else the one with a layout
     if (!wh) throw new NotFoundError('warehouse');
     const [zones, racks, locations, occupancy] = await Promise.all([
       db.zones.findMany({ where: { warehouse_id: wh.id, is_active: true }, include: { aisles: true } }),

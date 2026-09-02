@@ -81,6 +81,88 @@ interface RawArticle { cve_art: string; descr: string | null; lin_prod: string |
 interface Alias { cve_art: string; modelo: string; capa: string }
 interface Producto { sku_interno: string; gtin: string | null; activo: boolean }
 interface PedidoLinea { sku_interno: string; gtin: string | null; piezas_por_caja: number | null }
+/** SAE "claves alternas" (CVES_ALTER01): alternate keys of an article; GTIN-looking ones are the product's barcode. */
+interface AltKey { cve_art: string; cve_alter: string }
+/** SAE observations (OBS_DOCF01) referenced by document lines (PAR_FACTF01.cve_obs): operators often type the GTIN there. */
+interface ObsRow { cve_obs: number | string; str_obs: string | null }
+interface ParObs { cve_art: string; cve_obs: number | string | null }
+/** Retail-chain catalogue matches from the price scraper (cerezo_sku_modelo): GTIN → model, with a confidence score. */
+interface CerezoRow { sku: string; modelo: string | null; metodo: string | null; confianza: number | null }
+
+/** GS1 mod-10 check digit (GTIN-8/12/13/14). Used for GTINs *parsed* from free text; explicit catalogue values are trusted. */
+export function gtinCheckDigitOk(g: string): boolean {
+  if (!/^[0-9]{8}$|^[0-9]{12,14}$/.test(g)) return false;
+  const d = g.split('').map(Number);
+  const check = d.pop()!;
+  let sum = 0;
+  for (let i = d.length - 1, w = 3; i >= 0; i--, w = 4 - w) sum += d[i]! * w;
+  return (10 - (sum % 10)) % 10 === check;
+}
+
+/** Tables the mirrors may not (yet) replicate: absence is reported, never fatal. */
+async function optionalFetch<T>(src: { url: string; key: string }, table: string, missing: string[]): Promise<T[]> {
+  try {
+    const rows = await fetchAll<Record<string, unknown>>(src, table, { select: '*' });
+    return rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.toLowerCase(), v])) as T);
+  } catch (e) {
+    missing.push(`${table} (${(e as Error).message.slice(0, 60)})`);
+    return [];
+  }
+}
+
+/** Extra GTIN sources, in order of trust, as synthetic catalogue rows: SAE alternate keys, SAE line observations, retail-chain matches. */
+export function extraGtinSources(alts: AltKey[], obs: ObsRow[], pars: ParObs[], cerezo: CerezoRow[], knownModels: Set<string>, c: Counters): { rows: (Producto & { source: string })[]; aliases: Map<string, string[]> } {
+  const rows: (Producto & { source: string })[] = [];
+  const aliases = new Map<string, string[]>();
+  // 1. claves alternas: explicit, trusted
+  for (const a of alts) {
+    const art = key(a.cve_art);
+    const alt = key(a.cve_alter);
+    if (!art || !alt) continue;
+    if (GTIN_RE.test(alt)) rows.push({ sku_interno: art, gtin: alt, activo: true, source: 'alternas' });
+    else if (alt.length >= 3) aliases.set(art, [...(aliases.get(art) ?? []), alt]);
+  }
+  // 2. observaciones de partida: parsed, only GTINs with a valid check digit, unambiguous per article
+  const obsText = new Map(obs.map((o) => [String(o.cve_obs), key(o.str_obs)]));
+  const perArt = new Map<string, Map<string, number>>();
+  for (const l of pars) {
+    if (l.cve_obs === null || l.cve_obs === undefined) continue;
+    const txt = obsText.get(String(l.cve_obs));
+    if (!txt) continue;
+    for (const tok of txt.match(/[0-9]{12,14}/g) ?? []) {
+      if (!gtinCheckDigitOk(tok)) continue;
+      const art = key(l.cve_art);
+      const m = perArt.get(art) ?? new Map<string, number>();
+      m.set(tok, (m.get(tok) ?? 0) + 1);
+      perArt.set(art, m);
+    }
+  }
+  for (const [art, m] of perArt) {
+    const ranked = [...m.entries()].sort((a, b) => b[1] - a[1]);
+    const total = ranked.reduce((a, [, n]) => a + n, 0);
+    const [top, n] = ranked[0]!;
+    if (ranked.length === 1 || n / total >= 0.8) rows.push({ sku_interno: art, gtin: top, activo: true, source: 'observaciones' });
+    else c.errors.push({ ref: art, message: `observaciones de partida con GTIN ambiguo: ${ranked.map(([g, k]) => `${g}×${k}`).join(', ')}; no se adoptó` });
+  }
+  // 3. retail-chain matches: high confidence, one model per GTIN and one GTIN per model, model known to SAE
+  const good = cerezo.filter((r) => r.modelo && GTIN_RE.test(key(r.sku)) && gtinCheckDigitOk(key(r.sku)) && (key(r.metodo) === 'codigo' || num(r.confianza) >= 95));
+  const byGtin = new Map<string, Set<string>>();
+  const byModel = new Map<string, Set<string>>();
+  for (const r of good) {
+    byGtin.set(key(r.sku), (byGtin.get(key(r.sku)) ?? new Set()).add(key(r.modelo)));
+    byModel.set(key(r.modelo), (byModel.get(key(r.modelo)) ?? new Set()).add(key(r.sku)));
+  }
+  for (const [g, models] of byGtin) {
+    if (models.size > 1) {
+      c.errors.push({ ref: g, message: `GTIN de cadenas asociado a varios modelos (${[...models].join(', ')}); no se adoptó` });
+      continue;
+    }
+    const model = [...models][0]!;
+    if (!knownModels.has(model) || byModel.get(model)!.size > 1) continue;
+    rows.push({ sku_interno: model, gtin: g, activo: true, source: 'cadenas' });
+  }
+  return { rows, aliases };
+}
 
 const SAE_KEY_RE = /^[A-Za-z0-9.][A-Za-z0-9._\-/ ]*$/;
 const GTIN_RE = /^[0-9]{8,14}$/;
@@ -97,7 +179,8 @@ interface Product { code: string; model: string; gtin: string | null; caseGtins:
 export function groupProducts(articles: RawArticle[], aliases: Alias[], productos: Producto[], lineas: PedidoLinea[], c: Counters): Product[] {
   const aliasByKey = new Map(aliases.map((a) => [key(a.cve_art), { modelo: key(a.modelo), capa: key(a.capa).toUpperCase() }]));
   const gtinByKey = new Map<string, string>();
-  for (const p of productos) if (p.activo !== false && GTIN_RE.test(key(p.gtin))) gtinByKey.set(key(p.sku_interno), key(p.gtin));
+  // catalogue rows come ordered by trust (platform, order lines, SAE alternate keys, observations, retail chains): the first wins
+  for (const p of productos) if (p.activo !== false && GTIN_RE.test(key(p.gtin)) && !gtinByKey.has(key(p.sku_interno))) gtinByKey.set(key(p.sku_interno), key(p.gtin));
   for (const l of lineas) if (GTIN_RE.test(key(l.gtin)) && key(l.sku_interno) && !gtinByKey.has(key(l.sku_interno))) gtinByKey.set(key(l.sku_interno), key(l.gtin));
   const ppcByKey = new Map<string, number>();
   for (const l of lineas) if (num(l.piezas_por_caja) > 1) ppcByKey.set(key(l.sku_interno), num(l.piezas_por_caja));
@@ -243,7 +326,26 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
     const aliases = erp ? await fetchAll<Alias>(erp, 'sku_alias', { select: 'cve_art,modelo,capa' }) : [];
     const productos = erp ? await fetchAll<Producto>(erp, 'productos', { select: 'sku_interno,gtin,activo' }) : [];
     const lineas = erp ? await fetchAll<PedidoLinea>(erp, 'pedido_lineas', { select: 'sku_interno,gtin,piezas_por_caja' }) : [];
-    const products = groupProducts(articles, aliases, productos, lineas, c);
+    // extra GTIN / alternate-key sources (tables the mirrors may not replicate yet)
+    const missing: string[] = [];
+    const alts = await optionalFetch<AltKey>(raw, 'sae_cves_alter01', missing);
+    const obs = await optionalFetch<ObsRow>(raw, 'sae_obs_docf01', missing);
+    const pars = obs.length ? await optionalFetch<ParObs>(raw, 'sae_par_factf01', missing) : [];
+    const cerezo = erp ? await optionalFetch<CerezoRow>(erp, 'cerezo_sku_modelo', missing) : [];
+    const knownModels = new Set([...articles.map((a) => stripDots(key(a.cve_art))), ...aliases.map((a) => key(a.modelo))]);
+    const extra = extraGtinSources(alts, obs, pars, cerezo, knownModels, c);
+    // order lines carry the platform GTIN too: they rank right after the catalogue, before SAE/scraper sources
+    const catalogue: Producto[] = [...productos, ...lineas.filter((l) => l.gtin).map((l) => ({ sku_interno: l.sku_interno, gtin: l.gtin, activo: true })), ...extra.rows];
+    const sourceOfGtin = new Map<string, string>();
+    for (const r of catalogue) if (r.gtin && !sourceOfGtin.has(key(r.gtin))) sourceOfGtin.set(key(r.gtin), (r as { source?: string }).source ?? 'plataforma');
+    const products = groupProducts(articles, aliases, catalogue, [], c);
+    // case sizes come from order lines (groupProducts got them via catalogue only for GTIN): re-apply
+    const ppc = new Map<string, number>();
+    for (const l of lineas) if (num(l.piezas_por_caja) > 1) ppc.set(key(l.sku_interno), num(l.piezas_por_caja));
+    for (const p of products) if (!p.caseQty) {
+      const v = p.keys.map((k) => ppc.get(k.key) ?? ppc.get(stripDots(k.key))).find((x) => x && x > 1) ?? ppc.get(p.model);
+      if (v) p.caseQty = BigInt(Math.round(v));
+    }
     const productRefs = new Set(products.map((p) => p.model)); // external_refs that are products in this run: never treated as legacy
     const seen = new Set<string>();
     let merged = 0;
@@ -303,6 +405,10 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
             if (!hasCase) c.errors.push({ ref: cg, message: `GTIN de caja del producto ${sku.code} sin conversión de caja conocida: se registra como pieza` });
             wanted.push({ barcode: cg, uom_code: hasCase ? 'CASE' : 'PIECE', ref: p.model });
           }
+          for (const k of p.keys) for (const alt of extra.aliases.get(k.key) ?? []) {
+            const bc = saeKeyBarcode(alt).slice(0, 64);
+            if (bc.length >= 3 && /^[\x21-\x7E]+$/.test(bc) && !wanted.some((w) => w.barcode === bc)) wanted.push({ barcode: bc, uom_code: 'PIECE', ref: k.key });
+          }
           for (const k of p.keys) {
             const bc = saeKeyBarcode(k.key).slice(0, 64);
             if (bc.length < 3 || bc === p.gtin) continue;
@@ -334,7 +440,10 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
         deactivated++;
       } else c.errors.push({ ref: s.code, message: 'ya no existe en SAE pero tiene inventario en el WMS; sigue activo' });
     }
-    return `productos=${products.length} claves=${articles.length} con_gtin=${products.filter((p) => p.gtin).length} fusionados=${merged} alias_ok=${aliasCount} desactivados=${deactivated}`;
+    const bySource: Record<string, number> = {};
+    for (const p of products) if (p.gtin) bySource[sourceOfGtin.get(p.gtin) ?? '?'] = (bySource[sourceOfGtin.get(p.gtin) ?? '?'] ?? 0) + 1;
+    const gtinNote = Object.entries(bySource).map(([k, v]) => `${k}=${v}`).join(',');
+    return `productos=${products.length} claves=${articles.length} con_gtin=${products.filter((p) => p.gtin).length} (${gtinNote}) fusionados=${merged} alias_ok=${aliasCount} desactivados=${deactivated}${missing.length ? ` · tablas no espejeadas: ${missing.map((m) => m.split(' ')[0]).join(', ')}` : ''}`;
   });
 }
 

@@ -84,3 +84,4 @@ Realizada por un revisor independiente sobre `apps/api` y `packages/shared` sin 
 | Imagen `wms-api` en modo producción | health OK, login OK |
 | Auditoría externa | 36 hallazgos; críticos/altos corregidos con regresiones |
 | Sincronización SAE real | 1,243 claves SAE → 662 productos (44 con GTIN, 1,281 alias), 214 clientes, 38 proveedores, 16 OC, 4 pedidos en 11 s; segunda corrida 0 duplicados |
+| Nave HIDRO en el 3D | Geometría del levantamiento (paño 39.91 × 38.57 × 7.10 m, columnas de fachada medidas, vecinos excluidos, patio, norte) como almacén por defecto del mapa; racks pendientes del layout del usuario |

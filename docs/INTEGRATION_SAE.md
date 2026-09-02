@@ -24,6 +24,26 @@ El WMS lee ambas fuentes por PostgREST (solo lectura, paginado de 1,000 filas) c
 
 Orden de ejecución: proveedores → clientes → SKUs → órdenes de compra → pedidos (para que los documentos encuentren sus referencias).
 
+## De dónde salen los GTIN (en orden de confianza)
+
+| Prioridad | Fuente | Regla |
+|---|---|---|
+| 1 | `productos.gtin` y `pedido_lineas.gtin` (plataforma PEDIDOS) | Se toma tal cual. |
+| 2 | **Claves alternas de SAE** (`CVES_ALTER01` → `sae_cves_alter01`) | Una clave alterna numérica de 8–14 dígitos es el GTIN del artículo; cualquier otra clave alterna se registra como alias (código de barras por pieza). |
+| 3 | **Observaciones de partida** (`PAR_FACTF01.CVE_OBS` → `OBS_DOCF01` → `sae_obs_docf01`) | Se extraen los números de 12–14 dígitos con dígito verificador GS1 válido; se adopta si el artículo tiene un solo GTIN (o uno domina ≥ 80 %); si hay varios se reporta y no se adopta. |
+| 4 | Coincidencias con catálogos de cadenas (`cerezo_sku_modelo`) | Solo `metodo = codigo` o confianza ≥ 95, dígito verificador válido, un modelo por GTIN y un GTIN por modelo, y el modelo debe existir en SAE. Los GTIN con varios modelos se reportan. |
+
+La corrida indica cuántos productos obtuvieron GTIN de cada fuente (`con_gtin=… (plataforma=…,alternas=…,observaciones=…,cadenas=…)`) y qué tablas faltan en el espejo (`tablas no espejeadas: …`). Un GTIN nunca cambia de fuente hacia una de menor confianza.
+
+### Habilitar claves alternas y observaciones en el espejo (Windows Server)
+
+Hoy el espejo crudo replica 9 tablas y **no** incluye `CVES_ALTER01` ni `OBS_DOCF01`; el WMS las usa en cuanto aparezcan (no hay que tocar el WMS). Pasos, en el servidor (`C:\sae-sync`, tarea "SAE-Sync-Supabase"):
+
+1. Sustituir `sync_sae_to_supabase.py` por la versión de `negocio-vault/sae-sync/` (ya incluye `CVES_ALTER` y `OBS_DOCF` en `DEFAULT_BASE_TABLES`), o agregar en `.env`: `SAE_TABLES=INVE01,CLIE01,PROV01,FACTF01,PAR_FACTF01,FACTP01,PAR_FACTP01,MINVE01,MULT01,CVES_ALTER01,OBS_DOCF01`.
+2. Generar el DDL de las tablas nuevas: `python sync_sae_to_supabase.py --schema --tables CVES_ALTER01,OBS_DOCF01` y ejecutarlo en el SQL Editor del proyecto `dalrmzvtupewnzjvtsai`.
+3. Dar lectura a las tablas nuevas como al resto: `alter table public.sae_cves_alter01 enable row level security; create policy "sae read only" on public.sae_cves_alter01 for select to anon, authenticated using (true);` (igual para `sae_obs_docf01`).
+4. Ejecutar la tarea una vez (`run_sync.bat`) y verificar en `Admin → Integración SAE` que la corrida de artículos ya no lista esas tablas como no espejeadas y que `alternas=` / `observaciones=` suben.
+
 ## Ejecución
 
 * Automática cada `SAE_SYNC_INTERVAL_MINUTES` (30) en la API, con bloqueo advisory para que solo una instancia sincronice.

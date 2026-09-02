@@ -104,6 +104,15 @@ export interface Paged<T> {
 }
 
 // ---- layout ----
+export interface WarehouseFeatures {
+  source?: string;
+  north_deg?: number;
+  columns: { x: number; y: number; size: number; estimated?: boolean }[];
+  openings: { side: 'FRONT' | 'BACK' | 'LEFT' | 'RIGHT'; from: number; width: number; kind: 'PORTON' | 'PUERTA' | 'RAMPA' | 'ANDEN'; label?: string; estimated?: boolean }[];
+  context: { x: number; y: number; w: number; d: number; label: string; kind: 'PATIO' | 'VECINO' | 'OFICINAS' | 'EXTERIOR' | 'OTRO' }[];
+  exclusions: { x: number; y: number; w: number; d: number; label: string }[];
+  roof?: { spans_x: number[]; ridge_height_m: number };
+}
 export interface Warehouse {
   id: Uuid;
   code: string;
@@ -112,6 +121,8 @@ export interface Warehouse {
   width_m: Dec;
   depth_m: Dec;
   height_m: Dec;
+  features?: WarehouseFeatures | null;
+  is_default?: boolean;
   is_active: boolean;
 }
 export interface Rack {

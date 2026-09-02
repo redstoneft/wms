@@ -103,6 +103,22 @@ export const zCreateParty = z.object({
 });
 
 // ---- layout ----
+/** Building geometry captured from the topographic survey. Local frame: x along the facade (0..width_m), y into the building
+ *  (0 = facade / FRONT, depth_m = BACK), z up. `estimated` marks elements inferred (not measured) so the map can say so. */
+export const zWarehouseFeatures = z.object({
+  source: z.string().trim().max(300).optional(), // e.g. "Levantamiento topográfico HIDRO, ADC, agosto 2026, esc. 1:300"
+  north_deg: z.number().min(0).max(360).optional(), // compass azimuth of the +y (depth) axis
+  columns: z.array(z.object({ x: z.number(), y: z.number(), size: z.number().positive().max(5).default(0.5), estimated: z.boolean().default(false) })).max(500).default([]),
+  openings: z
+    .array(z.object({ side: z.enum(['FRONT', 'BACK', 'LEFT', 'RIGHT']), from: z.number().min(0), width: z.number().positive(), kind: z.enum(['PORTON', 'PUERTA', 'RAMPA', 'ANDEN']), label: z.string().trim().max(60).optional(), estimated: z.boolean().default(false) }))
+    .max(100)
+    .default([]),
+  context: z.array(z.object({ x: z.number(), y: z.number(), w: z.number().positive(), d: z.number().positive(), label: z.string().trim().max(80), kind: z.enum(['PATIO', 'VECINO', 'OFICINAS', 'EXTERIOR', 'OTRO']).default('OTRO') })).max(50).default([]),
+  exclusions: z.array(z.object({ x: z.number(), y: z.number(), w: z.number().positive(), d: z.number().positive(), label: z.string().trim().max(80) })).max(50).default([]),
+  roof: z.object({ spans_x: z.array(z.number()).max(20), ridge_height_m: z.number().positive().max(60) }).optional(), // ridge lines (x) of the gable spans
+});
+export type WarehouseFeatures = z.infer<typeof zWarehouseFeatures>;
+
 export const zCreateZone = z.object({
   warehouse_id: zUuid,
   code: zCode.max(20),

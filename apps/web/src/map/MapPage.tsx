@@ -22,7 +22,24 @@ export default function MapPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const { can } = useAuth();
-  const mapQ = useQuery({ queryKey: ['map'], queryFn: () => layoutApi.map(), refetchInterval: 10_000 });
+  // which warehouse: remembered per browser; the API picks the default one when empty
+  const [warehouseId, setWarehouseId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('map.warehouse') ?? '';
+    } catch {
+      return '';
+    }
+  });
+  const warehousesQ = useQuery({ queryKey: ['warehouses'], queryFn: () => layoutApi.warehouses(), staleTime: 60_000 });
+  const mapQ = useQuery({ queryKey: ['map', warehouseId], queryFn: () => layoutApi.map(warehouseId || undefined), refetchInterval: 10_000 });
+  const pickWarehouse = (id: string) => {
+    setWarehouseId(id);
+    try {
+      localStorage.setItem('map.warehouse', id);
+    } catch {
+      /* private mode */
+    }
+  };
   const model = useMemo(() => (mapQ.data ? buildSceneModel(mapQ.data) : null), [mapQ.data]);
 
   const [filters, setFilters] = useState<MapFilters>({ zoneId: '', type: '', status: '', availability: '' });
@@ -203,6 +220,13 @@ export default function MapPage() {
           <option value="AVAILABLE">Con espacio</option>
           <option value="FULL">Llenas</option>
         </Select>
+        <Select value={warehouseId || mapQ.data.warehouse.id} onChange={(e) => pickWarehouse(e.target.value)} className="w-56" data-testid="map-warehouse" aria-label="Almacén">
+          {(warehousesQ.data ?? [mapQ.data.warehouse]).filter((w) => w.is_active).map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.code} · {w.name}
+            </option>
+          ))}
+        </Select>
         <div className="ml-auto flex items-center gap-2 text-xs text-slate-500">
           <span title={fmtDateTime(mapQ.data.generated_at)}>Actualizado {relTime(new Date(mapQ.dataUpdatedAt))}</span>
           <Button size="sm" variant="secondary" onClick={() => void mapQ.refetch()} loading={mapQ.isFetching}>
@@ -226,6 +250,7 @@ export default function MapPage() {
         <div className="relative min-w-0 flex-1" onMouseLeave={() => setHover(null)}>
           <MapScene
             model={model}
+            warehouse={mapQ.data.warehouse}
             zones={mapQ.data.zones}
             visible={visible}
             highlight={highlight}
@@ -247,6 +272,7 @@ export default function MapPage() {
           />
           {/* legend */}
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-white/90 p-2 text-[11px] shadow" data-testid="map-legend">
+            {mapQ.data.warehouse.features?.source && <div className="mb-1 max-w-xs text-[10px] leading-snug text-slate-500">Geometría: {mapQ.data.warehouse.features.source}</div>}
             {Object.entries(STATUS_COLORS).map(([k, c]) => (
               <div key={k} className="flex items-center gap-1.5">
                 <span className="inline-block h-3 w-3 rounded-sm border border-slate-300" style={{ background: c }} />

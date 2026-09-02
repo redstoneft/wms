@@ -6,6 +6,8 @@ test.describe('mapa 3D (digital twin)', () => {
     await uiLogin(page, USERS.supervisor);
     await page.goto('/map');
     await expect(page.getByTestId('map-page')).toBeVisible();
+    // several warehouses may exist (the real nave has no racks yet): this test is about the seeded demo warehouse
+    await page.getByTestId('map-warehouse').selectOption({ label: 'CEDIS-01 · CEDIS Principal' });
     const canvas = page.locator('[data-testid="map-page"] canvas');
     await expect(canvas).toBeVisible();
     await expect(page.getByTestId('map-legend')).toContainText('Ocupada');

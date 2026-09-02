@@ -177,6 +177,8 @@ model warehouses {
   width_m    Decimal  @default(60) @db.Decimal(8, 2)
   depth_m    Decimal  @default(40) @db.Decimal(8, 2)
   height_m   Decimal  @default(10) @db.Decimal(8, 2)
+  features   Json?    // building geometry from the survey: columns, openings, context (yard, neighbours), north — see zWarehouseFeatures
+  is_default Boolean  @default(false) // the warehouse the 3D map opens by default (at most one)
   is_active  Boolean  @default(true)
   created_at DateTime @default(now()) @db.Timestamptz(6)
 
