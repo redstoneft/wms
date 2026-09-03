@@ -34,6 +34,7 @@ Producción: `docker compose up -d` (ver [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md
 | [INTEGRATION_SAE](docs/INTEGRATION_SAE.md) | Sincronización Aspel SAE → WMS (artículos, clientes, proveedores, OC, pedidos, existencias) |
 | [USER_GUIDE](docs/USER_GUIDE.md) · [ADMIN_GUIDE](docs/ADMIN_GUIDE.md) | Uso en oficina y administración |
 | [MANUAL_OPERACION](docs/MANUAL_OPERACION.md) | Manual para personal de piso (recepción, put-away, picking, verificación, carga, conteos, incidencias) |
+| [MANUAL_ETIQUETADO_RACKS](docs/MANUAL_ETIQUETADO_RACKS.md) | Manual para quien pega las etiquetas de ubicación en los racks (orden, dónde va cada una, verificación con escáner, hoja de control) |
 | [TESTING](docs/TESTING.md) | Suites, cómo ejecutarlas, bugs encontrados |
 | [REQUIREMENTS_MATRIX](docs/REQUIREMENTS_MATRIX.md) | Requerimiento → implementación → prueba |
 | [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | Errores frecuentes y diagnóstico |
