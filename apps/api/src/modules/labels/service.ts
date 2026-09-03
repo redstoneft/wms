@@ -279,12 +279,12 @@ export async function locationLabelBatch(filter: LocationBatchFilter) {
 
 const esc = (v: unknown) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-/** Self-contained HTML sheet (A4, 2 × 5 labels of 95 × 50 mm) with Code128 barcodes as embedded PNGs. */
+/** Self-contained HTML sheet (A4, 3 labels of 101.6 × 84 mm per page — the same stock as the company's other label apps) with Code128 barcodes as embedded PNGs. */
 export async function locationLabelSheetHtml(filter: LocationBatchFilter): Promise<string> {
   const { title, rows } = await locationLabelBatch(filter);
   const cells: string[] = [];
   for (const loc of rows) {
-    const png = await bwipjs.toBuffer({ bcid: 'code128', text: loc.barcode, scale: 3, height: 14, includetext: false });
+    const png = await bwipjs.toBuffer({ bcid: 'code128', text: loc.barcode, scale: 3, height: 18, includetext: false });
     const levelTxt = loc.level ? `NIVEL ${loc.level}` : loc.location_type;
     const where = loc.rack ? `Pasillo ${esc(loc.rack.aisle.code)} · Rack ${esc(loc.rack.code)} · Módulo ${loc.bay ?? '-'} · Pos ${loc.position ?? '-'}` : `${esc(loc.zone?.name ?? '')}`;
     cells.push(`<div class="l"><div class="code">${esc(loc.code)}</div><img src="data:image/png;base64,${png.toString('base64')}" alt=""><div class="bc">${esc(loc.barcode)}</div><div class="meta"><b>${esc(levelTxt)}</b> · ${where}</div></div>`);
@@ -292,12 +292,12 @@ export async function locationLabelSheetHtml(filter: LocationBatchFilter): Promi
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
 @page{size:A4;margin:8mm}body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000}
-.sheet{display:grid;grid-template-columns:repeat(2,95mm);gap:4mm 6mm;justify-content:center;padding:4mm}
-.l{width:95mm;height:50mm;box-sizing:border-box;border:0.3mm dashed #888;padding:3mm 4mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;page-break-inside:avoid;break-inside:avoid}
-.code{font-size:9.5mm;font-weight:900;letter-spacing:0.3mm;font-family:Menlo,Consolas,monospace;white-space:nowrap}
-img{height:15mm;max-width:88mm}.bc{font-family:Menlo,Consolas,monospace;font-size:3.6mm}.meta{font-size:3.4mm;color:#222;text-align:center}
+.sheet{display:grid;grid-template-columns:101.6mm;gap:6mm;justify-content:center;padding:2mm}
+.l{width:101.6mm;height:84mm;box-sizing:border-box;border:0.3mm dashed #888;padding:5mm 6mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;page-break-inside:avoid;break-inside:avoid}
+.code{font-size:11mm;font-weight:900;letter-spacing:0.3mm;font-family:Menlo,Consolas,monospace;white-space:nowrap}
+img{height:26mm;max-width:90mm}.bc{font-family:Menlo,Consolas,monospace;font-size:4.5mm}.meta{font-size:4.2mm;color:#222;text-align:center;line-height:1.35}
 .hdr{padding:4mm 6mm 0;font-size:4mm;color:#444}@media print{.hdr{display:none}}
-</style></head><body><div class="hdr">${esc(title)} · ${rows.length} etiquetas · imprimir al 100 % (sin ajustar a la página)</div><div class="sheet">${cells.join('')}</div></body></html>`;
+</style></head><body><div class="hdr">${esc(title)} · ${rows.length} etiquetas de 101.6 × 84 mm · imprimir al 100 % (sin ajustar a la página)</div><div class="sheet">${cells.join('')}</div></body></html>`;
 }
 
 /** Prints every location of a rack/zone on a Zebra printer, one label per position, in walking order. */

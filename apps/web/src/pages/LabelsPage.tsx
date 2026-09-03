@@ -57,7 +57,7 @@ export default function LabelsPage() {
 
   return (
     <div>
-      <PageHeader title="Etiquetas" subtitle="ZPL para Zebra (203 dpi, 100×150 mm). Las reimpresiones requieren motivo y quedan auditadas." />
+      <PageHeader title="Etiquetas" subtitle="ZPL para Zebra (203 dpi, 101.6 × 84 mm, el mismo tamaño que las etiquetas de caja de las cadenas). Las reimpresiones requieren motivo y quedan auditadas." />
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Imprimir">
           <div className="grid gap-3">
@@ -149,7 +149,7 @@ export default function LabelsPage() {
           </div>
         </div>
         <Alert tone="info" className="mt-3">
-          <b>Hoja para imprimir</b>: etiquetas de 95 × 50 mm en A4 (2 por fila) para cualquier impresora o para guardar como PDF; imprimir al 100 %. Orden de pegado: por pasillo, módulo y nivel, igual que la ruta de surtido.
+          <b>Hoja para imprimir</b>: etiquetas de 101.6 × 84 mm (3 por hoja A4) para cualquier impresora o para guardar como PDF; imprimir al 100 %. Orden de pegado: por pasillo, módulo y nivel, igual que la ruta de surtido.
           <b> Descargar ZPL</b>: archivo listo para una Zebra (203 dpi). <b>Imprimir en Zebra</b>: envía una etiqueta por posición y queda auditado.
         </Alert>
       </Card>

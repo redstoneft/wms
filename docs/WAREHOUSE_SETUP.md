@@ -19,7 +19,7 @@ Todo se configura sin tocar código: por la pantalla **Layout** o por plantillas
 | `exclusions[]` | Áreas dentro del paño no utilizables (oficinas interiores, sanitarios) |
 | `roof.spans_x[]` | Líneas de cumbrera de las naves |
 
-**Nave HIDRO (Lerma)** está cargada desde los vectores del levantamiento topográfico (ADC, agosto 2026), calibrados con las superficies del plano (833.109 y 1,539.402 m²). Planta en **L**: frente de 39.91 m (columnas 9.91/10.07/9.95/9.98) y fondo de 59.5 m; el predio vecino de 833.109 m² (19.98 × 41.7 m) ocupa la esquina frontal izquierda, así que el frente propio es solo la pata de la L (x 19.98–39.91). Portones medidos en x 25.8 y 30.8 (3.1 m); rampa a desnivel aproximada. Dentro de la nave, junto al frente: oficinas de dos niveles (planta baja sanitarios, H 4.90) y dos cubículos de tablaroca (H 3.07 y 2.44), modelados como volúmenes no almacenables. Patio de maniobras, construcciones del patio, caseta y acceso desde Av. Santa Rosa como contexto. Zonas: `REC` (`HID-DOCK-01/02` frente a los portones), `STG` (`HID-STG-01..04`), `ALM` (almacenaje en la pata de la L) y `RES` (reserva del fondo). El polígono va en `features.footprint`.
+**Nave HIDRO (Lerma)** está cargada desde los vectores del levantamiento topográfico (ADC, agosto 2026), calibrados con las superficies del plano (833.109 y 1,539.402 m²). Planta en **L**: frente de 39.91 m (columnas 9.91/10.07/9.95/9.98) y fondo de 59.5 m; el predio vecino de 833.109 m² (19.98 × 41.7 m) ocupa la esquina frontal izquierda, así que el frente propio es solo la pata de la L (x 19.98–39.91). Portones medidos en x 25.8 y 30.8 (3.1 m); rampa a desnivel aproximada. Dentro de la nave, junto al frente: oficinas de dos niveles (planta baja sanitarios, H 4.90) y dos cubículos de tablaroca (H 3.07 y 2.44), modelados como volúmenes no almacenables. Patio de maniobras, construcciones del patio, caseta y acceso desde Av. Santa Rosa como contexto. Zonas: `REC` (`HID-DOCK-01/02` frente a los portones), `STG` (`HID-STG-01..04`) y `ALM` (almacén general: toda la L; el rectángulo de la zona se recorta al paño real en el 3D). El polígono va en `features.footprint`.
 
 Racks según el croquis del usuario (2026-09-02), todos de 3 niveles, módulos de 2 tarimas lado a lado (2.70 m) salvo Z (1 módulo de 3 tarimas, 3.90 m); códigos de ubicación `ALM-<rack>-R01-N<nivel>-P<posición>`:
 
@@ -29,7 +29,7 @@ Racks según el croquis del usuario (2026-09-02), todos de 3 niveles, módulos d
 | B / C | 11 + 11 | 66 + 66 | Doble, espalda con espalda, recorridos hacia el fondo (y 24–54) |
 | D / E | 11 + 11 | 66 + 66 | Doble, espalda con espalda, recorridos hacia el fondo; entre su remate y el rack X solo queda pasillo de montacargas |
 | F | 14 | 84 | Contra el muro medianero con los vecinos |
-| X | 7 | 42 | Contra el muro del fondo, mitad izquierda (zona `RES`) |
+| X | 7 | 42 | Contra el muro del fondo, mitad izquierda (misma zona `ALM`) |
 | Z | 1 (3 tarimas) | 9 | Pegado a las oficinas por el lado de los portones |
 
 Total 501 posiciones de rack. Las coordenadas exactas de cada rack se ajustan en `Mapa 3D → Modo edición`: **arrastrar el rack por su cuerpo y soltarlo** guarda la nueva posición (redondeada a 10 cm, dentro del paño; las ubicaciones se recalculan y conservan su código y su inventario); el clic abre el formulario para teclear X/Y/rotación. La separación entre racks quedó en pasillos de 4.4 m para montacargas.
@@ -78,8 +78,8 @@ Secuencia de picking (`pick_sequence`) = pasillo → rack → bahía → nivel �
 
 | Salida | Cuándo | Qué produce |
 |---|---|---|
-| **Hoja para imprimir** | No hay Zebra todavía, o se quiere PDF | Página A4 con etiquetas de 95 × 50 mm (2 por fila): código grande, Code128 `LOC-…`, nivel, pasillo/rack/módulo/posición. Imprimir al 100 % en cualquier impresora o guardar como PDF |
-| **Descargar ZPL** | Zebra fuera de la red del servidor | Archivo `.zpl` con todas las etiquetas (203 dpi, 100 × 150 mm), para enviarlo con Zebra Setup Utilities o copiarlo al puerto 9100 |
+| **Hoja para imprimir** | No hay Zebra todavía, o se quiere PDF | Página A4 con etiquetas de 101.6 × 84 mm (3 por hoja, el mismo tamaño que las etiquetas de caja de las otras apps): código grande, Code128 `LOC-…`, nivel, pasillo/rack/módulo/posición. Imprimir al 100 % en cualquier impresora o guardar como PDF |
+| **Descargar ZPL** | Zebra fuera de la red del servidor | Archivo `.zpl` con todas las etiquetas (203 dpi, 101.6 × 84 mm), para enviarlo con Zebra Setup Utilities o copiarlo al puerto 9100 |
 | **Imprimir en Zebra** | Zebra registrada en `Datos maestros → Impresoras` | Envía una etiqueta por posición; cada una queda en el historial y en auditoría |
 
 Las etiquetas salen en el orden de la ruta de surtido (pasillo → rack → módulo → nivel → posición), que es el orden recomendado para pegarlas:

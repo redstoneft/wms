@@ -79,9 +79,10 @@ function Floor({ width, depth, footprint }: { width: number; depth: number; foot
   const outline = useMemo(() => new Float32Array(pts.flatMap((p, i) => [p.x, 0.02, p.y, pts[(i + 1) % pts.length]!.x, 0.02, pts[(i + 1) % pts.length]!.y])), [pts]);
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow renderOrder={-2}>
         <shapeGeometry args={[shape]} />
-        <meshStandardMaterial color="#e2e8f0" roughness={1} />
+        {/* stencil mask: everything drawn "on the floor" later (zones) is clipped to the real footprint */}
+        <meshStandardMaterial color="#e2e8f0" roughness={1} stencilWrite stencilRef={1} stencilFunc={THREE.AlwaysStencilFunc} stencilZPass={THREE.ReplaceStencilOp} />
       </mesh>
       <gridHelper args={[Math.max(width, depth) * 2.2, divisions * 2, '#cbd5e1', '#e2e8f0']} position={[width / 2, -0.02, depth / 2]} />
       <lineSegments>
@@ -105,13 +106,13 @@ function Zones({ zones }: { zones: Zone[] }) {
         const color = z.color ?? '#94a3b8';
         return (
           <group key={z.id} position={[x + w / 2, 0.005, y + d / 2]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} renderOrder={-1}>
               <planeGeometry args={[w, d]} />
-              <meshBasicMaterial color={color} transparent opacity={0.22} depthWrite={false} />
+              <meshBasicMaterial color={color} transparent opacity={0.22} depthWrite={false} stencilWrite stencilRef={1} stencilFunc={THREE.EqualStencilFunc} stencilZPass={THREE.KeepStencilOp} />
             </mesh>
-            <lineSegments rotation={[-Math.PI / 2, 0, 0]}>
+            <lineSegments rotation={[-Math.PI / 2, 0, 0]} renderOrder={-1}>
               <edgesGeometry args={[new THREE.PlaneGeometry(w, d)]} />
-              <lineBasicMaterial color={color} />
+              <lineBasicMaterial color={color} stencilWrite stencilRef={1} stencilFunc={THREE.EqualStencilFunc} stencilZPass={THREE.KeepStencilOp} />
             </lineSegments>
             <Html position={[-w / 2 + 0.3, 0.05, -d / 2 + 0.3]} zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }} transform={false}>
               <div className="whitespace-nowrap rounded bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-bold text-white" style={{ borderLeft: `3px solid ${color}` }}>
@@ -668,7 +669,7 @@ export function MapScene(props: MapSceneProps) {
       frameloop="demand"
       camera={{ position: camPos, fov: 45, near: 0.5, far: 2000 }}
       onPointerMissed={() => props.onSelect(null)}
-      gl={{ antialias: true, powerPreference: 'high-performance' }}
+      gl={{ antialias: true, powerPreference: 'high-performance', stencil: true }}
       style={{ background: 'linear-gradient(#e0f2fe, #f8fafc)' }}
       data-testid="map-canvas"
     >

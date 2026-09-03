@@ -7,7 +7,7 @@ export function LabelPreview({ model, barcodePng, qrPng, zpl, compact }: { model
   const [showZpl, setShowZpl] = useState(false);
   return (
     <div className={cls('flex flex-col gap-3', compact ? '' : 'md:flex-row')}>
-      <div className="mx-auto w-full max-w-[340px] shrink-0 rounded-md border-2 border-slate-800 bg-white p-3 font-mono text-slate-900 shadow" style={{ aspectRatio: '100 / 150' }}>
+      <div className="mx-auto w-full max-w-[340px] shrink-0 rounded-md border-2 border-slate-800 bg-white p-3 font-mono text-slate-900 shadow" style={{ aspectRatio: '101.6 / 84' }}>
         <div className="mb-2 rounded bg-slate-900 px-2 py-1 text-xs font-bold text-white">{model.label_type}</div>
         <div className={cls('truncate font-black leading-tight', model.title.length > 14 ? 'text-2xl' : 'text-3xl')}>{model.title}</div>
         {barcodePng ? <img src={barcodePng} alt={`Código de barras ${model.barcode}`} className="mx-auto mt-2 max-h-24 w-full object-contain" /> : <div className="mt-2 h-16 rounded bg-slate-200 text-center text-xs leading-[4rem]">{model.barcode}</div>}

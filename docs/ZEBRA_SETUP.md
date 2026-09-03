@@ -1,7 +1,7 @@
 # Impresoras Zebra (ZPL)
 
 ## Impresoras compatibles
-Cualquier Zebra con ZPL II y puerto raw TCP 9100 (ZT411/ZT230/ZD421/ZD620/GK420, etc.). Resoluciones soportadas: 203 dpi (por defecto) y 300 dpi. Etiqueta por defecto 100 × 150 mm (4 × 6 in); configurable por impresora (`label_width_mm`, `label_height_mm`).
+Cualquier Zebra con ZPL II y puerto raw TCP 9100 (ZT411/ZT230/ZD421/ZD620/GK420, etc.). Resoluciones soportadas: 203 dpi (por defecto) y 300 dpi. Etiqueta por defecto 101.6 × 84 mm (4 × 6 in); configurable por impresora (`label_width_mm`, `label_height_mm`).
 
 ## Alta en el sistema
 `Admin → Impresoras → Nueva`: código (`ZEBRA-REC`), nombre, IP/host, puerto (9100), dpi, tamaño de etiqueta, `is_default`. La API abre una conexión TCP, envía el ZPL y cierra. Si la impresora no responde en 5 s la impresión queda registrada como `FAILED` con el error y el operador ve `PRINTER_UNREACHABLE`.
