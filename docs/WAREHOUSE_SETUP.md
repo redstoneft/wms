@@ -81,6 +81,7 @@ Secuencia de picking (`pick_sequence`) = pasillo → rack → bahía → nivel �
 | **Hoja para imprimir** | No hay Zebra todavía, o se quiere PDF | Página A4 con etiquetas de 101.6 × 84 mm (3 por hoja, el mismo tamaño que las etiquetas de caja de las otras apps): código grande, Code128 `LOC-…`, nivel, pasillo/rack/módulo/posición. Imprimir al 100 % en cualquier impresora o guardar como PDF |
 | **Descargar ZPL** | Zebra fuera de la red del servidor | Archivo `.zpl` con todas las etiquetas (203 dpi, 101.6 × 84 mm), para enviarlo con Zebra Setup Utilities o copiarlo al puerto 9100 |
 | **Imprimir en Zebra** | Zebra registrada en `Datos maestros → Impresoras` | Envía una etiqueta por posición; cada una queda en el historial y en auditoría |
+| **Exportar a app de etiquetas** | La Zebra está en la estación de impresión de la app Embarque (SAE-y-ETIQUETAS) | Archivo `WMS-<almacén>-<zona>-<rack>.json` con el rack como pedido de la app (cliente `WMS`, una línea por posición) y cada etiqueta ya en ZPL; se sube en su dashboard como cualquier pedido y se imprime desde ahí |
 
 Las etiquetas salen en el orden de la ruta de surtido (pasillo → rack → módulo → nivel → posición), que es el orden recomendado para pegarlas:
 

@@ -316,3 +316,63 @@ export async function printLocationBatch(ctx: ActorContext, filter: LocationBatc
   }
   return { total: rows.length, sent, failed };
 }
+
+/**
+ * Export for the company's label-printing app ("Embarque", SAE-y-ETIQUETAS): the rack's locations as a
+ * *pedido* in that app's contract, with every label already rendered as ZPL (same 101.6 × 84 mm stock).
+ * The app imports it like any retailer order, shows it in its dashboard and prints it on its Zebra station.
+ */
+export async function locationLabelsAsEmbarquePedido(filter: LocationBatchFilter) {
+  const { title, rows, models } = await locationLabelBatch(filter);
+  const first = rows[0]!;
+  const wh = await getDb().warehouses.findUnique({ where: { id: first.warehouse_id }, select: { code: true, name: true } });
+  const rackCode = first.rack ? `${first.rack.aisle.code}-${first.rack.code}` : (first.zone?.code ?? 'AREA');
+  const oc = `WMS-${wh?.code ?? 'WMS'}-${first.zone?.code ?? ''}-${rackCode}`.replace(/-+/g, '-').replace(/-$/, '');
+  const today = new Date().toISOString().slice(0, 10);
+  const n = rows.length;
+  const lineas = rows.map((loc, i) => ({
+    num_linea: i + 1,
+    sku_walmart: loc.code,
+    sku_cliente: loc.code,
+    sku_interno: loc.code,
+    gtin: loc.barcode,
+    color: null,
+    descripcion: `Ubicación ${loc.code}${loc.level ? ` · nivel ${loc.level}` : ''}${loc.rack ? ` · rack ${loc.rack.aisle.code}-${loc.rack.code} módulo ${loc.bay ?? ''}` : ''}`,
+    cantidad: 1,
+    cantidad_surtir: 1,
+    uom: 'EA',
+    piezas_por_caja: 1,
+    cajas: 1,
+    precio_unitario: 0,
+    total_linea: 0,
+  }));
+  const etiquetas = models.map((m, i) => ({ sku_interno: rows[i]!.code, caja_x: i + 1, caja_y: n, zpl: renderZpl(m) }));
+  return {
+    origen: 'WMS',
+    version: 1,
+    tipo: 'etiquetas_ubicacion',
+    cliente: 'WMS',
+    generado_en: new Date().toISOString(),
+    encabezado: {
+      num_orden_compra: oc,
+      fecha_pedido: today,
+      fecha_envio: today,
+      fecha_cancelacion: null,
+      tipo_orden: 'ETIQUETAS_UBICACION',
+      moneda: 'MXN',
+      departamento: null,
+      evento_promocional: null,
+      condicion_pago: null,
+      cedis_destino: wh?.code ?? null,
+      cedis_nombre: wh?.name ?? null,
+      gln_destino: null,
+      formato_tienda: null,
+      instrucciones: `${title}: ${n} etiquetas de ubicación (101.6 × 84 mm). Pegar en orden de módulo y nivel.`,
+    },
+    lineas,
+    totales_pdf: { total: 0, total_unidades: n, total_lineas: n },
+    control: { coincide_total: true, coincide_num_lineas: true, suma_extendido_calculado: 0, num_lineas_calculado: n, total_cajas_etiquetas: n },
+    extraccion: { confiable: true, requiere_revision: false, problemas: [] },
+    etiquetas,
+  };
+}

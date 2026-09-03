@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zPrintLabel, zUuid } from '@wms/shared';
 import { getDb } from '../../db.js';
-import { locationLabelBatch, locationLabelSheetHtml, printLabel, printLocationBatch } from './service.js';
+import { locationLabelBatch, locationLabelSheetHtml, locationLabelsAsEmbarquePedido, printLabel, printLocationBatch } from './service.js';
 import { withTx } from '../../db.js';
 import { audit } from '../../lib/audit.js';
 import { renderZpl } from '@wms/shared';
@@ -39,6 +39,16 @@ export async function labelRoutes(app: FastifyInstance) {
     reply.type('text/plain; charset=utf-8');
     reply.header('Content-Disposition', `attachment; filename="${title.replace(/[^A-Za-z0-9_-]+/g, '_')}.zpl"`);
     return models.map((m) => renderZpl(m)).join('\n');
+  });
+
+  /** Export for the Embarque label app: the rack as a pedido JSON with pre-rendered ZPL. */
+  app.get('/labels/locations.embarque.json', { preHandler: app.requirePermission('labels.print') }, async (req, reply) => {
+    const q = zBatch.parse(req.query);
+    const pedido = await locationLabelsAsEmbarquePedido(q);
+    await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_export_embarque', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? '-', after: { ...q, oc: pedido.encabezado.num_orden_compra, labels: pedido.etiquetas.length } }));
+    reply.type('application/json; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${pedido.encabezado.num_orden_compra}.json"`);
+    return JSON.stringify(pedido);
   });
 
   /** Direct print of a whole rack/zone on a Zebra (one audited label_print per position). */

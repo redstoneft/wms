@@ -143,6 +143,9 @@ export default function LabelsPage() {
             <Button variant="secondary" disabled={!batchFilter} onClick={() => window.open(labelsApi.zplUrl(batchFilter!), '_blank')}>
               Descargar ZPL
             </Button>
+            <Button variant="secondary" disabled={!batchFilter} onClick={() => window.open(labelsApi.embarqueUrl(batchFilter!), '_blank')} data-testid="labels-embarque">
+              Exportar a app de etiquetas
+            </Button>
             <Button disabled={!batchFilter || !printers.data?.length} loading={doBatch.isPending} onClick={() => doBatch.mutate()}>
               Imprimir en Zebra
             </Button>
@@ -150,7 +153,7 @@ export default function LabelsPage() {
         </div>
         <Alert tone="info" className="mt-3">
           <b>Hoja para imprimir</b>: etiquetas de 101.6 × 84 mm (3 por hoja A4) para cualquier impresora o para guardar como PDF; imprimir al 100 %. Orden de pegado: por pasillo, módulo y nivel, igual que la ruta de surtido.
-          <b> Descargar ZPL</b>: archivo listo para una Zebra (203 dpi). <b>Imprimir en Zebra</b>: envía una etiqueta por posición y queda auditado.
+          <b> Descargar ZPL</b>: archivo listo para una Zebra (203 dpi). <b>Exportar a app de etiquetas</b>: archivo <code>.json</code> que tu app Embarque importa como un pedido más y manda a su estación Zebra. <b>Imprimir en Zebra</b>: envía una etiqueta por posición y queda auditado.
         </Alert>
       </Card>
       <Card title="Historial" className="mt-4" padded={false}>

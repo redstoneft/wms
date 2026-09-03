@@ -17,5 +17,6 @@ export const labelsApi = {
   /** Batch by rack/zone: printable sheet and ZPL are plain GET links (same-origin cookie); direct print is a POST. */
   sheetUrl: (q: { rack_id?: string; zone_id?: string }) => `/api/labels/locations.html?${new URLSearchParams(q as Record<string, string>)}`,
   zplUrl: (q: { rack_id?: string; zone_id?: string }) => `/api/labels/locations.zpl?${new URLSearchParams(q as Record<string, string>)}`,
+  embarqueUrl: (q: { rack_id?: string; zone_id?: string }) => `/api/labels/locations.embarque.json?${new URLSearchParams(q as Record<string, string>)}`,
   printBatch: (body: { rack_id?: string; zone_id?: string; printer_id?: string }) => api.post<{ total: number; sent: number; failed: { code: string; error: string }[] }>('/labels/print-batch', body),
 };
