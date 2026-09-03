@@ -12,6 +12,7 @@ Obligatorio para `ADMIN`: al primer acceso el sistema exige inscribir una app TO
 * `allocation_strategy` por defecto (`FIFO`, `FEFO`, `LPN`, `LOCATION`, `FULL_PALLET`, `CASE_PIECE`).
 * `auto_print_lpn_labels`: impresión automática al crear un LPN.
 * `require_mfa_for_admin`.
+* `mfa_trusted_device_days` (30): días que un navegador puede saltarse el segundo factor tras marcar *Recordar este dispositivo*; 0 desactiva la opción. Un reset de MFA o un cambio de contraseña revocan todos los dispositivos recordados del usuario.
 * Motivos de cuarentena, reglas de slotting (pesos y condiciones), impresoras.
 
 ## Autorizaciones de excepción (`Admin → Autorizaciones`, `exceptions.authorize`)

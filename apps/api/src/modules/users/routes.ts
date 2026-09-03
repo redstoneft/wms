@@ -112,6 +112,7 @@ export async function userRoutes(app: FastifyInstance) {
     await withTx(async (tx) => {
       await tx.users.update({ where: { id }, data: { mfa_enabled: false, mfa_secret_enc: null } });
       await tx.sessions.updateMany({ where: { user_id: id, revoked_at: null }, data: { revoked_at: new Date() } });
+      await tx.trusted_devices.updateMany({ where: { user_id: id, revoked_at: null }, data: { revoked_at: new Date() } }); // remembered browsers die with the MFA reset
       await audit(tx, req.actor!, { action: 'user.mfa_reset', entity_type: 'user', entity_id: id });
     });
     return { ok: true };

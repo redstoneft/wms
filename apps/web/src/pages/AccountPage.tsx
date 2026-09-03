@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/auth';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/Toast';
@@ -11,6 +11,16 @@ export default function AccountPage() {
   const { user } = useAuth();
   const toast = useToast();
   const sessions = useQuery({ queryKey: ['sessions'], queryFn: authApi.sessions });
+  const qc = useQueryClient();
+  const devices = useQuery({ queryKey: ['trusted-devices'], queryFn: authApi.trustedDevices });
+  const revokeDevice = useMutation({
+    mutationFn: (id: string | null) => (id ? authApi.revokeTrustedDevice(id) : authApi.revokeAllTrustedDevices()),
+    onSuccess: (r) => {
+      toast.success(r.revoked === 1 ? 'Dispositivo olvidado' : `${r.revoked} dispositivos olvidados`, 'La próxima vez pedirá el código de verificación');
+      void qc.invalidateQueries({ queryKey: ['trusted-devices'] });
+    },
+    onError: (e) => toast.error('No se pudo revocar', e),
+  });
   const [cur, setCur] = useState('');
   const [nw, setNw] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,6 +67,28 @@ export default function AccountPage() {
             </Button>
           </div>
         </form>
+      </Card>
+      <Card
+        title="Dispositivos de confianza (segundo factor recordado)"
+        className="mt-4"
+        padded={false}
+        actions={devices.data?.length ? <Button size="sm" variant="secondary" onClick={() => revokeDevice.mutate(null)} loading={revokeDevice.isPending}>Olvidar todos</Button> : undefined}
+      >
+        <Table
+          rows={devices.data}
+          loading={devices.isLoading}
+          rowKey={(d) => d.id}
+          dense
+          empty="Ningún navegador recordado. Al verificar el código puedes marcar “Recordar este dispositivo”."
+          columns={[
+            { key: 'ua', header: 'Navegador', render: (d) => <span className="text-xs">{d.user_agent ?? '—'}</span> },
+            { key: 'dev', header: 'Dispositivo', render: (d) => <span className="font-mono text-xs">{d.device_id ?? '—'}</span> },
+            { key: 'ip', header: 'IP', render: (d) => d.ip ?? '—' },
+            { key: 'u', header: 'Último uso', render: (d) => fmtDateTime(d.last_used_at) },
+            { key: 'e', header: 'Vence', render: (d) => fmtDateTime(d.expires_at) },
+            { key: 'x', header: '', render: (d) => <Button size="sm" variant="ghost" onClick={() => revokeDevice.mutate(d.id)}>Olvidar</Button> },
+          ]}
+        />
       </Card>
       <Card title="Sesiones activas" className="mt-4" padded={false}>
         <Table

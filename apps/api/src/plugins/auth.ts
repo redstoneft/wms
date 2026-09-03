@@ -9,6 +9,8 @@ import { loadConfig } from '../config.js';
 import { getSettingsCached } from '../modules/settings/routes.js';
 
 export const SESSION_COOKIE = 'wms_session';
+/** long-lived, signed, HttpOnly: proves this browser already passed MFA ("recordar este dispositivo") */
+export const TRUSTED_COOKIE = 'wms_trusted';
 
 declare module 'fastify' {
   interface FastifyRequest {

@@ -206,3 +206,70 @@ describe('audit & secrets', () => {
     expect(JSON.stringify(r.body)).not.toMatch(/at .*\.ts:\d+/);
   });
 });
+
+describe('MFA: dispositivo de confianza (recordar 30 días)', () => {
+  it('a remembered browser skips the second factor; revocation and other users restore it', async () => {
+    const { getApp, sql, userWithRoles } = await import('../helpers.js');
+    const { totp } = await import('../../src/lib/crypto.js');
+    const app = await getApp();
+    const admin = await userWithRoles('tdadmin', ['ADMIN']);
+    // enrol MFA (ADMIN requires it)
+    const enroll = await admin.post('/auth/mfa/enroll');
+    await admin.post('/auth/mfa/enroll/confirm', { code: totp(enroll.body.secret) });
+    const secret: string = enroll.body.secret;
+    const uname = admin.username;
+    const pw = `Pw-${uname}-Test-1!`;
+    const H = { 'x-requested-with': 'wms-client', 'content-type': 'application/json' };
+    const cookiesOf = (r: { headers: Record<string, unknown> }) => ([] as string[]).concat((r.headers['set-cookie'] as string[] | string | undefined) ?? []).map((c) => c.split(';')[0]!);
+
+    // 1) fresh login → MFA required
+    const l1 = await app.inject({ method: 'POST', url: '/api/auth/login', headers: H, payload: JSON.stringify({ username: uname, password: pw }) });
+    expect(l1.statusCode).toBe(200);
+    expect(l1.json().mfa_required).toBe(true);
+    const sess1 = cookiesOf(l1).find((c) => c.startsWith('wms_session='))!;
+    // 2) verify with remember_device → trusted cookie issued
+    const v = await app.inject({ method: 'POST', url: '/api/auth/mfa/verify', headers: { ...H, cookie: sess1 }, payload: JSON.stringify({ code: totp(secret), remember_device: true }) });
+    expect(v.statusCode).toBe(200);
+    expect(v.json()).toMatchObject({ device_remembered: true, trusted_days: 30 });
+    const trusted = cookiesOf(v).find((c) => c.startsWith('wms_trusted='))!;
+    expect(trusted).toBeTruthy();
+    const rawSetCookie = String(([] as string[]).concat(v.headers['set-cookie'] as string[]).find((c) => c.startsWith('wms_trusted=')));
+    expect(rawSetCookie).toMatch(/HttpOnly/i);
+    expect(rawSetCookie).toMatch(/Max-Age=2592000/); // 30 days
+    // 3) login again WITH the trusted cookie → no MFA, permissions granted immediately
+    const l2 = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { ...H, cookie: trusted }, payload: JSON.stringify({ username: uname, password: pw }) });
+    expect(l2.json()).toMatchObject({ mfa_required: false, mfa_via_trusted_device: true });
+    expect(l2.json().user.permissions.length).toBeGreaterThan(0);
+    const sess2 = cookiesOf(l2).find((c) => c.startsWith('wms_session='))!;
+    const me = await app.inject({ method: 'GET', url: '/api/auth/me', headers: { ...H, cookie: sess2 } });
+    expect(me.json().mfa_pending).toBe(false);
+    // 4) the trusted cookie is bound to the user: another MFA user cannot use it
+    const other = await userWithRoles('tdadmin2', ['ADMIN']);
+    const e2 = await other.post('/auth/mfa/enroll');
+    await other.post('/auth/mfa/enroll/confirm', { code: totp(e2.body.secret) });
+    const l3 = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { ...H, cookie: trusted }, payload: JSON.stringify({ username: other.username, password: `Pw-${other.username}-Test-1!` }) });
+    expect(l3.json().mfa_required).toBe(true);
+    // 5) the device is listed and can be revoked → MFA required again
+    const list = await app.inject({ method: 'GET', url: '/api/auth/devices', headers: { ...H, cookie: sess2 } });
+    expect(list.json()).toHaveLength(1);
+    const del = await app.inject({ method: 'DELETE', url: `/api/auth/devices/${list.json()[0].id}`, headers: { ...H, cookie: `${sess2}; ${trusted}` } });
+    expect(del.json().revoked).toBe(1);
+    const l4 = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { ...H, cookie: trusted }, payload: JSON.stringify({ username: uname, password: pw }) });
+    expect(l4.json().mfa_required).toBe(true);
+    // 6) an expired trust is ignored
+    const v2 = await app.inject({ method: 'POST', url: '/api/auth/mfa/verify', headers: { ...H, cookie: cookiesOf(l4).find((c) => c.startsWith('wms_session='))! }, payload: JSON.stringify({ code: totp(secret), remember_device: true }) });
+    const trusted2 = cookiesOf(v2).find((c) => c.startsWith('wms_trusted='))!;
+    await sql(`UPDATE trusted_devices SET expires_at = now() - interval '1 minute' WHERE revoked_at IS NULL`);
+    const l5 = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { ...H, cookie: trusted2 }, payload: JSON.stringify({ username: uname, password: pw }) });
+    expect(l5.json().mfa_required).toBe(true);
+    // 7) changing the password wipes remembered devices
+    const l6s = cookiesOf(l5).find((c) => c.startsWith('wms_session='))!;
+    await app.inject({ method: 'POST', url: '/api/auth/mfa/verify', headers: { ...H, cookie: l6s }, payload: JSON.stringify({ code: totp(secret), remember_device: true }) });
+    const before = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM trusted_devices WHERE revoked_at IS NULL AND expires_at > now()`);
+    expect(before[0]!.n).toBeGreaterThanOrEqual(1n);
+    const pc = await app.inject({ method: 'POST', url: '/api/auth/password', headers: { ...H, cookie: l6s }, payload: JSON.stringify({ current_password: pw, new_password: `Pw-${uname}-Test-2!` }) });
+    expect(pc.statusCode).toBe(200);
+    const after = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM trusted_devices t JOIN users u ON u.id = t.user_id WHERE u.username = '${uname}' AND t.revoked_at IS NULL`);
+    expect(after[0]!.n).toBe(0n);
+  });
+});

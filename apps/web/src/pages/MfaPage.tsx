@@ -16,6 +16,7 @@ export default function MfaPage() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [remember, setRemember] = useState(true);
 
   useEffect(() => {
     if (!enrollMode || secret) return;
@@ -37,7 +38,7 @@ export default function MfaPage() {
     setError(null);
     try {
       if (enrollMode) await authApi.mfaEnrollConfirm(code);
-      else await authApi.mfaVerify(code);
+      else await authApi.mfaVerify(code, remember);
       await refresh();
       nav('/', { replace: true });
     } catch (err) {
@@ -75,6 +76,15 @@ export default function MfaPage() {
         <Field label="Código de 6 dígitos" required className="mt-4">
           <Input inputMode="numeric" pattern="\d{6}" maxLength={6} autoFocus value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} className="text-center font-mono text-2xl tracking-[0.5em]" data-testid="mfa-code" />
         </Field>
+        {!enrollMode && (
+          <label className="mt-3 flex items-start gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="mt-0.5" checked={remember} onChange={(e) => setRemember(e.target.checked)} data-testid="mfa-remember" />
+            <span>
+              Recordar este dispositivo durante 30 días
+              <span className="block text-xs text-slate-500">No volverás a capturar el código en este navegador. Úsalo solo en equipos de confianza; puedes revocarlo desde Mi cuenta.</span>
+            </span>
+          </label>
+        )}
         <Button type="submit" block size="lg" className="mt-5" loading={busy} disabled={code.length !== 6}>
           {enrollMode ? 'Activar MFA' : 'Verificar'}
         </Button>

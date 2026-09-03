@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS = {
   allocation_strategy: 'FIFO',
   session_ttl_hours: 12,
   require_mfa_for_admin: true,
+  mfa_trusted_device_days: 30,
   auto_print_lpn_labels: true,
 } as const;
 

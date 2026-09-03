@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { zChangePassword, zLogin, zMfaVerify } from '@wms/shared';
 import { loadConfig } from '../../config.js';
 import { UnauthorizedError } from '../../errors.js';
-import { cookieOptions, SESSION_COOKIE } from '../../plugins/auth.js';
+import { cookieOptions, SESSION_COOKIE, TRUSTED_COOKIE } from '../../plugins/auth.js';
 import * as svc from './service.js';
 
 export async function authRoutes(app: FastifyInstance) {
@@ -22,12 +22,19 @@ export async function authRoutes(app: FastifyInstance) {
         userAgent: req.headers['user-agent'] ?? null,
         deviceId: body.device_id ?? (req.headers['x-device-id'] as string | undefined) ?? null,
         requestId: req.id,
+        trustedToken: (() => {
+          const raw = req.cookies?.[TRUSTED_COOKIE];
+          if (!raw) return null;
+          const u = req.unsignCookie(raw);
+          return u.valid ? u.value : null;
+        })(),
       });
       reply.setCookie(SESSION_COOKIE, result.token, cookieOptions(result.ttl_hours));
       return {
         user: result.user,
         mfa_required: result.mfa_required,
         mfa_enrollment_required: result.mfa_enrollment_required,
+        mfa_via_trusted_device: result.mfa_via_trusted_device ?? false,
       };
     },
   );
@@ -57,13 +64,29 @@ export async function authRoutes(app: FastifyInstance) {
   app.post(
     '/auth/mfa/verify',
     { config: { rateLimit: { max: cfg.LOGIN_RATE_LIMIT_MAX, timeWindow: '1 minute' } } },
-    async (req) => {
+    async (req, reply) => {
       if (!req.actor || !req.sessionId) throw new UnauthorizedError();
-      const { code } = zMfaVerify.parse(req.body);
-      await svc.verifyMfa(req.actor.userId, req.sessionId, code, req.actor);
-      return { ok: true };
+      const { code, remember_device } = zMfaVerify.parse(req.body);
+      const r = await svc.verifyMfa(req.actor.userId, req.sessionId, code, { ...req.actor, userAgent: req.headers['user-agent'] ?? null }, remember_device);
+      // the trusted-device cookie outlives the session on purpose: it is what lets this browser skip MFA next time
+      if (r.trusted_token) reply.setCookie(TRUSTED_COOKIE, r.trusted_token, { ...cookieOptions(), maxAge: r.trusted_days * 86400 });
+      return { ok: true, device_remembered: !!r.trusted_token, trusted_days: r.trusted_token ? r.trusted_days : 0 };
     },
   );
+
+  /** Browsers remembered for MFA ("dispositivos de confianza") of the current user. */
+  app.get('/auth/devices', { preHandler: app.requireAuth }, async (req) => svc.listTrustedDevices(req.actor!.userId));
+  app.delete('/auth/devices/:id', { preHandler: app.requireAuth }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const n = await svc.revokeTrustedDevices(req.actor!, req.actor!.userId, id);
+    if (req.cookies?.[TRUSTED_COOKIE]) reply.clearCookie(TRUSTED_COOKIE, { path: '/' });
+    return { ok: true, revoked: n };
+  });
+  app.delete('/auth/devices', { preHandler: app.requireAuth }, async (req, reply) => {
+    const n = await svc.revokeTrustedDevices(req.actor!, req.actor!.userId, null);
+    reply.clearCookie(TRUSTED_COOKIE, { path: '/' });
+    return { ok: true, revoked: n };
+  });
 
   app.post('/auth/password', { preHandler: app.requireAuth }, async (req) => {
     const body = zChangePassword.parse(req.body);

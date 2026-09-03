@@ -1,5 +1,8 @@
 # Seguridad
 
+## Dispositivos de confianza (MFA recordado)
+Al verificar el código TOTP el usuario puede marcar **"Recordar este dispositivo"**: el navegador recibe una segunda cookie (`wms_trusted`, firmada, HttpOnly, Secure, SameSite=Strict) con un token opaco de 32 bytes cuyo hash se guarda en `trusted_devices` junto con dispositivo, agente e IP. En los siguientes inicios de sesión ese token, si pertenece al mismo usuario, no está revocado ni vencido, satisface el segundo factor; la sesión queda `mfa_verified` y la auditoría registra `mfa_via_trusted_device`. Vigencia: `mfa_trusted_device_days` (30 por defecto, 0 desactiva la opción). El usuario ve y revoca sus dispositivos en *Mi cuenta*; un cambio de contraseña o un reset de MFA por el administrador revoca todos. La contraseña sigue siendo obligatoria en cada inicio de sesión: lo recordado es solo el segundo factor.
+
 ## Autenticación
 * Contraseñas con **scrypt** (N=2¹⁵, r=8, p=1, sal aleatoria de 16 bytes, NFKC). Mínimo 12 caracteres.
 * Sesiones opacas: token aleatorio de 32 bytes, almacenado como SHA-256 en `sessions`; cookie `wms_session` **firmada**, `HttpOnly`, `SameSite=Strict`, `Secure` cuando `COOKIE_SECURE=true`. Expiración (`SESSION_TTL_HOURS`, 12 h por defecto) y revocación en logout, cambio de contraseña, desactivación de usuario y reseteo de MFA.

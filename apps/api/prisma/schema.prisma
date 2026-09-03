@@ -39,6 +39,7 @@ model users {
   updated_at          DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
   user_roles user_roles[]
+  trusted_devices trusted_devices[]
   sessions   sessions[]
 
   @@index([is_active])
@@ -81,6 +82,24 @@ model user_roles {
   role roles @relation(fields: [role_id], references: [id], onDelete: Cascade)
 
   @@id([user_id, role_id])
+}
+
+/** "Recordar este dispositivo": salta el segundo factor durante N días en ese navegador (token opaco hasheado, revocable). */
+model trusted_devices {
+  id           String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  user_id      String    @db.Uuid
+  token_hash   String    @unique @db.VarChar(128)
+  device_id    String?   @db.VarChar(128)
+  user_agent   String?   @db.VarChar(512)
+  ip           String?   @db.VarChar(64)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  last_used_at DateTime  @default(now()) @db.Timestamptz(6)
+  expires_at   DateTime  @db.Timestamptz(6)
+  revoked_at   DateTime? @db.Timestamptz(6)
+
+  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
 }
 
 model sessions {

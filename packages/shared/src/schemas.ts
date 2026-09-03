@@ -52,7 +52,11 @@ export const zLogin = z.object({
   password: z.string().min(1).max(256),
   device_id: z.string().trim().max(128).optional(),
 });
-export const zMfaVerify = z.object({ code: z.string().regex(/^\d{6}$/) });
+export const zMfaVerify = z.object({
+  code: z.string().regex(/^\d{6}$/),
+  /** issue a trusted-device cookie so this browser skips MFA for mfa_trusted_device_days */
+  remember_device: z.boolean().default(false),
+});
 export const zChangePassword = z.object({
   current_password: z.string().min(1).max(256),
   new_password: z.string().min(12).max(256),
@@ -485,6 +489,8 @@ export const zSettings = z.object({
   session_ttl_hours: z.number().int().min(1).max(72).optional(),
   require_mfa_for_admin: z.boolean().optional(),
   auto_print_lpn_labels: z.boolean().optional(),
+  /** days a browser may skip the second factor after "remember this device" (0 disables the option) */
+  mfa_trusted_device_days: z.number().int().min(0).max(90).optional(),
 });
 
 export type LoginInput = z.infer<typeof zLogin>;

@@ -1,5 +1,8 @@
 # Guía de usuario (modo oficina)
 
+## Segundo factor recordado
+Si tu cuenta pide código de autenticación, al capturarlo puedes marcar *Recordar este dispositivo durante 30 días*. Ese navegador ya no pedirá el código (la contraseña sí). Hazlo solo en equipos propios; en *Mi cuenta → Dispositivos de confianza* puedes quitar cualquiera.
+
 ## Acceso
 `https://wms.suempresa.com` → usuario y contraseña. Los administradores completan además el código TOTP (Google Authenticator/Authy). Sesión de 12 h; **Cerrar sesión** la revoca en el servidor.
 
