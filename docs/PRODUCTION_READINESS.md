@@ -84,5 +84,5 @@ Realizada por un revisor independiente sobre `apps/api` y `packages/shared` sin 
 | Imagen `wms-api` en modo producción | health OK, login OK |
 | Auditoría externa | 36 hallazgos; críticos/altos corregidos con regresiones |
 | Sincronización SAE real | 1,243 claves SAE → 662 productos (44 con GTIN, 1,281 alias), 214 clientes, 38 proveedores, 16 OC, 4 pedidos en 11 s; segunda corrida 0 duplicados |
-| Nave HIDRO en el 3D | Planta en L extraída de los vectores del levantamiento (39.91 × 59.5 m, H 7.10; vecinos 19.98 × 41.7 m excluidos en la esquina frontal izquierda; oficinas y cubículos interiores; portones medidos) como almacén por defecto del mapa; racks pendientes del layout del usuario |
+| Nave HIDRO en el 3D | Planta en L extraída de los vectores del levantamiento (39.91 × 59.5 m, H 7.10; vecinos 19.98 × 41.7 m excluidos en la esquina frontal izquierda; oficinas y cubículos interiores; portones medidos) como almacén por defecto del mapa; 8 racks del croquis del usuario (519 posiciones) |
 | Publicación | En producción desde el 2026-09-02 en `https://wms.104-248-116-147.sslip.io` (ClawCloud, Docker Compose + nginx/Let's Encrypt; ver DEPLOYMENT.md). `COOKIE_SECURE=true`, solo `web` expuesto en localhost, backups cada 6 h en el servidor |

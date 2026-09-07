@@ -25,14 +25,14 @@ Racks según el croquis del usuario (2026-09-02), todos de 3 niveles, módulos d
 
 | Rack | Módulos | Posiciones | Ubicación en la nave |
 |---|---|---|---|
-| A | 17 | 102 | Contra el muro exterior derecho, del frente al fondo |
+| A | 20 | 120 | Contra el muro exterior derecho, del frente al fondo (54 m, remata a 0.1 m del muro del fondo) |
 | B / C | 11 + 11 | 66 + 66 | Doble, espalda con espalda, recorridos hacia el fondo (y 24–54) |
 | D / E | 11 + 11 | 66 + 66 | Doble, espalda con espalda, recorridos hacia el fondo; entre su remate y el rack X solo queda pasillo de montacargas |
 | F | 14 | 84 | Contra el muro medianero con los vecinos |
 | X | 7 | 42 | Contra el muro del fondo, mitad izquierda (misma zona `ALM`) |
 | Z | 1 (3 tarimas) | 9 | Pegado a las oficinas por el lado de los portones |
 
-Total 501 posiciones de rack. Las coordenadas exactas de cada rack se ajustan en `Mapa 3D → Modo edición`: **arrastrar el rack por su cuerpo y soltarlo** guarda la nueva posición (redondeada a 10 cm, dentro del paño; las ubicaciones se recalculan y conservan su código y su inventario); el clic abre el formulario para teclear X/Y/rotación. La separación entre racks quedó en pasillos de 4.4 m para montacargas.
+Total 519 posiciones de rack. Las coordenadas exactas de cada rack se ajustan en `Mapa 3D → Modo edición`: **arrastrar el rack por su cuerpo y soltarlo** guarda la nueva posición (redondeada a 10 cm, dentro del paño; las ubicaciones se recalculan y conservan su código y su inventario); el clic abre el formulario para teclear X/Y/rotación. La separación entre racks quedó en pasillos de 4.4 m para montacargas.
 
 ## 2. Zonas
 Una zona es un rectángulo del piso con un tipo:

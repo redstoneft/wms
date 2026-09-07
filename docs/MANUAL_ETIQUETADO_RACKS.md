@@ -1,6 +1,6 @@
 # Manual de etiquetado de racks · Nave HIDRO
 
-Para la persona que pega las etiquetas, ya impresas. Total: **501 etiquetas en 8 racks** (zona `ALM`, almacén general).
+Para la persona que pega las etiquetas, ya impresas. Total: **519 etiquetas en 8 racks** (zona `ALM`, almacén general).
 
 ## 1. Qué dice cada etiqueta
 
@@ -22,7 +22,7 @@ Debajo del código va el código de barras `LOC-…`. Las etiquetas impresas en 
 
 | Rack | Módulos | Niveles | Etiquetas | Dónde está · dónde empieza el módulo 1 |
 |---|---|---|---|---|
-| `ALM-A` | 17 | 3 | 102 | Muro exterior derecho. Módulo 1 en el extremo del frente (portones), crece hacia el fondo |
+| `ALM-A` | 20 | 3 | 120 | Muro exterior derecho. Módulo 1 en el extremo del frente (portones), crece hacia el fondo |
 | `ALM-B` | 11 | 3 | 66 | Doble con C, en medio de la pata. Módulo 1 del lado del frente |
 | `ALM-C` | 11 | 3 | 66 | Espalda con B. Módulo 1 del lado del frente |
 | `ALM-D` | 11 | 3 | 66 | Doble con E, junto al pasillo del medianero. Módulo 1 del lado del frente |
@@ -69,7 +69,7 @@ Las reimpresiones las hace el supervisor en **Etiquetas** con motivo; quedan reg
 | Rack | Etiquetas | Pegadas | Verificadas | Para reimprimir | Fecha y firma |
 |---|---|---|---|---|---|
 | Z | 9 | | | | |
-| A | 102 | | | | |
+| A | 120 | | | | |
 | B | 66 | | | | |
 | C | 66 | | | | |
 | D | 66 | | | | |
@@ -81,4 +81,4 @@ Antes de entregar: todos los racks completos y sin sobrantes; primer y último m
 
 ## 7. Materiales y tiempo
 
-Las 501 etiquetas ordenadas por rack; trapo seco; escalera de dos peldaños para N02 (~1.8 m); lápiz y esta hoja; terminal con escáner o computadora con lector. Unas 3 horas en total; no se necesita montacargas.
+Las 519 etiquetas ordenadas por rack; trapo seco; escalera de dos peldaños para N02 (~1.8 m); lápiz y esta hoja; terminal con escáner o computadora con lector. Unas 3 horas en total; no se necesita montacargas.
