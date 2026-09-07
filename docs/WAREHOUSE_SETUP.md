@@ -83,10 +83,10 @@ Secuencia de picking (`pick_sequence`) = pasillo → rack → bahía → nivel �
 | **Imprimir en Zebra** | Zebra registrada en `Datos maestros → Impresoras` | Envía una etiqueta por posición; cada una queda en el historial y en auditoría |
 | **Exportar a app de etiquetas** | La Zebra está en la estación de impresión de la app Embarque (SAE-y-ETIQUETAS) | Archivo `WMS-<almacén>-<zona>-<rack>.json` con el rack como pedido de la app (cliente `WMS`, una línea por posición) y cada etiqueta ya en ZPL; se sube en su dashboard como cualquier pedido y se imprime desde ahí |
 
-Las etiquetas salen en el orden de la ruta de surtido (pasillo → rack → módulo → nivel → posición), que es el orden recomendado para pegarlas:
+Las etiquetas salen rack por rack y, dentro del rack, columna por columna de abajo hacia arriba (P01 N01, N02, N03 → P02 N01…), que es el orden en que se pegan:
 
 1. Empezar en el módulo 1 (el más cercano al frente/pasillo de entrada) y avanzar módulo por módulo.
-2. En cada módulo pegar las etiquetas de los tres niveles en el poste frontal, a la altura de los ojos, de abajo hacia arriba (N01 abajo, N03 arriba); la etiqueta indica el nivel y la posición (P01 izquierda, P02 derecha vistas de frente).
+2. En cada módulo, columna izquierda (P01) de abajo hacia arriba y luego la derecha (P02): N01 y N02 en la viga de su nivel, N03 en el poste a la altura de los ojos.
 3. Al terminar el rack, verificar con la terminal: en modo almacén escanear cada etiqueta (`Almacenaje` o `Trazabilidad → Ubicación`) y comprobar que el sistema muestra el código esperado. Una etiqueta que no lee se reimprime desde `Etiquetas` con motivo.
 
 Los `barcode` (`LOC-<código>`) no cambian aunque se mueva el rack en el mapa; solo cambian las coordenadas.

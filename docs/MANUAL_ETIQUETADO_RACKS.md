@@ -42,8 +42,8 @@ Debajo del código va el código de barras `LOC-…`. Las etiquetas impresas en 
 ## 4. Orden de trabajo
 
 1. Empezar por el rack **Z** (9 etiquetas) para practicar; luego A, B, C, D, E, F y al final X.
-2. Frente al módulo 1: `N01-P01`, `N01-P02`, `N02-P01`, `N02-P02`, y las dos de `N03` en el poste.
-3. Módulo 2: `P03` y `P04` en cada nivel, y así hasta el último módulo.
+2. Frente al módulo 1, columna izquierda de abajo hacia arriba: `N01-P01`, `N02-P01`, `N03-P01` (la de N03 en el poste). Luego la columna derecha: `N01-P02`, `N02-P02`, `N03-P02`.
+3. Módulo 2 igual: columna `P03` de abajo hacia arriba, después columna `P04`, y así hasta el último módulo. Las etiquetas vienen impresas exactamente en ese orden.
 4. Al terminar cada rack, verificar (sección 5) antes de pasar al siguiente.
 
 Si una etiqueta no corresponde al hueco donde estás, detente y revisa desde el módulo 1.

@@ -23,7 +23,8 @@ describe('location labels in batch (labelling a rack)', () => {
     expect((html.match(/class="l"/g) ?? []).length).toBe(rackLocations);
     expect(html).toContain('data:image/png;base64,'); // Code128 embedded
     const codes = [...html.matchAll(/<div class="code">([^<]+)<\/div>/g)].map((m) => m[1]);
-    const ordered = await sql<{ code: string }>(`SELECT code FROM locations WHERE rack_id = '${rackId}' AND is_active ORDER BY pick_sequence, code`);
+    // column by column, floor up: P01 N01, P01 N02, P01 N03, P02 N01 …
+    const ordered = await sql<{ code: string }>(`SELECT code FROM locations WHERE rack_id = '${rackId}' AND is_active ORDER BY position, level, code`);
     expect(codes).toEqual(ordered.map((o) => o.code));
   });
 
