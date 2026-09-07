@@ -20,6 +20,13 @@ describe('layout geometry', () => {
     expect(pickSequence('01', 'R01', 1, 1, 1)).toBeLessThan(pickSequence('01', 'R01', 1, 2, 1));
     expect(pickSequence('01', 'R01', 2, 1, 1)).toBeGreaterThan(pickSequence('01', 'R01', 1, 3, 1));
     expect(pickSequence('02', 'R01', 1, 1, 1)).toBeGreaterThan(pickSequence('01', 'R09', 9, 9, 9));
+    // alphabetic aisles (racks A…F, X, Z of the HIDRO layout): every position of A comes before any position of B
+    expect(pickSequence('A', '01', 17, 3, 2)).toBeLessThan(pickSequence('B', '01', 1, 1, 1));
+    expect(pickSequence('F', '01', 14, 3, 2)).toBeLessThan(pickSequence('X', '01', 1, 1, 1));
+    expect(pickSequence('X', '01', 7, 3, 2)).toBeLessThan(pickSequence('Z', '01', 1, 1, 1));
+    // within a bay: level 1 positions before level 2; bay 1 entirely before bay 2
+    expect(pickSequence('A', '01', 1, 1, 2)).toBeLessThan(pickSequence('A', '01', 1, 2, 1));
+    expect(pickSequence('A', '01', 1, 3, 2)).toBeLessThan(pickSequence('A', '01', 2, 1, 1));
   });
 });
 

@@ -68,7 +68,7 @@ export async function syncRackLocations(
           width_m: round2(slotW),
           depth_m: rack.depth_m,
           height_m: rack.level_height_m,
-          pick_sequence: pickSequence(aisle.code, rack.code, bay, level, position),
+          pick_sequence: pickSequence(aisle.code, rack.code, bay, level, p),
         };
         const ex = byCode.get(code);
         if (ex) {
@@ -107,9 +107,17 @@ export async function syncRackLocations(
   return { created, updated, deactivated };
 }
 
-/** Deterministic pick-route order: aisle → rack → bay → level (low first) → position. */
-export function pickSequence(aisle: string, rack: string, bay: number, level: number, position: number): number {
-  const a = parseInt(aisle.replace(/\D/g, '') || '0', 10);
-  const r = parseInt(rack.replace(/\D/g, '') || '0', 10);
-  return a * 1_000_000 + r * 10_000 + bay * 100 + level * 10 + position;
+/** Order rank of an aisle/rack code: numeric codes by value ("01" < "02"), alphanumeric ones alphabetically ("A" < "B" < "X" < "Z"). */
+export function codeRank(code: string): number {
+  const s = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (/^\d+$/.test(s)) return Math.min(parseInt(s, 10), 500);
+  let v = 0;
+  for (const ch of s) v = v * 36 + (ch >= '0' && ch <= '9' ? ch.charCodeAt(0) - 47 : ch.charCodeAt(0) - 54); // 0-9 → 1-10, A-Z → 11-36
+  return Math.min(v, 500);
+}
+
+/** Deterministic pick-route order: aisle → rack → bay → level (low first) → position in the bay.
+ *  Fields are packed so they never overlap (fits a 32-bit int): aisle ≤ 500, rack ≤ 99, bay ≤ 199, level ≤ 19, position in bay ≤ 9. */
+export function pickSequence(aisle: string, rack: string, bay: number, level: number, positionInBay: number): number {
+  return codeRank(aisle) * 4_000_000 + Math.min(codeRank(rack), 99) * 40_000 + Math.min(bay, 199) * 200 + Math.min(level, 19) * 10 + Math.min(positionInBay, 9);
 }

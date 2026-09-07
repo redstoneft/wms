@@ -258,7 +258,8 @@ export async function locationLabelBatch(filter: LocationBatchFilter) {
   const rows = await db.locations.findMany({
     where: { is_active: true, ...(filter.rack_id ? { rack_id: filter.rack_id } : {}), ...(filter.zone_id ? { zone_id: filter.zone_id } : {}), ...(filter.warehouse_id ? { warehouse_id: filter.warehouse_id } : {}) },
     include: { zone: true, rack: { include: { aisle: true } } },
-    orderBy: [{ pick_sequence: 'asc' }, { code: 'asc' }],
+    // walking order: rack by rack (aisle → rack), then module, level and position — never interleaved across racks
+    orderBy: [{ rack: { aisle: { code: 'asc' } } }, { rack: { code: 'asc' } }, { bay: 'asc' }, { level: 'asc' }, { position: 'asc' }, { code: 'asc' }],
   });
   if (!rows.length) throw new NotFoundError('locations', JSON.stringify(filter));
   const title = filter.rack_id && rows[0]?.rack ? `Rack ${rows[0].rack.aisle.code}-${rows[0].rack.code} · ${rows[0].zone?.name ?? ''}` : rows[0]?.zone ? `Zona ${rows[0].zone.code} · ${rows[0].zone.name}` : 'Ubicaciones';
