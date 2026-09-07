@@ -44,6 +44,18 @@ export default function ImportsPage() {
       toast.error('No se pudo descargar la plantilla', e);
     }
   };
+  const downloadXlsx = async () => {
+    try {
+      const blob = await importsApi.templateXlsx(type);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `plantilla_${type.toLowerCase()}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      toast.error('No se pudo descargar la plantilla Excel', e);
+    }
+  };
   const t = templates.data?.[type];
 
   return (
@@ -66,6 +78,10 @@ export default function ImportsPage() {
                 {t.description && <div className="mt-1">{t.description}</div>}
               </div>
             )}
+            <Button onClick={downloadXlsx} data-testid="download-xlsx">
+              Descargar plantilla Excel (con catálogo de SKUs)
+            </Button>
+            <p className="-mt-1 text-xs text-slate-500">Incluye pestañas de consulta: SKUs con sus claves de SAE y GTIN, Ubicaciones e Instrucciones. Se captura solo en la primera pestaña.</p>
             <Button variant="secondary" onClick={download}>
               Descargar plantilla CSV
             </Button>

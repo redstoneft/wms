@@ -1,0 +1,83 @@
+// Excel import template: data sheet first (header only) + catalogue sheets the person filling it needs.
+import ExcelJS from 'exceljs';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { closeApp, getApp, sql, userWithRoles, type Client } from '../helpers.js';
+
+let sup: Client;
+beforeAll(async () => {
+  sup = await userWithRoles('tplsup', ['SUPERVISOR']);
+});
+afterAll(closeApp);
+
+async function download(type: string) {
+  const a = await getApp();
+  const r = await a.inject({ method: 'GET', url: `/api/imports/templates/${type.toLowerCase()}.xlsx`, headers: { cookie: sup.cookie } });
+  expect(r.statusCode).toBe(200);
+  expect(String(r.headers['content-type'])).toContain('spreadsheetml');
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(r.rawPayload as unknown as ExcelJS.Buffer);
+  return { wb, buf: r.rawPayload };
+}
+
+describe('Excel import template with catalogue sheets', () => {
+  it('INITIAL_INVENTORY: data sheet first, then every active SKU with its SAE keys/GTIN, the locations and the instructions', async () => {
+    const { wb } = await download('INITIAL_INVENTORY');
+    expect(wb.worksheets.map((w) => w.name)).toEqual(['INITIAL_INVENTORY', 'SKUs', 'Ubicaciones', 'Instrucciones']);
+    const data = wb.worksheets[0]!;
+    expect((data.getRow(1).values as unknown[]).slice(1)).toEqual(['location_code', 'sku', 'qty', 'uom_code', 'lot', 'expiry_date', 'lpn']);
+    let filled = 0;
+    data.eachRow((row, i) => {
+      if (i > 1 && (row.values as unknown[]).some((v) => v !== null && v !== undefined && String(v) !== '')) filled++;
+    });
+    expect(filled).toBe(0); // no example row that could be imported by accident
+
+    const skus = wb.getWorksheet('SKUs')!;
+    const nSkus = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM skus WHERE is_active`);
+    expect(skus.rowCount - 1).toBe(Number(nSkus[0]!.n));
+    expect(String(skus.getRow(1).getCell(1).value)).toBe('Código WMS');
+    // a SKU with an alias barcode lists it in the alias column
+    const withAlias = await sql<{ code: string; barcode: string }>(`SELECT s.code, b.barcode FROM sku_barcodes b JOIN skus s ON s.id = b.sku_id WHERE s.is_active AND b.barcode <> s.code AND (s.gtin IS NULL OR b.barcode <> s.gtin) LIMIT 1`);
+    if (withAlias[0]) {
+      let found = false;
+      skus.eachRow((row, i) => {
+        if (i > 1 && String(row.getCell(1).value) === withAlias[0]!.code) found = String(row.getCell(4).value).includes(withAlias[0]!.barcode);
+      });
+      expect(found).toBe(true);
+    }
+
+    const locs = wb.getWorksheet('Ubicaciones')!;
+    const nLocs = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM locations WHERE is_active AND admin_status = 'ACTIVE'`);
+    expect(locs.rowCount - 1).toBe(Number(nLocs[0]!.n));
+
+    const ins = wb.getWorksheet('Instrucciones')!;
+    const cols: string[] = [];
+    ins.eachRow((row, i) => {
+      if (i > 1 && row.getCell(1).value && !String(row.getCell(1).value).startsWith('Paso')) cols.push(String(row.getCell(1).value));
+    });
+    expect(cols).toEqual(['location_code', 'sku', 'qty', 'uom_code', 'lot', 'expiry_date', 'lpn']);
+  });
+
+  it('ORDERS gets Clientes, PURCHASE_ORDERS gets Proveedores, SKUS gets no catalogue of itself', async () => {
+    expect((await download('ORDERS')).wb.worksheets.map((w) => w.name)).toEqual(['ORDERS', 'SKUs', 'Clientes', 'Instrucciones']);
+    expect((await download('PURCHASE_ORDERS')).wb.worksheets.map((w) => w.name)).toEqual(['PURCHASE_ORDERS', 'SKUs', 'Proveedores', 'Instrucciones']);
+    expect((await download('SKUS')).wb.worksheets.map((w) => w.name)).toEqual(['SKUS', 'Instrucciones']);
+  });
+
+  it('a filled template (typed with a SAE alias) validates through the normal import, ignoring the catalogue sheets', async () => {
+    const { wb } = await download('INITIAL_INVENTORY');
+    const loc = await sql<{ code: string }>(`SELECT code FROM locations WHERE is_active AND admin_status = 'ACTIVE' AND rack_id IS NOT NULL ORDER BY code LIMIT 1`);
+    const sku = await sql<{ code: string; barcode: string | null }>(`SELECT s.code, (SELECT barcode FROM sku_barcodes b WHERE b.sku_id = s.id AND b.uom_code = 'PIECE' LIMIT 1) AS barcode FROM skus s WHERE s.is_active AND NOT s.requires_lot AND NOT s.requires_expiry ORDER BY s.code LIMIT 1`);
+    wb.worksheets[0]!.addRow([loc[0]!.code, sku[0]!.barcode ?? sku[0]!.code, 5, 'PIECE', '', '', '']);
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    const boundary = 'xxTpl';
+    const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="plantilla_initial_inventory.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n`);
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const a = await getApp();
+    const r = await a.inject({ method: 'POST', url: '/api/imports?type=INITIAL_INVENTORY&mode=VALIDATE', headers: { cookie: sup.cookie, 'x-requested-with': 'wms-client', 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: Buffer.concat([head, buf, tail]) });
+    expect(r.statusCode).toBe(200);
+    const body = JSON.parse(r.body);
+    expect(body.errors).toEqual([]);
+    expect(body.ok).toBe(true);
+    expect(body.total_rows).toBe(1);
+  });
+});

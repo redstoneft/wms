@@ -97,7 +97,7 @@ Los `barcode` (`LOC-<código>`) no cambian aunque se mueva el rack en el mapa; s
 * Impresoras Zebra (ZEBRA_SETUP.md).
 * Motivos de cuarentena (`Admin → Motivos`).
 
-Plantillas CSV: `Importaciones → Plantillas` (`SKUS`, `BARCODES`, `CUSTOMERS`, `SUPPLIERS`, `LOCATIONS`, `RACKS`, `INITIAL_INVENTORY`, `ORDERS`, `PURCHASE_ORDERS`). Flujo: subir → **validar** (errores por fila) → aplicar. Nada se aplica si hay una sola fila inválida; un mismo archivo no puede aplicarse dos veces.
+Plantillas CSV o Excel: `Importaciones → Plantillas` (`SKUS`, `BARCODES`, `CUSTOMERS`, `SUPPLIERS`, `LOCATIONS`, `RACKS`, `INITIAL_INVENTORY`, `ORDERS`, `PURCHASE_ORDERS`). Flujo: subir → **validar** (errores por fila) → aplicar. Nada se aplica si hay una sola fila inválida; un mismo archivo no puede aplicarse dos veces.
 
 ## 8. Reabasto
 `Reabasto → Reglas`: SKU + ubicación de picking + mínimo + máximo. Cuando la cara baja al mínimo, el sistema genera la tarea y elige el pallet de reserva (el más pequeño que cubre el hueco, FIFO).
@@ -106,4 +106,4 @@ Plantillas CSV: `Importaciones → Plantillas` (`SKUS`, `BARCODES`, `CUSTOMERS`,
 `Admin → Slotting`: pesos de los criterios (mismo SKU, proximidad ABC, zona, consolidación de rack, nivel bajo para pesados, afinidad de familia) con condiciones opcionales por familia/clase. Cada tarea de put-away guarda la explicación de por qué se eligió la ubicación y las alternativas.
 
 ## 10. Inventario inicial
-Tras el conteo físico, plantilla `INITIAL_INVENTORY` (ubicación, SKU, cantidad, UoM, lote, caducidad, grupo de LPN para pallets mixtos). En la columna `sku` se acepta el código del producto **o cualquiera de sus alias**: la clave de SAE que trae la caja (`636570`, `.SIC20G`, `SIC20G-GRIS-1`) o el GTIN; el WMS lo resuelve al producto. `uom_code` vacío = piezas; `CASE` si se contaron cajas. Cada fila/grupo genera un LPN real (`PLT-…`) con movimiento `INITIAL_LOAD`; imprima las etiquetas de LPN y péguelas en los pallets.
+Tras el conteo físico, plantilla `INITIAL_INVENTORY` (descargar la **plantilla Excel**: incluye pestañas `SKUs` con todas las claves SAE/GTIN, `Ubicaciones` e `Instrucciones`; manual de llenado en `MANUAL_INVENTARIO_INICIAL.md`) (ubicación, SKU, cantidad, UoM, lote, caducidad, grupo de LPN para pallets mixtos). En la columna `sku` se acepta el código del producto **o cualquiera de sus alias**: la clave de SAE que trae la caja (`636570`, `.SIC20G`, `SIC20G-GRIS-1`) o el GTIN; el WMS lo resuelve al producto. `uom_code` vacío = piezas; `CASE` si se contaron cajas. Cada fila/grupo genera un LPN real (`PLT-…`) con movimiento `INITIAL_LOAD`; imprima las etiquetas de LPN y péguelas en los pallets.

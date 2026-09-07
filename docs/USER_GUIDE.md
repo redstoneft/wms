@@ -35,4 +35,4 @@ Alta (transportista, unidad, placas, chofer, destino, andén, pedidos). Detalle 
 * Incidencias: lista/filtros, alta con foto, comentarios, asignación, resolución y cierre.
 * Devoluciones: alta por cliente (referencia al pedido original), recepción a cuarentena, clasificación (reintegrar / cuarentena / dañado / baja), cierre.
 * Etiquetas: previsualizar/imprimir cualquier etiqueta; reimpresión con motivo; historial.
-* Importaciones: plantillas, validación con errores por fila, aplicación, historial.
+* Importaciones: plantillas CSV o Excel (la Excel trae pestañas de consulta: SKUs con claves SAE/GTIN, Ubicaciones, Clientes/Proveedores e Instrucciones), validación con errores por fila, aplicación, historial.

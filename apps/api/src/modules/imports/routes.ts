@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { IMPORT_TYPES, zUuid } from '@wms/shared';
-import { getDb } from '../../db.js';
+import { getDb, withTx } from '../../db.js';
 import { RuleError } from '../../errors.js';
 import { importJob, runImport, TEMPLATES, templateCsv } from './service.js';
+import { templateXlsx } from './template-xlsx.js';
+import { audit } from '../../lib/audit.js';
 
 export async function importRoutes(app: FastifyInstance) {
   const db = getDb();
@@ -14,6 +16,16 @@ export async function importRoutes(app: FastifyInstance) {
     const type = z.enum(IMPORT_TYPES).parse((req.params as { type: string }).type.toUpperCase());
     reply.type('text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="template_${type.toLowerCase()}.csv"`);
     return '﻿' + templateCsv(type);
+  });
+  /** Excel template: data sheet first + catalogue sheets (SKUs with SAE keys/GTIN, Ubicaciones, Clientes/Proveedores) + Instrucciones. */
+  app.get('/imports/templates/:type.xlsx', { preHandler: perm }, async (req, reply) => {
+    const type = z.enum(IMPORT_TYPES).parse((req.params as { type: string }).type.toUpperCase());
+    const { buffer, summary } = await templateXlsx(type);
+    await withTx((tx) => audit(tx, req.actor!, { action: 'imports.template_xlsx', entity_type: 'import_template', entity_id: type, after: summary }));
+    reply
+      .type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      .header('Content-Disposition', `attachment; filename="plantilla_${type.toLowerCase()}_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    return buffer;
   });
 
   /** multipart: field `file`; query: type, mode=VALIDATE|APPLY */
