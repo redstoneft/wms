@@ -223,6 +223,18 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
   const skuCodes = [...new Set(parsed.map((p) => p.sku as string).filter(Boolean))];
   const skus = skuCodes.length ? await tx.skus.findMany({ where: { code: { in: skuCodes } }, include: { uoms: true } }) : [];
   const skuMap = new Map(skus.map((s) => [s.code, s]));
+  // In every file except the SKU catalogue itself, `sku` may also be an alias: a SAE key (636570, .SIC20G, SIC20G-GRIS-1) or a GTIN.
+  // The count sheets are written with whatever key is printed on the box, so the import resolves it to the product.
+  if (type !== 'SKUS') {
+    const missing = skuCodes.filter((c) => !skuMap.has(c));
+    if (missing.length) {
+      const aliases = await tx.sku_barcodes.findMany({ where: { barcode: { in: [...new Set(missing.flatMap((c) => [c, c.replace(/\s+/g, '_'), c.toUpperCase()]))] } }, include: { sku: { include: { uoms: true } } } });
+      for (const c of missing) {
+        const hit = aliases.find((b) => b.barcode === c || b.barcode === c.replace(/\s+/g, '_') || b.barcode === c.toUpperCase());
+        if (hit) skuMap.set(c, hit.sku);
+      }
+    }
+  }
   const dup = new Set<string>();
   switch (type) {
     case 'SKUS': {

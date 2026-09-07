@@ -89,7 +89,8 @@ describe('A2 — blocked attempts survive the rollback', () => {
     const kinds = await sql<{ action: string }>(`SELECT action FROM audit_logs WHERE action LIKE 'pick.blocked_%' AND entity_id = '${t.body.task.id}' ORDER BY id`);
     expect(kinds.map((k) => k.action)).toEqual(['pick.blocked_wrong_location', 'pick.blocked_wrong_sku', 'pick.blocked_qty_exceeded']);
     // and the KPI sees them
-    const kpi = await sup.get('/kpis');
+    // the KPI ranks the top users by errors: on the shared test DB many earlier pickers exist, so look only at the last minutes
+    const kpi = await sup.get(`/kpis?from=${encodeURIComponent(new Date(Date.now() - 5 * 60_000).toISOString())}`);
     expect(kpi.body.errors_by_user.some((e: any) => e.username === picker.username)).toBe(true);
     await expectReconciled();
   });
