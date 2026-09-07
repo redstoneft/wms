@@ -42,9 +42,9 @@ export const TEMPLATES: Record<ImportType, { columns: string[]; example: string[
     description: 'Genera automáticamente las ubicaciones <ZONA>-<PASILLO>-R##-N##-P##',
   },
   INITIAL_INVENTORY: {
-    columns: ['location_code', 'sku', 'qty', 'uom_code', 'lot', 'expiry_date', 'lpn'],
-    example: ['A-01-R01-N01-P01', 'SKU-0001', '40', 'CASE', '', '', ''],
-    description: 'lpn vacío = se genera un LPN nuevo por fila; mismo valor en varias filas = pallet mixto',
+    columns: ['location_code', 'sku', 'qty', 'uom_code', 'pieces_per_case', 'lot', 'expiry_date', 'lpn'],
+    example: ['A-01-R01-N01-P01', 'SKU-0001', '40', 'CASE', '6', '', '', ''],
+    description: 'uom_code CASE: pieces_per_case = piezas por caja de esa fila (el mismo artículo puede venir con distinto factor de empaque). lpn vacío = se genera un LPN nuevo por fila; mismo valor en varias filas = pallet mixto',
   },
   ORDERS: {
     columns: ['order_number', 'customer_code', 'destination', 'order_date', 'priority', 'sku', 'qty', 'uom_code'],
@@ -175,7 +175,7 @@ const ROW_SCHEMAS: Record<ImportType, z.ZodTypeAny> = {
     pallet_capacity: opt(zIntStr).default(''),
     max_weight_kg: opt(zNumStr).default(''),
   }),
-  INITIAL_INVENTORY: z.object({ location_code: zCodeStr.max(40), sku: zCodeStr, qty: zIntStr, uom_code: opt(zUomStr).default(''), lot: z.string().max(60).default(''), expiry_date: opt(zDateStr).default(''), lpn: z.string().max(30).default('') }),
+  INITIAL_INVENTORY: z.object({ location_code: zCodeStr.max(40), sku: zCodeStr, qty: zIntStr, uom_code: opt(zUomStr).default(''), pieces_per_case: opt(zIntStr).default(''), lot: z.string().max(60).default(''), expiry_date: opt(zDateStr).default(''), lpn: z.string().max(30).default('') }),
   ORDERS: z.object({
     order_number: zCodeStr.max(60),
     customer_code: zCodeStr,
@@ -320,7 +320,12 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
         else if (!['RESERVE', 'PICKING'].includes(loc.location_type)) errors.push({ row: i + 2, column: 'location_code', message: `location ${loc.code} is ${loc.location_type}; initial inventory goes to RESERVE/PICKING` });
         else if (loc.admin_status !== 'ACTIVE') errors.push({ row: i + 2, column: 'location_code', message: `location ${loc.code} is ${loc.admin_status}` });
         const uom = (p.uom_code as string) || 'PIECE';
-        if (s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
+        const ppc = p.pieces_per_case as string;
+        // Packing factor comes from the row when counting cases: the same article ships with different case sizes.
+        if (ppc && uom !== 'CASE') errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case only applies with uom_code = CASE' });
+        else if (ppc && BigInt(ppc) === 0n) errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case must be > 0' });
+        else if (uom === 'CASE' && !ppc && s && !s.uoms.some((u) => u.uom_code === 'CASE')) errors.push({ row: i + 2, column: 'pieces_per_case', message: `sku ${p.sku} has no default pieces per case; fill pieces_per_case` });
+        else if (uom !== 'CASE' && s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
         if (BigInt(p.qty as string) === 0n) errors.push({ row: i + 2, column: 'qty', message: 'qty must be > 0' });
         if (p.lpn) {
           if (!/^PLT-\d{4}-\d{8}$/.test(p.lpn as string) && !/^[A-Za-z0-9_-]{1,30}$/.test(p.lpn as string)) errors.push({ row: i + 2, column: 'lpn', message: 'lpn must be a group key (letters/digits) — real codes are generated' });
@@ -346,7 +351,12 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
         if (!s) errors.push({ row: i + 2, column: 'sku', message: `unknown sku ${p.sku}` });
         else if (!s.is_active) errors.push({ row: i + 2, column: 'sku', message: `sku ${p.sku} is inactive` });
         const uom = (p.uom_code as string) || 'PIECE';
-        if (s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
+        const ppc = p.pieces_per_case as string;
+        // Packing factor comes from the row when counting cases: the same article ships with different case sizes.
+        if (ppc && uom !== 'CASE') errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case only applies with uom_code = CASE' });
+        else if (ppc && BigInt(ppc) === 0n) errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case must be > 0' });
+        else if (uom === 'CASE' && !ppc && s && !s.uoms.some((u) => u.uom_code === 'CASE')) errors.push({ row: i + 2, column: 'pieces_per_case', message: `sku ${p.sku} has no default pieces per case; fill pieces_per_case` });
+        else if (uom !== 'CASE' && s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
         if (BigInt(p.qty as string) === 0n) errors.push({ row: i + 2, column: 'qty', message: 'qty must be > 0' });
         const prev = orderCustomer.get(p.order_number as string);
         if (prev && prev !== p.customer_code) errors.push({ row: i + 2, column: 'customer_code', message: `order ${p.order_number} has two different customers` });
@@ -383,7 +393,7 @@ function isOptionalColumn(type: ImportType, c: string): boolean {
     SUPPLIERS: ['tax_id', 'contact'],
     LOCATIONS: ['zone_code', 'x_m', 'y_m', 'width_m', 'depth_m', 'height_m', 'pallet_capacity', 'max_weight_kg'],
     RACKS: ['positions_per_bay', 'bay_width_m', 'level_height_m', 'depth_m', 'x_m', 'y_m', 'rotation_deg', 'location_type', 'pallet_capacity', 'max_weight_kg'],
-    INITIAL_INVENTORY: ['uom_code', 'lot', 'expiry_date', 'lpn'],
+    INITIAL_INVENTORY: ['uom_code', 'pieces_per_case', 'lot', 'expiry_date', 'lpn'],
     ORDERS: ['destination', 'order_date', 'priority', 'uom_code'],
     PURCHASE_ORDERS: ['expected_date', 'uom_code'],
   };
@@ -423,7 +433,7 @@ type KnownCol =
   | 'sku' | 'description' | 'family' | 'compatibility_group' | 'abc_class' | 'unit_weight_kg' | 'case_qty' | 'pallet_cases' | 'inner_qty' | 'requires_lot' | 'requires_expiry'
   | 'barcode' | 'uom_code' | 'code' | 'name' | 'tax_id' | 'address' | 'contact' | 'location_type' | 'zone_code' | 'x_m' | 'y_m' | 'width_m' | 'depth_m' | 'height_m'
   | 'pallet_capacity' | 'max_weight_kg' | 'aisle_code' | 'rack_code' | 'bays' | 'levels' | 'positions_per_bay' | 'bay_width_m' | 'level_height_m' | 'rotation_deg'
-  | 'location_code' | 'qty' | 'lot' | 'expiry_date' | 'lpn' | 'order_number' | 'customer_code' | 'destination' | 'order_date' | 'priority' | 'po_number' | 'supplier_code' | 'expected_date';
+  | 'location_code' | 'qty' | 'pieces_per_case' | 'lot' | 'expiry_date' | 'lpn' | 'order_number' | 'customer_code' | 'destination' | 'order_date' | 'priority' | 'po_number' | 'supplier_code' | 'expected_date';
 type ParsedRow = Record<KnownCol, string>;
 
 async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Record<string, string>[]): Promise<Record<string, unknown>> {
@@ -552,8 +562,10 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
         const sku = await tx.skus.findUniqueOrThrow({ where: { code: r.sku } });
         const loc = await lockLocationByBarcode(tx, r.location_code.toUpperCase());
         const uom = (r.uom_code || 'PIECE') as UomCode;
-        const uomRow = await tx.sku_uoms.findUniqueOrThrow({ where: { sku_id_uom_code: { sku_id: sku.id, uom_code: uom } } });
-        const base = BigInt(r.qty) * uomRow.base_qty;
+        let factor: bigint;
+        if (uom === 'CASE' && r.pieces_per_case) factor = BigInt(r.pieces_per_case); // packing factor of this row, not the catalogue default
+        else factor = (await tx.sku_uoms.findUniqueOrThrow({ where: { sku_id_uom_code: { sku_id: sku.id, uom_code: uom } } })).base_qty;
+        const base = BigInt(r.qty) * factor;
         let lpnRef = r.lpn ? groups.get(r.lpn) : undefined;
         let lpnRow;
         if (!lpnRef) {
@@ -561,7 +573,7 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
           const occ = await tx.$queryRaw<{ n: bigint }[]>`SELECT count(DISTINCT l.id) AS n FROM lpns l WHERE l.current_location_id = ${loc.id}::uuid`;
           if (Number(occ[0]?.n ?? 0n) >= loc.pallet_capacity) throw new RuleError('LOCATION_FULL', `Location ${loc.code} already holds ${loc.pallet_capacity} pallet(s) (row for SKU ${r.sku})`);
           if (loc.admin_status !== 'ACTIVE' || !loc.is_active) throw new RuleError('LOCATION_BLOCKED', `Location ${loc.code} is ${loc.admin_status}`);
-          lpnRow = await createLpn(tx, ctx, { warehouse_id: loc.warehouse_id, lpn_type: 'STORAGE', location_id: loc.id, lot: r.lot || null, expiry_date: r.expiry_date || null });
+          lpnRow = await createLpn(tx, ctx, { warehouse_id: loc.warehouse_id, lpn_type: 'STORAGE', location_id: loc.id, lot: r.lot || null, expiry_date: r.expiry_date || null, cases_count: uom === 'CASE' ? Number(r.qty) : 0 });
           await tx.lpns.update({ where: { id: lpnRow.id }, data: { status: 'STORED' } });
           lpnRef = { id: lpnRow.id, code: lpnRow.code };
           if (r.lpn) groups.set(r.lpn, lpnRef);
@@ -571,7 +583,7 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
             SELECT id, code, lpn_type, status, warehouse_id, current_location_id, receipt_id, container_id, supplier_id, order_id, shipment_id, cases_count, weight_kg::text AS weight_kg, version FROM lpns WHERE id = ${lpnRef.id}::uuid FOR UPDATE`;
           lpnRow = rows2[0]!;
         }
-        await createInventory(tx, ctx, { movement_type: 'INITIAL_LOAD', to_lpn: lpnRow, sku_id: sku.id, qty: base, uom_code: uom, uom_qty: BigInt(r.qty), status: 'AVAILABLE', location_id: loc.id, reference_type: 'import', reason: 'Initial inventory load' });
+        await createInventory(tx, ctx, { movement_type: 'INITIAL_LOAD', to_lpn: lpnRow, sku_id: sku.id, qty: base, uom_code: uom, uom_qty: BigInt(r.qty), status: 'AVAILABLE', location_id: loc.id, reference_type: 'import', reason: 'Initial inventory load', note: uom === 'CASE' ? `${r.qty} cajas × ${factor} pzas` : undefined });
         movements++;
       }
       return { lpns, movements };

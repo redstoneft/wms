@@ -12,6 +12,7 @@ const GENERIC_HELP: Record<string, Help> = {
   sku: { desc: 'Código WMS del producto o cualquiera de sus alias: clave de SAE tal como viene en la caja o GTIN. Ver pestaña SKUs.', required: true, example: '636570' },
   qty: { desc: 'Cantidad contada, número entero sin decimales, en la unidad indicada en uom_code.', required: true, example: '40' },
   uom_code: { desc: 'Unidad de la cantidad: PIECE (piezas), CASE (cajas), INNER, PALLET. Vacío = PIECE.', required: false, example: 'CASE' },
+  pieces_per_case: { desc: 'Solo con uom_code = CASE: cuántas piezas trae cada caja contada en ESTA fila. Un mismo artículo puede venir con distinto factor de empaque, por eso se escribe aquí y no se toma del catálogo. Si se deja vacío se usa "Piezas por caja" de la pestaña SKUs.', required: false, example: '6' },
   location_code: { desc: 'Código de la ubicación tal como está en su etiqueta, sin el prefijo LOC-. Ver pestaña Ubicaciones.', required: true, example: 'ALM-A-R01-N01-P01' },
   lot: { desc: 'Lote impreso en el producto. Obligatorio solo si el SKU requiere lote (pestaña SKUs).', required: false, example: 'L2409' },
   expiry_date: { desc: 'Caducidad en formato AAAA-MM-DD. Obligatoria solo si el SKU requiere caducidad.', required: false, example: '2027-03-31' },
@@ -81,10 +82,11 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
       data.getCell(r, uomCol + 1).dataValidation = { type: 'list', allowBlank: true, formulae: ['"PIECE,CASE,INNER,PALLET"'], showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Unidad', error: 'Usa PIECE, CASE, INNER o PALLET (o deja vacío = piezas).' };
     }
   }
-  const qtyCol = t.columns.indexOf('qty');
-  if (qtyCol >= 0) {
+  for (const [name, title] of [['qty', 'Cantidad'], ['pieces_per_case', 'Piezas por caja']] as const) {
+    const col = t.columns.indexOf(name);
+    if (col < 0) continue;
     for (let r = 2; r <= DATA_ROWS; r++) {
-      data.getCell(r, qtyCol + 1).dataValidation = { type: 'whole', operator: 'greaterThan', formulae: [0], showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Cantidad', error: 'Número entero mayor que cero.' };
+      data.getCell(r, col + 1).dataValidation = { type: 'whole', operator: 'greaterThan', formulae: [0], showErrorMessage: true, errorStyle: 'stop', errorTitle: title, error: 'Número entero mayor que cero.' };
     }
   }
 
@@ -209,7 +211,7 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
   if (type === 'INITIAL_INVENTORY') {
     notes.push(
       'Cada fila (o grupo de filas con el mismo lpn) crea una tarima real con etiqueta LPN. Imprime esas etiquetas en Etiquetas → LPN y pégalas en la tarima.',
-      'Cuenta en la unidad que indiques: si contaste cajas escribe uom_code = CASE y en qty el número de cajas; el sistema convierte a piezas con la pestaña SKUs.',
+      'Si contaste cajas: uom_code = CASE, qty = número de cajas y pieces_per_case = piezas que trae cada caja de esa fila (el mismo artículo puede venir en cajas de distinto tamaño). Piezas = qty × pieces_per_case.',
       'Una ubicación puede tener varias filas (varios productos). Una tarima mixta = mismo lpn en varias filas y misma ubicación.',
     );
   }

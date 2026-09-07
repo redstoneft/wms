@@ -24,7 +24,7 @@ describe('Excel import template with catalogue sheets', () => {
     const { wb } = await download('INITIAL_INVENTORY');
     expect(wb.worksheets.map((w) => w.name)).toEqual(['INITIAL_INVENTORY', 'SKUs', 'Ubicaciones', 'Instrucciones']);
     const data = wb.worksheets[0]!;
-    expect((data.getRow(1).values as unknown[]).slice(1)).toEqual(['location_code', 'sku', 'qty', 'uom_code', 'lot', 'expiry_date', 'lpn']);
+    expect((data.getRow(1).values as unknown[]).slice(1)).toEqual(['location_code', 'sku', 'qty', 'uom_code', 'pieces_per_case', 'lot', 'expiry_date', 'lpn']);
     let filled = 0;
     data.eachRow((row, i) => {
       if (i > 1 && (row.values as unknown[]).some((v) => v !== null && v !== undefined && String(v) !== '')) filled++;
@@ -54,7 +54,7 @@ describe('Excel import template with catalogue sheets', () => {
     ins.eachRow((row, i) => {
       if (i > 1 && row.getCell(1).value && !String(row.getCell(1).value).startsWith('Paso')) cols.push(String(row.getCell(1).value));
     });
-    expect(cols).toEqual(['location_code', 'sku', 'qty', 'uom_code', 'lot', 'expiry_date', 'lpn']);
+    expect(cols).toEqual(['location_code', 'sku', 'qty', 'uom_code', 'pieces_per_case', 'lot', 'expiry_date', 'lpn']);
   });
 
   it('ORDERS gets Clientes, PURCHASE_ORDERS gets Proveedores, SKUS gets no catalogue of itself', async () => {
@@ -67,7 +67,7 @@ describe('Excel import template with catalogue sheets', () => {
     const { wb } = await download('INITIAL_INVENTORY');
     const loc = await sql<{ code: string }>(`SELECT code FROM locations WHERE is_active AND admin_status = 'ACTIVE' AND rack_id IS NOT NULL ORDER BY code LIMIT 1`);
     const sku = await sql<{ code: string; barcode: string | null }>(`SELECT s.code, (SELECT barcode FROM sku_barcodes b WHERE b.sku_id = s.id AND b.uom_code = 'PIECE' LIMIT 1) AS barcode FROM skus s WHERE s.is_active AND NOT s.requires_lot AND NOT s.requires_expiry ORDER BY s.code LIMIT 1`);
-    wb.worksheets[0]!.addRow([loc[0]!.code, sku[0]!.barcode ?? sku[0]!.code, 5, 'PIECE', '', '', '']);
+    wb.worksheets[0]!.addRow([loc[0]!.code, sku[0]!.barcode ?? sku[0]!.code, 5, 'PIECE', '', '', '', '']);
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     const boundary = 'xxTpl';
     const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="plantilla_initial_inventory.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n`);
@@ -79,5 +79,29 @@ describe('Excel import template with catalogue sheets', () => {
     expect(body.errors).toEqual([]);
     expect(body.ok).toBe(true);
     expect(body.total_rows).toBe(1);
+  });
+
+  it('pieces_per_case: the row packing factor wins over the catalogue and is stored in pieces', async () => {
+    const a = await getApp();
+    const loc = await sql<{ code: string }>(`SELECT l.code FROM locations l WHERE l.is_active AND l.admin_status = 'ACTIVE' AND l.rack_id IS NOT NULL AND l.location_type IN ('RESERVE','PICKING') AND NOT EXISTS (SELECT 1 FROM lpns p WHERE p.current_location_id = l.id) ORDER BY l.code DESC LIMIT 1`);
+    const sku = await sql<{ code: string }>(`SELECT s.code FROM skus s WHERE s.is_active AND NOT s.requires_lot AND NOT s.requires_expiry ORDER BY s.code LIMIT 1`);
+    const send = async (rows: string, mode: 'VALIDATE' | 'APPLY') => {
+      const csv = `location_code,sku,qty,uom_code,pieces_per_case,lot,expiry_date,lpn\n${rows}`;
+      const boundary = 'xxPpc';
+      const payload = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="inv-${Date.now()}-${Math.random()}.csv"\r\nContent-Type: text/csv\r\n\r\n${csv}\r\n--${boundary}--\r\n`;
+      const r = await a.inject({ method: 'POST', url: `/api/imports?type=INITIAL_INVENTORY&mode=${mode}`, headers: { cookie: sup.cookie, 'x-requested-with': 'wms-client', 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
+      return JSON.parse(r.body);
+    };
+    // factor only makes sense for cases
+    const bad = await send(`${loc[0]!.code},${sku[0]!.code},3,PIECE,7,,,`, 'VALIDATE');
+    expect(bad.ok).toBe(false);
+    expect(bad.errors[0].column).toBe('pieces_per_case');
+    // 3 cases × 7 pieces each = 21 pieces, whatever the catalogue says
+    const ok = await send(`${loc[0]!.code},${sku[0]!.code},3,CASE,7,,,`, 'APPLY');
+    expect(ok.status).toBe('APPLIED');
+    const mv = await sql<{ qty: bigint; uom_code: string; uom_qty: bigint }>(`SELECT m.qty, m.uom_code, m.uom_qty FROM inventory_movements m JOIN skus s ON s.id = m.sku_id JOIN locations l ON l.id = m.to_location_id WHERE s.code = '${sku[0]!.code}' AND l.code = '${loc[0]!.code}' AND m.movement_type = 'INITIAL_LOAD' ORDER BY m.id DESC LIMIT 1`);
+    expect(mv[0]!.qty).toBe(21n);
+    expect(mv[0]!.uom_code).toBe('CASE');
+    expect(mv[0]!.uom_qty).toBe(3n);
   });
 });

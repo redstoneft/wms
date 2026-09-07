@@ -21,6 +21,7 @@ El sistema solo lee la primera pestaña. Las demás son de consulta: no se borra
 | `sku` | Sí | Clave de SAE tal como viene en la caja, GTIN o Código WMS. Cualquiera de la pestaña SKUs | `636570` |
 | `qty` | Sí | Cantidad contada, entero, en la unidad de `uom_code` | `40` |
 | `uom_code` | No | `PIECE` piezas (vacío = piezas), `CASE` cajas, `INNER`, `PALLET` | `CASE` |
+| `pieces_per_case` | Si `CASE` | Piezas que trae cada caja contada **en esa fila**. El mismo artículo puede venir con distinto factor de empaque, por eso se escribe aquí. Vacío = se usa "Piezas por caja" del catálogo | `6` |
 | `lot` | Según SKU | Lote impreso en el producto; obligatorio si la pestaña SKUs dice "Requiere lote = SÍ" | `L2409` |
 | `expiry_date` | Según SKU | Caducidad `AAAA-MM-DD`; obligatoria si "Requiere caducidad = SÍ" | `2027-03-31` |
 | `lpn` | No | Nombre de la tarima. Vacío = una tarima nueva por fila. El mismo texto en varias filas = tarima mixta | `TARIMA-07` |
@@ -28,7 +29,7 @@ El sistema solo lee la primera pestaña. Las demás son de consulta: no se borra
 Reglas:
 
 * No mover ni renombrar los encabezados de la fila 1. Sin filas vacías intermedias.
-* `qty` sin decimales, sin comas ni letras. Si contaste cajas, `uom_code = CASE` y `qty` = número de cajas; el WMS convierte a piezas con "Piezas por caja" de la pestaña SKUs.
+* `qty` sin decimales, sin comas ni letras. Si contaste cajas: `uom_code = CASE`, `qty` = número de cajas y `pieces_per_case` = piezas por caja de esa fila. Piezas guardadas = `qty × pieces_per_case`. Si el mismo artículo está en cajas de 6 y en cajas de 12, son dos filas.
 * Las celdas de `sku`, `location_code`, `lot` y `lpn` están en formato texto para que Excel no quite ceros ni convierta a número. No cambiar el formato de la columna.
 * Una ubicación puede tener varias filas (varios productos en el mismo hueco). Cada fila, o cada grupo con el mismo `lpn`, se convierte en una tarima real con etiqueta LPN.
 
@@ -61,7 +62,8 @@ Las listas desplegables de `location_code` y `uom_code` sí bloquean valores inc
 | `unknown sku` | La clave no está en ninguna pestaña SKUs ni alias | Buscar en SKUs; si no existe, avisar |
 | `must be a positive integer` | `qty` con decimales, comas o texto | Solo números enteros |
 | `sku X requires lot` / `requires expiry` | El SKU exige lote o caducidad | Llenar `lot` o `expiry_date` (formato `AAAA-MM-DD`) |
-| `sku X has no UoM CASE` | Ese producto no tiene definidas cajas | Contar en piezas (`PIECE`) o pedir que se capture "Piezas por caja" |
+| `sku X has no default pieces per case; fill pieces_per_case` | Contaste cajas y el catálogo no tiene factor para ese producto | Escribir `pieces_per_case` en la fila |
+| `pieces_per_case only applies with uom_code = CASE` | Llenaste piezas por caja pero la unidad es piezas | Poner `uom_code = CASE` si contaste cajas, o borrar `pieces_per_case` |
 | `must be YYYY-MM-DD` | Caducidad con otro formato o Excel la volvió fecha | Escribir `2027-03-31` con la columna en formato texto |
 
 ## 6. Antes de aplicar
