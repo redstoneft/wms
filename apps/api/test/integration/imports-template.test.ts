@@ -1,11 +1,13 @@
 // Excel import template: data sheet first (header only) + catalogue sheets the person filling it needs.
 import ExcelJS from 'exceljs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { closeApp, getApp, sql, userWithRoles, type Client } from '../helpers.js';
+import { closeApp, getApp, makeFixture, sql, userWithRoles, type Client, type Fixture } from '../helpers.js';
 
 let sup: Client;
+let f: Fixture;
 beforeAll(async () => {
   sup = await userWithRoles('tplsup', ['SUPERVISOR']);
+  f = await makeFixture({ skus: 2 }); // own SKUs/locations: never load inventory onto catalogue SKUs other suites count on
 });
 afterAll(closeApp);
 
@@ -65,9 +67,7 @@ describe('Excel import template with catalogue sheets', () => {
 
   it('a filled template (typed with a SAE alias) validates through the normal import, ignoring the catalogue sheets', async () => {
     const { wb } = await download('INITIAL_INVENTORY');
-    const loc = await sql<{ code: string }>(`SELECT code FROM locations WHERE is_active AND admin_status = 'ACTIVE' AND rack_id IS NOT NULL ORDER BY code LIMIT 1`);
-    const sku = await sql<{ code: string; barcode: string | null }>(`SELECT s.code, (SELECT barcode FROM sku_barcodes b WHERE b.sku_id = s.id AND b.uom_code = 'PIECE' LIMIT 1) AS barcode FROM skus s WHERE s.is_active AND NOT s.requires_lot AND NOT s.requires_expiry ORDER BY s.code LIMIT 1`);
-    wb.worksheets[0]!.addRow([loc[0]!.code, sku[0]!.barcode ?? sku[0]!.code, 5, 'PIECE', '', '', '', '']);
+    wb.worksheets[0]!.addRow([f.reserve[0]!.code, f.skus[0]!.piece_barcode, 5, 'PIECE', '', '', '', '']); // typed with the alias barcode, not the WMS code
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     const boundary = 'xxTpl';
     const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="plantilla_initial_inventory.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n`);
@@ -83,8 +83,8 @@ describe('Excel import template with catalogue sheets', () => {
 
   it('pieces_per_case: the row packing factor wins over the catalogue and is stored in pieces', async () => {
     const a = await getApp();
-    const loc = await sql<{ code: string }>(`SELECT l.code FROM locations l WHERE l.is_active AND l.admin_status = 'ACTIVE' AND l.rack_id IS NOT NULL AND l.location_type IN ('RESERVE','PICKING') AND NOT EXISTS (SELECT 1 FROM lpns p WHERE p.current_location_id = l.id) ORDER BY l.code DESC LIMIT 1`);
-    const sku = await sql<{ code: string }>(`SELECT s.code FROM skus s WHERE s.is_active AND NOT s.requires_lot AND NOT s.requires_expiry ORDER BY s.code LIMIT 1`);
+    const loc = [{ code: f.reserve[1]!.code }];
+    const sku = [{ code: f.skus[1]!.code }];
     const send = async (rows: string, mode: 'VALIDATE' | 'APPLY') => {
       const csv = `location_code,sku,qty,uom_code,pieces_per_case,lot,expiry_date,lpn\n${rows}`;
       const boundary = 'xxPpc';
