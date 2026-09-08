@@ -1169,6 +1169,7 @@ model assembly_orders {
   scrap_reason        String?
   incident_id         String?  @db.Uuid
   notes               String?
+  mode                String   @default("ASSEMBLY") @db.VarChar(10) // ASSEMBLY (component → other SKU) | REPACK (same SKU, new packaging)
   status              String   @default("COMPLETED") @db.VarChar(20)
   created_by          String   @db.Uuid
   created_at          DateTime @default(now()) @db.Timestamptz(6)

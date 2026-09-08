@@ -99,14 +99,11 @@ describe('assembly orders (armado)', () => {
     expect(left[0]!.t).toBe(144n);
   });
 
-  it('rejects: more than available, same SKU in and out, a rack position as station, and roles without the permission', async () => {
+  it('rejects: more than available, a rack position as station, and roles without the permission', async () => {
     const body = await storedPallet(f, BODY, f.reserve[3]!.id, 24n);
     const tooMany = await sup.post('/assembly', { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 4, pieces_per_case: 12 }] } }, idem());
     expect(tooMany.status).toBe(422);
     expect(tooMany.body.error).toBe('INSUFFICIENT_INVENTORY');
-    const same = await sup.post('/assembly', { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output: { sku_code: f.skus[BODY]!.code, pallets: [{ cases: 2, pieces_per_case: 12 }] } }, idem());
-    expect(same.status).toBe(422);
-    expect(same.body.error).toBe('SAME_SKU');
     const rack = await sup.post('/assembly', { station_barcode: f.reserve[4]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 2, pieces_per_case: 12 }] } }, idem());
     expect(rack.status).toBe(422);
     expect(rack.body.error).toBe('STATION_IS_RACK');
@@ -114,5 +111,27 @@ describe('assembly orders (armado)', () => {
     expect(forbidden.status).toBe(403);
     const untouched = await sql<{ t: bigint | null }>(`SELECT COALESCE(sum(qty),0)::bigint AS t FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${body.code}'`);
     expect(untouched[0]!.t).toBe(24n);
+  });
+
+  it('REPACK: bodies and assembled pans share the SKU — blocked bodies (so picking never takes them) become 2 available pallets of cases of 12; stock unchanged', async () => {
+    const bodies = await storedPallet(f, 2, f.reserve[5]!.id, 24n); // one master of 24, same SAE key as the finished pan
+    const before = await skuTotal(f.skus[2]!.id);
+    const blk = await sup.post('/inventory/status', { lpn_code: bodies.code, action: 'BLOCK', reason: 'cuerpos sin armar: no surtir' }, idem());
+    expect(blk.status).toBe(200);
+    const r = await sup.post(
+      '/assembly',
+      { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: bodies.code, sku_code: f.skus[2]!.code, qty: 24 }], output: { sku_code: f.skus[2]!.code, pallets: [{ cases: 1, pieces_per_case: 12 }, { cases: 1, pieces_per_case: 12 }] } },
+      idem(),
+    );
+    expect(r.status).toBe(201);
+    expect(r.body.mode).toBe('REPACK');
+    expect(r.body.produced).toHaveLength(2);
+    expect(r.body.consumed[0].lpn_status).toBe('CONSUMED');
+    expect(await skuTotal(f.skus[2]!.id)).toBe(before); // same SKU: nothing created or lost
+    const avail = await sql<{ t: bigint | null }>(`SELECT COALESCE(sum(b.qty),0)::bigint AS t FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = ANY($1::text[]) AND b.status = 'AVAILABLE'`, [r.body.produced.map((p: { lpn: string }) => p.lpn)]);
+    expect(avail[0]!.t).toBe(24n);
+    const outMv = await sql<{ from_status: string; qty: bigint }>(`SELECT from_status, qty FROM inventory_movements WHERE reference_id = '${r.body.id}' AND movement_type = 'ASSEMBLY_OUT'`);
+    expect(outMv).toEqual([{ from_status: 'BLOCKED', qty: 24n }]);
+    await expectReconciled();
   });
 });

@@ -54,8 +54,15 @@ export default function AssemblyPage() {
     if (!code) return;
     try {
       const d = await inventoryApi.lpn(code);
-      const contents = d.balances.filter((b) => b.status === 'AVAILABLE' && BigInt(b.qty) > 0n).map((b) => ({ sku_code: b.sku.code, description: b.sku.description, qty: String(b.qty) }));
-      setInputs((rows) => rows.map((r, i) => (i === idx ? { ...r, lpn_code: code, contents, sku_code: contents.length === 1 ? contents[0]!.sku_code : r.sku_code, qty: contents.length === 1 && !r.qty ? contents[0]!.qty : r.qty, error: contents.length ? undefined : 'El LPN no tiene inventario disponible' } : r)));
+      const bySku = new Map<string, { sku_code: string; description: string; qty: bigint }>();
+      for (const b of d.balances) {
+        if ((b.status !== 'AVAILABLE' && b.status !== 'BLOCKED') || BigInt(b.qty) <= 0n) continue; // blocked = bodies waiting for assembly
+        const cur = bySku.get(b.sku.code) ?? { sku_code: b.sku.code, description: b.sku.description, qty: 0n };
+        cur.qty += BigInt(b.qty);
+        bySku.set(b.sku.code, cur);
+      }
+      const contents = [...bySku.values()].map((c) => ({ ...c, qty: c.qty.toString() }));
+      setInputs((rows) => rows.map((r, i) => (i === idx ? { ...r, lpn_code: code, contents, sku_code: contents.length === 1 ? contents[0]!.sku_code : r.sku_code, qty: contents.length === 1 && !r.qty ? contents[0]!.qty : r.qty, error: contents.length ? undefined : 'El LPN no tiene inventario disponible ni bloqueado' } : r)));
     } catch (e) {
       setInputs((rows) => rows.map((r, i) => (i === idx ? { ...r, contents: undefined, error: e instanceof Error ? e.message : 'LPN no encontrado' } : r)));
     }
@@ -114,7 +121,7 @@ export default function AssemblyPage() {
 
   return (
     <div>
-      <PageHeader title="Armado" subtitle="Convierte insumos (por ejemplo cuerpos de sartén en master de 24) en producto terminado (sartenes armados en cajas de 12). Las tarimas de entrada se consumen y nacen tarimas nuevas con su etiqueta LPN y tarea de acomodo." />
+      <PageHeader title="Armado" subtitle="Convierte insumos (cuerpos de sartén en master de 24) en producto terminado (sartenes armados en cajas de 12). Si el cuerpo y el sartén usan el mismo código, es un reempaque: la existencia no cambia, solo el empaque y el número de tarimas. Las tarimas de entrada se consumen y nacen tarimas nuevas con su etiqueta LPN y tarea de acomodo." />
       <div className="grid gap-4 xl:grid-cols-5">
         <Card title="1 · Estación y entradas" className="xl:col-span-3">
           <div className="grid gap-3">
@@ -173,6 +180,7 @@ export default function AssemblyPage() {
             {outInfo && (
               <div className="text-xs text-slate-600">
                 <b>{outInfo.code}</b> · {outInfo.description}
+                {inputs.some((i) => i.sku_code === outInfo.code) && <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 font-semibold text-sky-800">mismo código: reempaque</span>}
                 {outInfo.requires_lot && <span className="ml-2 text-amber-700">requiere lote</span>}
                 {outInfo.requires_expiry && <span className="ml-2 text-amber-700">requiere caducidad</span>}
               </div>
@@ -285,6 +293,7 @@ export default function AssemblyPage() {
           columns={[
             { key: 'd', header: 'Fecha', render: (r) => fmtDateTime(r.created_at) },
             { key: 'c', header: 'Orden', render: (r) => <span className="font-mono">{r.code}</span> },
+            { key: 'm', header: 'Tipo', render: (r) => (r.mode === 'REPACK' ? 'Reempaque' : 'Armado') },
             { key: 'i', header: 'Insumos', render: (r) => r.inputs.map((i) => `${i.lpn.code} · ${i.sku.code} · ${fmtQty(i.qty)}`).join(' | ') },
             { key: 'o', header: 'Producto', render: (r) => `${r.output_sku.code} · ${r.output_sku.description}` },
             { key: 'q', header: 'Pzas', render: (r) => fmtQty(r.output_qty), align: 'right' },

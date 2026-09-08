@@ -64,8 +64,15 @@ function Flow() {
     setBusy(true);
     try {
       const d = await inventoryApi.lpn(code);
-      const avail = d.balances.filter((b) => b.status === 'AVAILABLE' && BigInt(b.qty) > 0n).map((b) => ({ sku_code: b.sku.code, description: b.sku.description, qty: String(b.qty) }));
-      if (!avail.length) throw new Error('El pallet no tiene inventario disponible');
+      const bySku = new Map<string, { sku_code: string; description: string; qty: bigint }>();
+      for (const b of d.balances) {
+        if ((b.status !== 'AVAILABLE' && b.status !== 'BLOCKED') || BigInt(b.qty) <= 0n) continue; // blocked = bodies waiting for assembly
+        const cur = bySku.get(b.sku.code) ?? { sku_code: b.sku.code, description: b.sku.description, qty: 0n };
+        cur.qty += BigInt(b.qty);
+        bySku.set(b.sku.code, cur);
+      }
+      const avail = [...bySku.values()].map((c) => ({ ...c, qty: c.qty.toString() }));
+      if (!avail.length) throw new Error('El pallet no tiene inventario disponible ni bloqueado');
       if (avail.length === 1) {
         setDraft({ lpn_code: d.code, sku_code: avail[0]!.sku_code, description: avail[0]!.description, available: avail[0]!.qty, qty: avail[0]!.qty });
         setStep('IN_QTY');
@@ -85,11 +92,10 @@ function Flow() {
     setBusy(true);
     try {
       const r = await masterdataApi.skuByBarcode(code);
-      if (lines.some((l) => l.sku_code === r.sku.code)) throw new Error('El producto terminado no puede ser el mismo insumo');
       const caseUom = r.uoms.find((u) => u.uom_code === 'CASE');
       setOut({ code: r.sku.code, description: r.sku.description, requires_lot: r.sku.requires_lot, requires_expiry: r.sku.requires_expiry, case_qty: caseUom ? String(caseUom.base_qty) : '' });
       if (caseUom && !ppc) setPpc(String(caseUom.base_qty));
-      wm.ok(`${r.sku.code} · ${r.sku.description}`);
+      wm.ok(lines.every((l) => l.sku_code === r.sku.code) ? `${r.sku.code} · MISMO CÓDIGO: REEMPAQUE` : `${r.sku.code} · ${r.sku.description}`);
       setStep('PALLETS');
     } catch (e) {
       wm.fail(e);

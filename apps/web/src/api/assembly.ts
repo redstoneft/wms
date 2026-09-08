@@ -16,6 +16,7 @@ export interface AssemblyOrder {
   id: string;
   code: string;
   status: string;
+  mode: 'ASSEMBLY' | 'REPACK';
   output_qty: string;
   consumed_qty: string;
   scrap_qty: string;

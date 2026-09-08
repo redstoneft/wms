@@ -1,4 +1,7 @@
 // Assembly orders: consume components from existing pallets and produce the finished product onto NEW pallets.
+// REPACK mode: input and output are the SAME SKU (bodies and assembled pans share the SAE key) — the stock does not change,
+// only the packaging (masters of 24 → cases of 12) and the number of pallets. Unassembled bodies may be kept BLOCKED so
+// picking never allocates them; the assembly consumes from AVAILABLE first and then from BLOCKED.
 // Example: pan bodies arrive in masters of 24 on one pallet; after assembly the pans are packed 12 per case and
 // fill three pallets. One pallet disappears (CONSUMED), three are born at the assembly station with put-away tasks.
 import type { AssemblyCompleteInput } from '@wms/shared';
@@ -6,6 +9,7 @@ import type { Tx } from '../../db.js';
 import { NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
+import type { InventoryStatus } from '@wms/shared';
 import { createInventory, createLpn, lockLocationByBarcode, lockLpnByCode, lpnContents, removeInventory, setLpnStatus } from '../../inventory/ledger.js';
 import { createIncident } from '../incidents/service.js';
 import { createPutawayTask } from '../putaway/service.js';
@@ -39,8 +43,10 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
   const outputQty = input.output.pallets.reduce((acc, p) => acc + BigInt(p.cases) * BigInt(p.pieces_per_case), 0n);
   const scrapQty = input.scrap ? BigInt(input.scrap.qty) : 0n;
   const consumedQty = input.inputs.reduce((acc, i) => acc + BigInt(i.qty), 0n);
-  const inputSkus = new Set(input.inputs.map((i) => i.sku_code));
-  // Single component (body → pan) is 1:1: every consumed piece is either a finished piece or scrap. Kits (several components) skip the check.
+  const inputSkuRows = await Promise.all([...new Set(input.inputs.map((i) => i.sku_code))].map((c) => resolveSku(tx, c)));
+  const inputSkus = new Set(inputSkuRows.map((s) => s.id));
+  const mode = inputSkus.size === 1 && inputSkus.has(outSku.id) ? 'REPACK' : 'ASSEMBLY';
+  // Single component (body → pan, or the same SKU re-packed) is 1:1: every consumed piece is either a finished piece or scrap. Kits skip the check.
   if (inputSkus.size === 1 && consumedQty !== outputQty + scrapQty) {
     throw new RuleError('ASSEMBLY_UNBALANCED', `Consumed ${consumedQty} pieces but produced ${outputQty} + scrap ${scrapQty}; register the difference as scrap with a reason`, {
       consumed: consumedQty.toString(),
@@ -48,7 +54,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
       scrap: scrapQty.toString(),
     });
   }
-  for (const i of input.inputs) if (i.sku_code === input.output.sku_code) throw new RuleError('SAME_SKU', 'Input and output SKU cannot be the same product');
+  if (mode === 'ASSEMBLY' && inputSkus.has(outSku.id)) throw new RuleError('MIXED_SAME_SKU', 'The finished product cannot also be one of several components; a same-SKU repack takes a single input SKU');
 
   const code = (await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('ASM', 'assembly_seq') AS n`)[0]!.n;
   const order = await tx.assembly_orders.create({
@@ -62,6 +68,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
       scrap_qty: scrapQty,
       scrap_reason: input.scrap?.reason ?? null,
       notes: input.notes ?? null,
+      mode,
       created_by: ctx.userId,
     },
   });
@@ -75,17 +82,30 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
     if (lpn.warehouse_id !== station.warehouse_id) throw new RuleError('WRONG_WAREHOUSE', `LPN ${lpn.code} belongs to another warehouse`);
     const sku = await resolveSku(tx, line.sku_code);
     if (idx === 0) mainInputSkuId = sku.id;
-    await removeInventory(tx, ctx, {
-      movement_type: 'ASSEMBLY_OUT',
-      from_lpn: lpn,
-      sku_id: sku.id,
-      qty: BigInt(line.qty),
-      status: 'AVAILABLE',
-      reference_type: 'assembly_order',
-      reference_id: order.id,
-      reason: `Armado ${code}`,
-      note: `→ ${outSku.code}`,
-    });
+    // AVAILABLE first, then BLOCKED (pallets of unassembled bodies are kept blocked so orders never allocate them)
+    const held = (await lpnContents(tx, lpn.id)).filter((c) => c.sku_id === sku.id);
+    let need = BigInt(line.qty);
+    for (const st of ['AVAILABLE', 'BLOCKED'] as InventoryStatus[]) {
+      const have = held.find((c) => c.status === st)?.qty ?? 0n;
+      const take = have < need ? have : need;
+      if (take <= 0n) continue;
+      await removeInventory(tx, ctx, {
+        movement_type: 'ASSEMBLY_OUT',
+        from_lpn: lpn,
+        sku_id: sku.id,
+        qty: take,
+        status: st,
+        reference_type: 'assembly_order',
+        reference_id: order.id,
+        reason: `Armado ${code}`,
+        note: mode === 'REPACK' ? 'reempaque (mismo SKU)' : `→ ${outSku.code}`,
+      });
+      need -= take;
+    }
+    if (need > 0n) {
+      const avail = held.filter((c) => c.status === 'AVAILABLE' || c.status === 'BLOCKED').reduce((a, c) => a + c.qty, 0n);
+      throw new RuleError('INSUFFICIENT_INVENTORY', `LPN ${lpn.code} has ${avail} pieces of ${sku.code} available/blocked, requested ${line.qty}`, { lpn: lpn.code, available: avail.toString(), requested: String(line.qty) });
+    }
     await tx.assembly_inputs.create({ data: { order_id: order.id, lpn_id: lpn.id, sku_id: sku.id, qty: BigInt(line.qty) } });
     const left = await lpnContents(tx, lpn.id);
     let status = lpn.status;
@@ -152,7 +172,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
     action: 'assembly.completed',
     entity_type: 'assembly_order',
     entity_id: order.id,
-    after: { code, station: station.code, output_sku: outSku.code, output_qty: outputQty.toString(), consumed_qty: consumedQty.toString(), scrap_qty: scrapQty.toString(), consumed, produced: produced.map((p) => p.lpn), incident_id: incidentId },
+    after: { code, mode, station: station.code, output_sku: outSku.code, output_qty: outputQty.toString(), consumed_qty: consumedQty.toString(), scrap_qty: scrapQty.toString(), consumed, produced: produced.map((p) => p.lpn), incident_id: incidentId },
   });
 
   const full = await tx.assembly_orders.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });

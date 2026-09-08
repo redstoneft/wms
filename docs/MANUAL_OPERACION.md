@@ -78,7 +78,9 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 ## ARMADO (insumo → producto terminado)
 
-Cuando un insumo se transforma en otro producto (cuerpos de sartén en master de 24 → sartenes armados en cajas de 12) el pallet de insumo **se consume** y **nacen pallets nuevos**, aunque salgan más tarimas de las que entraron.
+Cuando un insumo se transforma en producto terminado (cuerpos de sartén en master de 24 → sartenes armados en cajas de 12) el pallet de insumo **se consume** y **nacen pallets nuevos**, aunque salgan más tarimas de las que entraron. Si el cuerpo y el sartén armado **usan la misma clave** (caso actual), el sistema lo registra como **reempaque**: la existencia no cambia, solo el empaque y el número de tarimas.
+
+**Cuerpos sin armar**: al recibirlos, bloquee el pallet (`Inventario → LPN → Bloquear`, motivo "sin armar") para que el surtido nunca lo tome como producto terminado. El armado consume pallets bloqueados sin necesidad de desbloquearlos; las tarimas nuevas nacen disponibles.
 
 1. Lleve el pallet de insumo a la **estación de armado** (zona `ARM`) con un traslado normal.
 2. `Almacén → Armado`: escanee la **estación**, luego cada **LPN de insumo** y las **piezas consumidas** (puede agregar varios: mangos, tornillería). "Listo, sin más insumos".
