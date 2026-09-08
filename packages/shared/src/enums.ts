@@ -66,6 +66,8 @@ export const MOVEMENT_TYPES = [
   'LPN_SPLIT',
   'LPN_CONSOLIDATE',
   'INITIAL_LOAD',
+  'ASSEMBLY_OUT', // components consumed by an assembly order
+  'ASSEMBLY_IN', // finished product produced by an assembly order
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
@@ -76,6 +78,7 @@ export const INBOUND_MOVEMENTS: readonly MovementType[] = [
   'COUNT_ADJUST_IN',
   'RETURN_RECEIPT',
   'INITIAL_LOAD',
+  'ASSEMBLY_IN',
 ];
 /** Movements that remove inventory (to = nothing). */
 export const OUTBOUND_MOVEMENTS: readonly MovementType[] = [
@@ -83,6 +86,7 @@ export const OUTBOUND_MOVEMENTS: readonly MovementType[] = [
   'ADJUST_OUT',
   'COUNT_ADJUST_OUT',
   'SCRAP',
+  'ASSEMBLY_OUT',
 ];
 
 export const LOCATION_TYPES = [

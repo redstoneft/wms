@@ -76,6 +76,18 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 2. Al llegar, escanee el **LPN** y la **ubicación** → completado. Destino equivocado = rojo. Si no puede completar, pida cancelar (el pallet vuelve a su origen).
 3. Reabasto: `Almacén → Reabasto` muestra las caras de picking bajas; **INICIAR** indica qué pallet de reserva llevar; el resto es igual a una transferencia.
 
+## ARMADO (insumo → producto terminado)
+
+Cuando un insumo se transforma en otro producto (cuerpos de sartén en master de 24 → sartenes armados en cajas de 12) el pallet de insumo **se consume** y **nacen pallets nuevos**, aunque salgan más tarimas de las que entraron.
+
+1. Lleve el pallet de insumo a la **estación de armado** (zona `ARM`) con un traslado normal.
+2. `Almacén → Armado`: escanee la **estación**, luego cada **LPN de insumo** y las **piezas consumidas** (puede agregar varios: mangos, tornillería). "Listo, sin más insumos".
+3. Escanee el **producto terminado** (caja, clave SAE o GTIN) y capture **tarimas**, **cajas por tarima** y **piezas por caja** de este armado (el factor de empaque es de la corrida, no del catálogo).
+4. **Merma**: si se consumieron más piezas de las que salieron, capture la diferencia y el motivo; queda como incidencia. Con un solo insumo la cuenta debe cuadrar: consumido = producido + merma.
+5. Confirme. El sistema crea los LPN nuevos: **imprima y pegue** cada etiqueta en su tarima. Cada tarima trae ya su **tarea de acomodo**: en `Ubicar`, escanee el LPN y llévelo a donde indique.
+
+El pallet de insumo que quedó en cero aparece como `CONSUMIDO`; si sobraron piezas, sigue disponible en su ubicación.
+
 ## INCIDENCIAS
 
 Cualquier operador puede **reportar** (`Incidencias → Nueva`): tipo (faltante, sobrante, SKU incorrecto, dañado, diferencia, ubicación incorrecta, etiqueta, pallet perdido, error de surtido/carga, otro), descripción, foto. Ponga siempre el LPN o la ubicación. El supervisor asigna y resuelve.

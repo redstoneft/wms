@@ -20,6 +20,7 @@ const ReceiptDetailPage = lazy(() => import('./pages/inbound/ReceiptDetailPage')
 const InventoryPage = lazy(() => import('./pages/inventory/InventoryPage'));
 const LpnDetailPage = lazy(() => import('./pages/inventory/LpnDetailPage'));
 const StoragePage = lazy(() => import('./pages/StoragePage'));
+const AssemblyPage = lazy(() => import('./pages/AssemblyPage'));
 const OrdersPage = lazy(() => import('./pages/orders/OrdersPage'));
 const OrderDetailPage = lazy(() => import('./pages/orders/OrderDetailPage'));
 const PickingPage = lazy(() => import('./pages/orders/PickingPage'));
@@ -41,6 +42,7 @@ const WmHomePage = lazy(() => import('./wm/WmHomePage'));
 const WmReceivePage = lazy(() => import('./wm/WmReceivePage'));
 const WmPutawayPage = lazy(() => import('./wm/WmPutawayPage'));
 const WmTransferPage = lazy(() => import('./wm/WmTransferPage'));
+const WmAssemblyPage = lazy(() => import('./wm/WmAssemblyPage'));
 const WmReplenishPage = lazy(() => import('./wm/WmReplenishPage'));
 const WmCountPage = lazy(() => import('./wm/WmCountPage'));
 const WmPickPage = lazy(() => import('./wm/WmPickPage'));
@@ -124,6 +126,7 @@ export default function App() {
         <Route path="/inventory" element={<Office perms={['inventory.read']}><InventoryPage /></Office>} />
         <Route path="/inventory/lpn/:code" element={<Office perms={['inventory.read', 'lpn.read']}><LpnDetailPage /></Office>} />
         <Route path="/storage" element={<Office perms={['putaway.execute', 'transfers.execute', 'replenishment.execute', 'counts.manage', 'counts.execute']}><StoragePage /></Office>} />
+        <Route path="/assembly" element={<Office perms={['assembly.execute']}><AssemblyPage /></Office>} />
         <Route path="/orders" element={<Office perms={['orders.read']}><OrdersPage /></Office>} />
         <Route path="/orders/:id" element={<Office perms={['orders.read']}><OrderDetailPage /></Office>} />
         <Route path="/picking" element={<Office perms={['picking.assign', 'picking.execute']}><PickingPage /></Office>} />
@@ -148,6 +151,7 @@ export default function App() {
         <Route path="/wm/receive" element={<Wm perms={['receiving.scan']}><WmReceivePage /></Wm>} />
         <Route path="/wm/putaway" element={<Wm perms={['putaway.execute']}><WmPutawayPage /></Wm>} />
         <Route path="/wm/transfer" element={<Wm perms={['transfers.execute']}><WmTransferPage /></Wm>} />
+        <Route path="/wm/assembly" element={<Wm perms={['assembly.execute']}><WmAssemblyPage /></Wm>} />
         <Route path="/wm/replenish" element={<Wm perms={['replenishment.execute']}><WmReplenishPage /></Wm>} />
         <Route path="/wm/count" element={<Wm perms={['counts.execute']}><WmCountPage /></Wm>} />
         <Route path="/wm/pick" element={<Wm perms={['picking.execute']}><WmPickPage /></Wm>} />

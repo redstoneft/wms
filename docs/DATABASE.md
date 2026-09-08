@@ -38,7 +38,7 @@ Tipos de ubicación: `RESERVE, PICKING, RECEIVING, STAGING, SHIPPING, QUARANTINE
 `lpns` (código `PLT-YYYY-NNNNNNNN` desde `lpn_seq` sin ciclo — jamás se reutiliza; `DELETE` prohibido por trigger), `inventory_balances`, `inventory_movements`.
 
 ### Tareas
-`putaway_tasks` (ubicación sugerida + `explanation` JSON del motor de slotting + override), `slotting_rules`, `transfers`, `replenishment_rules`, `replenishment_tasks`, `count_tasks` + `count_lines` (snapshot ciego, recuento, aprobación, movimiento de ajuste).
+`assembly_orders` + `assembly_inputs` + `assembly_outputs` (armado: insumos consumidos con `ASSEMBLY_OUT`, tarimas producidas con `ASSEMBLY_IN`, factor de empaque por tarima, merma → incidencia), `putaway_tasks` (ubicación sugerida + `explanation` JSON del motor de slotting + override), `slotting_rules`, `transfers`, `replenishment_rules`, `replenishment_tasks`, `count_tasks` + `count_lines` (snapshot ciego, recuento, aprobación, movimiento de ajuste).
 
 ### Outbound
 `orders` + `order_lines` (`required/allocated/picked/verified/loaded` separados, con CHECKs `picked ≤ required`, `verified ≤ picked`, `loaded ≤ verified`), `allocations`, `pick_tasks` + `pick_task_lines` (máquina de estados de escaneo), `staging_assignments`, `verifications` + `verification_lines`, `shipments` (con `release_check` persistido).

@@ -34,6 +34,7 @@ export const PERMISSIONS = {
   'counts.manage': 'Create cycle count tasks',
   'counts.execute': 'Perform blind counts',
   'counts.approve': 'Approve count adjustments (supervisor)',
+  'assembly.execute': 'Assembly orders: convert components into finished product (new pallets)',
   // outbound
   'orders.read': 'View orders',
   'orders.manage': 'Create/import/accept/cancel orders',
@@ -83,6 +84,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'receiving.close',
     'labels.print',
     'returns.manage',
+    'assembly.execute',
   ],
   FORKLIFT: [
     ...OPERATOR_COMMON,
@@ -110,6 +112,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'labels.reprint',
     'imports.run',
     'masterdata.manage',
+    'assembly.execute',
   ],
 };
 

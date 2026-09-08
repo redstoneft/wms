@@ -35,6 +35,7 @@ export const NAV: NavGroup[] = [
     items: [
       { to: '/inventory', label: 'Inventario', icon: '☰', perms: ['inventory.read'] },
       { to: '/storage', label: 'Almacenaje', icon: '⇄', perms: ['putaway.execute', 'transfers.execute', 'replenishment.execute', 'counts.manage', 'counts.execute'] },
+      { to: '/assembly', label: 'Armado', icon: '⚒', perms: ['assembly.execute'] },
       { to: '/incidents', label: 'Incidencias', icon: '⚠', perms: ['incidents.read'] },
     ],
   },
@@ -73,6 +74,7 @@ export const WM_NAV: NavItem[] = [
   { to: '/wm/receive', label: 'Recibir', icon: '⇩', perms: ['receiving.scan'], wm: true },
   { to: '/wm/putaway', label: 'Ubicar', icon: '⇲', perms: ['putaway.execute'], wm: true },
   { to: '/wm/transfer', label: 'Traslados', icon: '⇄', perms: ['transfers.execute'], wm: true },
+  { to: '/wm/assembly', label: 'Armado', icon: '⚒', perms: ['assembly.execute'], wm: true },
   { to: '/wm/replenish', label: 'Reabasto', icon: '⇈', perms: ['replenishment.execute'], wm: true },
   { to: '/wm/count', label: 'Conteo', icon: '#', perms: ['counts.execute'], wm: true },
   { to: '/wm/pick', label: 'Surtir', icon: '☑', perms: ['picking.execute'], wm: true },

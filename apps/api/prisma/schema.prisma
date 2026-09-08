@@ -203,6 +203,7 @@ model warehouses {
 
   zones     zones[]
   locations locations[]
+  assembly_orders assembly_orders[]
   lpns      lpns[]
 }
 
@@ -298,6 +299,7 @@ model locations {
   lpns                 lpns[]
   replenishment_rules  replenishment_rules[]
   staging_assignments  staging_assignments[]
+  assembly_orders      assembly_orders[]
 
   @@unique([warehouse_id, code])
   @@index([rack_id])
@@ -347,6 +349,8 @@ model skus {
   receipt_lines       receipt_lines[]
   allocations         allocations[]
   return_lines        return_lines[]
+  assembly_inputs     assembly_inputs[]
+  assembly_orders     assembly_orders[]
   count_lines         count_lines[]
 }
 
@@ -568,6 +572,8 @@ model lpns {
   transfers       transfers[]
   allocations     allocations[]
   label_prints    label_prints[]
+  assembly_inputs  assembly_inputs[]
+  assembly_outputs assembly_outputs[]
 
   @@index([current_location_id])
   @@index([status])
@@ -1145,4 +1151,65 @@ model integration_runs {
   user_id      String?   @db.Uuid
 
   @@index([source, entity, started_at(sort: Desc)])
+}
+
+// ---------------------------------------------------------------------
+// Assembly orders: components (e.g. pan bodies in masters of 24) are consumed and the finished product
+// (assembled pans in cases of 12) is produced onto NEW pallets. Ledger stays balanced per SKU.
+// ---------------------------------------------------------------------
+model assembly_orders {
+  id                  String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  code                String   @unique @db.VarChar(30) // ASM-YYYY-000001
+  warehouse_id        String   @db.Uuid
+  station_location_id String   @db.Uuid
+  output_sku_id       String   @db.Uuid
+  output_qty          BigInt // pieces produced
+  consumed_qty        BigInt // pieces consumed (all inputs)
+  scrap_qty           BigInt   @default(0)
+  scrap_reason        String?
+  incident_id         String?  @db.Uuid
+  notes               String?
+  status              String   @default("COMPLETED") @db.VarChar(20)
+  created_by          String   @db.Uuid
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  warehouse  warehouses @relation(fields: [warehouse_id], references: [id])
+  station    locations  @relation(fields: [station_location_id], references: [id])
+  output_sku skus       @relation(fields: [output_sku_id], references: [id])
+  inputs     assembly_inputs[]
+  outputs    assembly_outputs[]
+
+  @@index([created_at])
+  @@index([output_sku_id])
+}
+
+model assembly_inputs {
+  id       String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  order_id String @db.Uuid
+  lpn_id   String @db.Uuid
+  sku_id   String @db.Uuid
+  qty      BigInt // pieces consumed from this LPN
+
+  order assembly_orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  lpn   lpns            @relation(fields: [lpn_id], references: [id])
+  sku   skus            @relation(fields: [sku_id], references: [id])
+
+  @@index([order_id])
+  @@index([lpn_id])
+}
+
+model assembly_outputs {
+  id              String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  order_id        String @db.Uuid
+  lpn_id          String @db.Uuid
+  cases           Int
+  pieces_per_case Int
+  qty             BigInt // cases × pieces_per_case
+  putaway_task_id String? @db.Uuid
+
+  order assembly_orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  lpn   lpns            @relation(fields: [lpn_id], references: [id])
+
+  @@index([order_id])
+  @@index([lpn_id])
 }

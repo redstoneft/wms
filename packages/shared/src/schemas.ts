@@ -294,6 +294,27 @@ export const zTransferComplete = z.object({
   location_barcode: zBarcode,
 });
 
+// ---- assembly (components → finished product) ----
+export const zAssemblyComplete = z.object({
+  /** where the work happens; the new pallets are born here and get a put-away task */
+  station_barcode: zBarcode,
+  inputs: z
+    .array(z.object({ lpn_code: z.string().trim().min(1).max(30), sku_code: zCode, qty: zQty }))
+    .min(1)
+    .max(50),
+  output: z.object({
+    sku_code: zCode,
+    lot: z.string().trim().max(60).optional(),
+    expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    /** one entry per physical pallet produced; the packing factor is per pallet (cases of 12 today, of 6 tomorrow) */
+    pallets: z.array(z.object({ cases: z.number().int().min(1).max(10000), pieces_per_case: z.number().int().min(1).max(100000) })).min(1).max(50),
+  }),
+  /** pieces lost during assembly; required to explain any difference between consumed and produced */
+  scrap: z.object({ qty: zQty, reason: zReason }).optional(),
+  notes: zNote,
+});
+export type AssemblyCompleteInput = z.infer<typeof zAssemblyComplete>;
+
 // ---- inventory adjustments / quarantine ----
 export const zAdjustInventory = z.object({
   lpn_code: z.string().trim().min(1).max(30),
