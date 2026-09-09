@@ -6,7 +6,7 @@ import { incidentsApi } from '../../api/incidents';
 import { ApiError } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { useToast } from '../../components/Toast';
-import { Alert, Button, Card, ConfirmDialog, KV, PageHeader, Skeleton, StatusChip, Table } from '../../components/ui';
+import { Alert, Button, Card, ConfirmDialog, Field, Input, KV, Modal, PageHeader, Skeleton, StatusChip, Table } from '../../components/ui';
 import { cls, es, fmtDateTime, fmtQty, toBigInt } from '../../lib/format';
 
 export default function ReceiptDetailPage() {
@@ -98,7 +98,7 @@ export default function ReceiptDetailPage() {
                 <Button onClick={() => setConfirmComplete(true)}>Completar recepción</Button>
               </>
             )}
-            {open && can('receiving.close') && r.lpns.length === 0 && (
+            {open && can('receiving.close') && (r.lpns?.length ?? 0) === 0 && (
               <Button variant="danger" onClick={() => setCancelOpen(true)}>
                 Cancelar recepción
               </Button>
