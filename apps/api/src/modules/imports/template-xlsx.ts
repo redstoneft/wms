@@ -62,6 +62,10 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
   const db = getDb();
   const t = TEMPLATES[type];
   const required = new Set(REQUIRED_BY_TYPE[type] ?? t.columns.slice(0, 2));
+  const HELP: Record<string, Help> = { ...GENERIC_HELP };
+  if (type === 'ORDERS') HELP.qty = { desc: 'Cantidad pedida, número entero, en la unidad de uom_code (CASE = cajas, PIECE = piezas).', required: true, example: '10' };
+  if (type === 'PURCHASE_ORDERS') HELP.qty = { desc: 'Cantidad esperada, número entero, en la unidad de uom_code.', required: true, example: '400' };
+  if (type === 'ORDERS') HELP.order_number = { desc: 'Número de pedido u orden de compra del cliente (por ejemplo la OC de Walmart). Todas las filas con el mismo número forman un pedido; una fila por producto.', required: true, example: '8834970889' };
   const wb = new ExcelJS.Workbook();
   wb.creator = 'WMS';
   wb.created = new Date();
@@ -91,6 +95,8 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
     }
   }
 
+  const prioCol = t.columns.indexOf('priority');
+  if (prioCol >= 0) for (let r = 2; r <= DATA_ROWS; r++) data.getCell(r, prioCol + 1).dataValidation = { type: 'whole', operator: 'between', formulae: [1, 5], allowBlank: true, showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Prioridad', error: '1 = urgente … 5 = normal (o vacío).' };
   const sheets: string[] = [type];
   let skuCount = 0;
   let locCount = 0;
@@ -179,6 +185,8 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
     styleHeader(ws, 3);
     rows.forEach((r) => ws.addRow({ code: r.code, name: r.name, tax_id: r.tax_id ?? '' }));
     sheets.push('Clientes');
+    const col = t.columns.indexOf('customer_code');
+    if (rows.length && col >= 0) for (let r = 2; r <= DATA_ROWS; r++) data.getCell(r, col + 1).dataValidation = { type: 'list', allowBlank: true, formulae: [`Clientes!$A$2:$A$${rows.length + 1}`], showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Cliente', error: 'Elige el código exacto de la pestaña Clientes.' };
   }
   if (t.columns.includes('supplier_code')) {
     const rows = await db.suppliers.findMany({ where: { is_active: true }, orderBy: { code: 'asc' }, select: { code: true, name: true, tax_id: true } });
@@ -187,6 +195,8 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
     styleHeader(ws, 3);
     rows.forEach((r) => ws.addRow({ code: r.code, name: r.name, tax_id: r.tax_id ?? '' }));
     sheets.push('Proveedores');
+    const col = t.columns.indexOf('supplier_code');
+    if (rows.length && col >= 0) for (let r = 2; r <= DATA_ROWS; r++) data.getCell(r, col + 1).dataValidation = { type: 'list', allowBlank: true, formulae: [`Proveedores!$A$2:$A$${rows.length + 1}`], showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Proveedor', error: 'Elige el código exacto de la pestaña Proveedores.' };
   }
 
   // 5) Instructions
@@ -199,7 +209,7 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
   ];
   styleHeader(ins, 4);
   t.columns.forEach((c, i) => {
-    const h = GENERIC_HELP[c];
+    const h = HELP[c];
     const row = ins.addRow({ col: c, req: required.has(c) ? 'SÍ' : 'no', desc: h?.desc ?? t.description, ex: h?.example ?? t.example[i] ?? '' });
     if (required.has(c)) row.getCell(2).fill = REQ_FILL;
     row.getCell(3).alignment = { wrapText: true, vertical: 'top' };
@@ -216,6 +226,12 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
       'Cada fila (o grupo de filas con el mismo lpn) crea una tarima real con etiqueta LPN. Imprime esas etiquetas en Etiquetas → LPN y pégalas en la tarima.',
       'Si contaste cajas: uom_code = CASE, qty = número de cajas y pieces_per_case = piezas que trae cada caja de esa fila (el mismo artículo puede venir en cajas de distinto tamaño). Piezas = qty × pieces_per_case.',
       'Una ubicación puede tener varias filas (varios productos). Una tarima mixta = mismo lpn en varias filas y misma ubicación.',
+    );
+  }
+  if (type === 'ORDERS') {
+    notes.push(
+      'Un pedido = varias filas con el mismo order_number (una por producto). customer_code sale de la pestaña Clientes (WALMART, HEB…).',
+      'Al aplicar, el pedido entra en estatus Importado: el supervisor lo acepta y asigna inventario, y aparece en Surtir del handheld. Los pedidos de la plataforma (Walmart) llegan solos; este archivo es para pedidos que no vienen de ahí.',
     );
   }
   notes.forEach((n, i) => {
