@@ -196,7 +196,7 @@ export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PR
       if (!ctx.permissions.has('labels.reprint')) throw new ForbiddenError('Reprinting labels requires the labels.reprint permission');
       if (!req.reprint_reason) throw new RuleError('REPRINT_REASON_REQUIRED', 'A reason is required to reprint a label');
     }
-    let printer = null as null | { id: string; host: string; port: number; code: string };
+    let printer = null as null | { id: string; host: string; port: number; code: string; mode: string };
     if (mode === 'PRINT') {
       printer = req.printer_id
         ? await tx.printers.findUnique({ where: { id: req.printer_id } })
@@ -233,9 +233,13 @@ export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PR
     return { print_id: result.row.id, model: result.model, ...preview, is_reprint: false };
   }
 
+  // AGENT printers: the PC with the USB printer pulls the queue; the label stays QUEUED until the agent reports.
+  if (result.printer!.mode === 'AGENT') {
+    return { print_id: result.row.id, status: 'QUEUED', model: result.model, zpl: result.zpl, is_reprint: result.row.is_reprint };
+  }
   try {
     await sendToPrinter(result.printer!.host, result.printer!.port, result.zpl);
-    await db.label_prints.update({ where: { id: result.row.id }, data: { status: 'SENT' } });
+    await db.label_prints.update({ where: { id: result.row.id }, data: { status: 'SENT', sent_at: new Date() } });
     return { print_id: result.row.id, status: 'SENT', model: result.model, zpl: result.zpl, is_reprint: result.row.is_reprint };
   } catch (e) {
     await db.label_prints.update({ where: { id: result.row.id }, data: { status: 'FAILED', error: (e as Error).message } });

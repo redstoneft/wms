@@ -4,9 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UomCode } from '@wms/shared';
 import { masterdataApi } from '../api/masterdata';
 import type { Party, Printer, Sku } from '../api/types';
+import { fmtDateTime } from '../lib/format';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/Toast';
-import { Alert, Button, Checkbox, Drawer, Field, Input, PageHeader, Pagination, Select, StatusChip, Table, Tabs } from '../components/ui';
+import { Alert, Button, Checkbox, Drawer, Field, Input, PageHeader, Pagination, Select, StatusChip, Table, Tabs, Modal } from '../components/ui';
 import { useDebounced, useQueryParam } from '../lib/hooks';
 import { es, fmtQty, fmtUom } from '../lib/format';
 
@@ -233,15 +234,28 @@ function Printers() {
   const [edit, setEdit] = useState<Partial<Printer> & { isNew?: boolean } | null>(null);
   const save = useMutation({
     mutationFn: () => {
-      const body = { code: edit!.code, name: edit!.name, host: edit!.host, port: Number(edit!.port ?? 9100), dpi: Number(edit!.dpi ?? 203), label_width_mm: Number(edit!.label_width_mm ?? 100), label_height_mm: Number(edit!.label_height_mm ?? 150), is_default: !!edit!.is_default };
+      const body = { code: edit!.code, name: edit!.name, host: edit!.mode === 'AGENT' ? edit!.host || 'estacion-usb' : edit!.host, mode: edit!.mode ?? 'NETWORK', port: Number(edit!.port ?? 9100), dpi: Number(edit!.dpi ?? 203), label_width_mm: Number(edit!.label_width_mm ?? 100), label_height_mm: Number(edit!.label_height_mm ?? 150), is_default: !!edit!.is_default };
       return edit!.isNew ? masterdataApi.createPrinter(body) : masterdataApi.updatePrinter(edit!.id!, { ...body, is_active: edit!.is_active });
     },
     onSuccess: () => { toast.success('Impresora guardada'); setEdit(null); void qc.invalidateQueries({ queryKey: ['printers'] }); },
     onError: (e) => toast.error('No se pudo guardar', e),
   });
+  const [token, setToken] = useState<{ printer: string; token: string } | null>(null);
+  const genToken = useMutation({
+    mutationFn: (id: string) => masterdataApi.printerAgentToken(id),
+    onSuccess: (r) => {
+      setToken(r);
+      void qc.invalidateQueries({ queryKey: ['printers'] });
+    },
+    onError: (e) => toast.error('No se pudo generar el token', e),
+  });
   return (
     <div>
-      {can('printers.manage') && <div className="mb-3"><Button onClick={() => setEdit({ isNew: true, code: '', name: '', host: '', port: 9100, dpi: 203, label_width_mm: 100, label_height_mm: 150, is_default: false })}>Nueva impresora</Button></div>}
+      {can('printers.manage') && <div className="mb-3"><Button onClick={() => setEdit({ isNew: true, code: '', name: '', host: '', mode: 'NETWORK', port: 9100, dpi: 203, label_width_mm: 101, label_height_mm: 84, is_default: false })}>Nueva impresora</Button></div>}
+      <Modal open={!!token} onClose={() => setToken(null)} title={`Token de la estación · ${token?.printer ?? ''}`}>
+        <p className="text-sm text-slate-600">Pégalo en <code>wms_print_agent.py</code> (o en la variable <code>WMS_PRINT_TOKEN</code>) en la PC que tiene la Zebra por USB. Se muestra una sola vez; si se pierde, genera otro.</p>
+        <pre className="mt-3 select-all break-all rounded bg-slate-900 p-3 font-mono text-sm text-emerald-300" data-testid="agent-token">{token?.token}</pre>
+      </Modal>
       <Table
         rows={list.data}
         loading={list.isLoading}
@@ -250,20 +264,33 @@ function Printers() {
         columns={[
           { key: 'c', header: 'Código', render: (p) => <b>{p.code}</b> },
           { key: 'n', header: 'Nombre', render: (p) => p.name },
-          { key: 'h', header: 'Host:puerto', render: (p) => <span className="font-mono">{p.host}:{p.port}</span> },
+          { key: 'm', header: 'Modo', render: (p) => (p.mode === 'AGENT' ? 'Estación USB' : 'Red') },
+          { key: 'h', header: 'Host:puerto', render: (p) => (p.mode === 'AGENT' ? <span className="text-slate-500">{p.agent_host ? `PC ${p.agent_host}` : 'sin conectar'}</span> : <span className="font-mono">{p.host}:{p.port}</span>) },
+          { key: 'ls', header: 'Estación', render: (p) => (p.mode !== 'AGENT' ? '—' : p.agent_last_seen_at ? (Date.now() - new Date(p.agent_last_seen_at).getTime() < 60_000 ? <span className="text-emerald-700">conectada</span> : <span className="text-amber-700">última vez {fmtDateTime(p.agent_last_seen_at)}</span>) : <span className="text-rose-700">nunca conectada</span>) },
           { key: 'd', header: 'DPI', render: (p) => p.dpi },
           { key: 'l', header: 'Etiqueta', render: (p) => `${p.label_width_mm} × ${p.label_height_mm} mm` },
           { key: 'df', header: 'Predeterminada', render: (p) => (p.is_default ? <StatusChip status="ACTIVE" /> : '') },
           { key: 'a', header: 'Activa', render: (p) => (p.is_active ? 'Sí' : 'No') },
         ]}
       />
-      <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.isNew ? 'Nueva impresora' : edit?.name ?? ''} footer={<div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setEdit(null)}>Cancelar</Button><Button onClick={() => save.mutate()} loading={save.isPending} disabled={!edit?.code || !edit?.host}>Guardar</Button></div>}>
+      <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.isNew ? 'Nueva impresora' : edit?.name ?? ''} footer={<div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setEdit(null)}>Cancelar</Button><Button onClick={() => save.mutate()} loading={save.isPending} disabled={!edit?.code || (edit?.mode !== 'AGENT' && !edit?.host)}>Guardar</Button></div>}>
         {edit && (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Código" required><Input value={edit.code ?? ''} onChange={(e) => setEdit({ ...edit, code: e.target.value })} /></Field>
             <Field label="Nombre" required><Input value={edit.name ?? ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
-            <Field label="Host / IP" required><Input value={edit.host ?? ''} onChange={(e) => setEdit({ ...edit, host: e.target.value })} className="font-mono" /></Field>
-            <Field label="Puerto"><Input type="number" value={edit.port ?? 9100} onChange={(e) => setEdit({ ...edit, port: Number(e.target.value) })} /></Field>
+            <Field label="Conexión" required hint={edit.mode === 'AGENT' ? 'La Zebra está en USB en una PC: esa PC corre la estación de impresión con un token.' : 'La Zebra tiene IP fija en la red y escucha en el puerto 9100.'}>
+              <Select value={edit.mode ?? 'NETWORK'} onChange={(e) => setEdit({ ...edit, mode: e.target.value as 'NETWORK' | 'AGENT' })}>
+                <option value="NETWORK">Red (IP + puerto 9100)</option>
+                <option value="AGENT">Estación USB (PC con el agente)</option>
+              </Select>
+            </Field>
+            {edit.mode !== 'AGENT' && <Field label="Host / IP" required><Input value={edit.host ?? ''} onChange={(e) => setEdit({ ...edit, host: e.target.value })} className="font-mono" /></Field>}
+            {edit.mode !== 'AGENT' && <Field label="Puerto"><Input type="number" value={edit.port ?? 9100} onChange={(e) => setEdit({ ...edit, port: Number(e.target.value) })} /></Field>}
+            {edit.mode === 'AGENT' && !edit.isNew && (
+              <Field label="Token de la estación" hint="Se pega en la PC que tiene la impresora. Generar uno nuevo invalida el anterior.">
+                <Button variant="secondary" onClick={() => genToken.mutate(edit.id!)} loading={genToken.isPending}>Generar token</Button>
+              </Field>
+            )}
             <Field label="DPI"><Select value={String(edit.dpi ?? 203)} onChange={(e) => setEdit({ ...edit, dpi: Number(e.target.value) })}><option value="203">203</option><option value="300">300</option></Select></Field>
             <Field label="Etiqueta (mm)"><div className="flex gap-1"><Input type="number" value={edit.label_width_mm ?? 100} onChange={(e) => setEdit({ ...edit, label_width_mm: Number(e.target.value) })} /><Input type="number" value={edit.label_height_mm ?? 150} onChange={(e) => setEdit({ ...edit, label_height_mm: Number(e.target.value) })} /></div></Field>
             <Checkbox label="Predeterminada" checked={!!edit.is_default} onChange={(e) => setEdit({ ...edit, is_default: e.target.checked })} />

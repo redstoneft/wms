@@ -1092,6 +1092,10 @@ model printers {
   label_height_mm Int @default(150)
   is_active  Boolean @default(true)
   is_default Boolean @default(false)
+  mode               String    @default("NETWORK") @db.VarChar(10) // NETWORK (raw TCP 9100) | AGENT (USB printer on a PC running the print agent)
+  agent_token_hash   String?   @db.VarChar(64)
+  agent_last_seen_at DateTime? @db.Timestamptz(6)
+  agent_host         String?   @db.VarChar(120)
 }
 
 model label_prints {
@@ -1104,8 +1108,10 @@ model label_prints {
   reprint_reason String?
   printed_by   String   @db.Uuid
   zpl          String
-  status       String   @default("QUEUED") @db.VarChar(20) // QUEUED | SENT | FAILED | PREVIEW
+  status       String   @default("QUEUED") @db.VarChar(20) // QUEUED | PRINTING (claimed by an agent) | SENT | FAILED | PREVIEW
   error        String?
+  claimed_at   DateTime? @db.Timestamptz(6)
+  sent_at      DateTime? @db.Timestamptz(6)
   created_at   DateTime @default(now()) @db.Timestamptz(6)
 
   lpn lpns? @relation(fields: [lpn_id], references: [id])

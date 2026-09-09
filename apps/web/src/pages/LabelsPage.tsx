@@ -40,7 +40,7 @@ export default function LabelsPage() {
   const doPrint = useMutation({
     mutationFn: () => labelsApi.print({ label_type: f.label_type, entity_id: f.entity_id.trim(), copies: Number(f.copies), printer_id: f.printer_id || undefined, reprint_reason: f.reprint_reason || undefined }),
     onSuccess: (r) => {
-      toast.success(`Etiqueta ${r.status === 'SENT' ? 'enviada' : r.status}`, `${r.model.title}${r.is_reprint ? ' (reimpresión)' : ''}`);
+      toast.success(`Etiqueta ${r.status === 'SENT' ? 'enviada' : r.status === 'QUEUED' ? 'en cola de la estación USB' : r.status}`, `${r.model.title}${r.is_reprint ? ' (reimpresión)' : ''}`);
       setNeedsReason(false);
       void history.refetch();
     },

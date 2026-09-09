@@ -23,6 +23,8 @@ export const masterdataApi = {
   printers: () => api.get<Printer[]>('/printers'),
   createPrinter: (body: Record<string, unknown>) => api.post<Printer>('/printers', body),
   updatePrinter: (id: string, body: Record<string, unknown>) => api.patch<Printer>(`/printers/${id}`, body),
+  /** token for the USB print station on the PC (shown once) */
+  printerAgentToken: (id: string) => api.post<{ token: string; printer: string }>(`/printers/${id}/agent-token`),
   quarantineReasons: () => api.get<QuarantineReason[]>('/quarantine-reasons'),
   createQuarantineReason: (body: { code: string; description: string }) => api.post<QuarantineReason>('/quarantine-reasons', body),
 };

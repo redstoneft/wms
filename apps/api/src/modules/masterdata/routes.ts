@@ -4,6 +4,7 @@ import { validateUomHierarchy, zCreateParty, zCreateSku, zUpdateSku, zUuid } fro
 import { getDb, withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
+import { generateToken, sha256 } from '../../lib/crypto.js';
 
 const zList = z.object({
   q: z.string().trim().max(100).optional(),
@@ -178,6 +179,8 @@ export async function masterDataRoutes(app: FastifyInstance) {
       .max(255)
       .refine((h) => /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|[A-Za-z0-9][A-Za-z0-9.-]{0,253})$/.test(h) && !/^\d{1,3}(\.\d{1,3}){3}$/.test(h.replace(/^(10|172\.(1[6-9]|2\d|3[01])|192\.168|127)\..*/, '')), 'printer host must be a private IPv4 address or a LAN hostname'),
     port: z.number().int().min(1).max(65535).default(9100),
+    /** NETWORK: the API opens TCP 9100 to `host`. AGENT: a PC with the printer on USB pulls the queue (host is informative). */
+    mode: z.enum(['NETWORK', 'AGENT']).default('NETWORK'),
     dpi: z.union([z.literal(203), z.literal(300)]).default(203),
     label_width_mm: z.number().int().min(20).max(300).default(100),
     label_height_mm: z.number().int().min(20).max(400).default(150),
@@ -194,6 +197,18 @@ export async function masterDataRoutes(app: FastifyInstance) {
     });
     reply.status(201);
     return p;
+  });
+  /** Generates (or rotates) the token the print agent on the PC uses. Shown once; only the hash is stored. */
+  app.post('/printers/:id/agent-token', { preHandler: app.requirePermission('printers.manage') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const token = `wmsp_${generateToken(24)}`;
+    return withTx(async (tx) => {
+      const p = await tx.printers.findUnique({ where: { id } });
+      if (!p) throw new NotFoundError('printer', id);
+      await tx.printers.update({ where: { id }, data: { agent_token_hash: sha256(token), mode: 'AGENT' } });
+      await audit(tx, req.actor!, { action: 'printer.agent_token', entity_type: 'printer', entity_id: id, after: { code: p.code } });
+      return { token, printer: p.code };
+    });
   });
   app.patch('/printers/:id', { preHandler: app.requirePermission('printers.manage') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

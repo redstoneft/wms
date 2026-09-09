@@ -94,6 +94,10 @@ export interface Printer {
   label_height_mm: number;
   is_active: boolean;
   is_default: boolean;
+  /** NETWORK = TCP 9100; AGENT = USB printer on a PC running the print station */
+  mode: 'NETWORK' | 'AGENT';
+  agent_last_seen_at: string | null;
+  agent_host: string | null;
 }
 export interface QuarantineReason {
   code: string;

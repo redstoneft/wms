@@ -20,6 +20,8 @@ export default fp(async function securityPlugin(app: FastifyInstance) {
     if (!MUTATING.has(req.method)) return;
     // API-key authenticated integration endpoints carry no cookie, so CSRF does not apply
     if (req.url.startsWith('/api/integrations/') && typeof req.headers['x-api-key'] === 'string' && !req.headers.cookie) return;
+    // the print agent on the PC with the USB printer authenticates with its token, never with a cookie
+    if (req.url.startsWith('/api/print-agent/') && typeof req.headers['x-agent-token'] === 'string' && !req.headers.cookie) return;
     const xrw = req.headers['x-requested-with'];
     if (xrw !== 'wms-client') {
       throw new ForbiddenError('Missing X-Requested-With header', { code: 'CSRF' });

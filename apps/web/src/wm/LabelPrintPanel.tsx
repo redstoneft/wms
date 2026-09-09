@@ -28,7 +28,7 @@ export function LabelPrintPanel({ labelType, entityId, onDone }: { labelType: st
     setBusy(true);
     try {
       const r = await labelsApi.print({ label_type: labelType, entity_id: entityId, copies: 1, printer_id: printerId || undefined, reprint_reason: reason.trim() || undefined });
-      wm.ok(`ETIQUETA ${r.status === 'SENT' ? 'ENVIADA' : r.status} · ${r.model.title}`);
+      wm.ok(`ETIQUETA ${r.status === 'SENT' ? 'ENVIADA' : r.status === 'QUEUED' ? 'EN COLA (ESTACIÓN USB)' : r.status} · ${r.model.title}`);
       onDone();
     } catch (e) {
       if (e instanceof ApiError && e.code === 'REPRINT_REASON_REQUIRED') {
