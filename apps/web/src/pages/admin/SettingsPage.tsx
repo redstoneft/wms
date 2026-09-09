@@ -15,7 +15,7 @@ export default function SettingsPage() {
     if (q.data) setF(q.data);
   }, [q.data]);
   const save = useMutation({
-    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin, training_required: f!.training_required ?? true }),
+    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin, training_required: f!.training_required ?? true, orders_import_since: f!.orders_import_since ?? '' }),
     onSuccess: () => { toast.success('Configuración guardada (auditada)'); void qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e) => toast.error('No se pudo guardar', e),
   });
@@ -34,6 +34,9 @@ export default function SettingsPage() {
             <Input type="number" min={1} max={72} value={f.session_ttl_hours} onChange={(e) => setF({ ...f, session_ttl_hours: Number(e.target.value) })} />
           </Field>
           <Checkbox label="Requerir MFA a administradores" checked={f.require_mfa_for_admin} onChange={(e) => setF({ ...f, require_mfa_for_admin: e.target.checked })} />
+          <Field label="Importar pedidos de la plataforma (Walmart/HEB) desde" hint="Fecha de arranque: los pedidos con fecha anterior nunca se importan al WMS aunque sigan abiertos en la plataforma de etiquetas. Solo se importan pedidos en estatus validado.">
+            <Input type="date" value={f.orders_import_since ?? ''} onChange={(e) => setF({ ...f, orders_import_since: e.target.value })} />
+          </Field>
           <Checkbox label="Capacitación guiada obligatoria en modo almacén (todos los usuarios excepto ADMIN)" checked={f.training_required ?? true} onChange={(e) => setF({ ...f, training_required: e.target.checked })} />
           <Alert tone="info">La regla de liberación de embarques (cargado = requerido por pedido y SKU) no es configurable por diseño.</Alert>
           <div>

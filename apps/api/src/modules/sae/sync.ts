@@ -16,6 +16,7 @@ import { getDb, withTx } from '../../db.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { cancelOrder, createOrder } from '../orders/service.js';
+import { getSettings } from '../settings/routes.js';
 import { createIncident } from '../incidents/service.js';
 import { fetchAll, key, num, requireSource, saeConfig } from './supabase.js';
 
@@ -615,16 +616,26 @@ interface PedidoLineaFull { pedido_id: string; num_linea: string; sku_cliente: s
 interface Cedis { codigo: string; nombre: string | null; ciudad: string | null; estado: string | null }
 
 const CANCELLED_STATES = new Set(['cancelado', 'cancelada', 'rechazado', 'rechazada']);
-const CLOSED_STATES = new Set(['surtido', 'embarcado', 'facturado', 'entregado', 'cerrado', 'completado']);
+// Platform statuses (estatus_pedido): nuevo → validado → enviado_sae → factura_creada → timbrada. Only a VALIDATED order is
+// work for the warehouse; once the platform invoiced it (or it is still being fixed) the WMS leaves it alone.
+const READY_STATES = new Set(['validado', 'listo', 'pendiente_surtido']);
+const CLOSED_STATES = new Set(['enviado_sae', 'factura_creada', 'timbrada', 'completo', 'surtido', 'embarcado', 'facturado', 'entregado', 'cerrado', 'completado']);
+const NOT_READY_STATES = new Set(['nuevo', 'con_errores', 'revisar_manual', 'error_sae', 'error']);
 
 export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL' = 'MANUAL'): Promise<SyncResult> {
   const cfg = saeConfig();
   return withRun('customer_orders', trigger, ctx, async (c) => {
     const erp = requireSource(cfg.erp, 'erp');
-    const since = new Date(Date.now() - cfg.poSinceDays * 86400_000).toISOString().slice(0, 10);
+    const windowSince = new Date(Date.now() - cfg.poSinceDays * 86400_000).toISOString().slice(0, 10);
+    const cutoff = String((await getSettings()).orders_import_since ?? '');
+    const since = cutoff && cutoff > windowSince ? cutoff : windowSince; // never before the go-live cutoff
     const pedidos = await fetchAll<Pedido>(erp, 'pedidos', { select: 'id,cliente_id,num_orden_compra,fecha_pedido,fecha_envio,fecha_cancelacion,cedis_codigo,estatus,instrucciones', fecha_pedido: `gte.${since}`, order: 'fecha_pedido.desc' });
+    // the cutoff is enforced here too (a source that ignores the filter must not leak history into the warehouse)
+    const kept = pedidos.filter((p) => !p.fecha_pedido || String(p.fecha_pedido).slice(0, 10) >= since);
+    c.skipped += pedidos.length - kept.length;
+    pedidos.splice(0, pedidos.length, ...kept);
     c.source_rows = pedidos.length;
-    if (!pedidos.length) return `sin pedidos desde ${since}`;
+    if (!pedidos.length) return `sin pedidos desde ${since}${cutoff ? ' (fecha de arranque ' + cutoff + ')' : ''}`;
     const lines = await fetchAll<PedidoLineaFull>(erp, 'pedido_lineas', { select: 'pedido_id,num_linea,sku_cliente,sku_interno,gtin,cantidad,cantidad_surtir,uom,piezas_por_caja', pedido_id: `in.(${pedidos.map((p) => p.id).join(',')})` });
     const cedis = await fetchAll<Cedis>(erp, 'cedis', { select: 'codigo,nombre,ciudad,estado' }).catch(() => [] as Cedis[]);
     const cedisByCode = new Map(cedis.map((x) => [key(x.codigo), x]));
@@ -651,8 +662,8 @@ export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED'
             }
             return;
           }
-          if (CLOSED_STATES.has(st)) {
-            c.skipped++;
+          if (CLOSED_STATES.has(st) || NOT_READY_STATES.has(st) || !READY_STATES.has(st)) {
+            c.skipped++; // invoiced/closed, still being validated, or an unknown status: not warehouse work
             return;
           }
           if (existing && existing.status !== 'IMPORTED') {

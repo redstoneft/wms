@@ -46,6 +46,7 @@ Hoy el espejo crudo replica 9 tablas y **no** incluye `CVES_ALTER01` ni `OBS_DOC
 
 ## Ejecución
 
+* Pedidos de clientes: solo se importan los que la plataforma de pedidos tiene en estatus **validado** y con fecha ≥ la **fecha de arranque** (`Configuración → Importar pedidos desde`). Los ya facturados/timbrados (`factura_creada`, `timbrada`, `completo`) o aún en validación (`nuevo`, `con_errores`, `revisar_manual`) se omiten: no son trabajo del almacén. Un pedido que ya está en surtido nunca se reescribe; si la plataforma lo cancela, el WMS lo cancela o abre incidencia.
 * Automática cada `SAE_SYNC_INTERVAL_MINUTES` (30) en la API, con bloqueo advisory para que solo una instancia sincronice.
 * Manual: `POST /api/sae/sync` (`{ "entities": ["skus", ...] }` opcional), permiso `imports.run`.
 * Estado: `GET /api/sae/status` (configuración sin claves, frescura de ambas fuentes, conteos en el WMS, último run por entidad). Historial: `GET /api/sae/runs`.

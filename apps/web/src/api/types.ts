@@ -1007,6 +1007,7 @@ export interface Settings {
   session_ttl_hours: number;
   require_mfa_for_admin: boolean;
   training_required?: boolean;
+  orders_import_since?: string;
 }
 export interface Authorization {
   id: Uuid;

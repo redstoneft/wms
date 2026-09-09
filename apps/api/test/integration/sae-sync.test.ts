@@ -73,6 +73,9 @@ const tables: Record<string, Row[]> = {
     { id: 'p-1', cliente_id: 'c-walmart', num_orden_compra: '8834970889', fecha_pedido: '2099-01-01', fecha_envio: '2099-01-02', fecha_cancelacion: '2099-01-09', cedis_codigo: '7494', estatus: 'validado', instrucciones: 'Entregar antes de las 10:00' },
     { id: 'p-2', cliente_id: 'c-walmart', num_orden_compra: '6283704347', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'validado', instrucciones: null },
     { id: 'p-3', cliente_id: 'c-walmart', num_orden_compra: '1111111111', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'cancelado', instrucciones: null },
+    // already invoiced by the platform (goods delivered before the WMS): never warehouse work
+    { id: 'p-4', cliente_id: 'c-walmart', num_orden_compra: '2222222222', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'timbrada', instrucciones: null },
+    { id: 'p-5', cliente_id: 'c-walmart', num_orden_compra: '3333333333', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'nuevo', instrucciones: null },
   ],
   pedido_lineas: [
     { pedido_id: 'p-1', num_linea: '001', sku_cliente: '101581797', sku_interno: 'SIC20G', gtin: '7500462718695', cantidad: 198, cantidad_surtir: 198, uom: 'EA', piezas_por_caja: 6 },
@@ -278,10 +281,21 @@ describe('SAE → WMS synchronisation', () => {
     const r2 = await sup.post('/sae/sync', { entities: ['customer_orders'] });
     expect(r2.body.results[0].updated).toBe(1);
     expect((await sql<{ status: string }>(`SELECT status FROM orders WHERE external_ref = 'p-1'`))[0]!.status).toBe('CANCELLED');
+    // invoiced (p-4) and not-yet-validated (p-5) orders never became WMS orders
+    expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM orders WHERE external_ref IN ('p-4','p-5')`))[0]!.n).toBe(0n);
     tables.pedidos![0]!.estatus = 'validado';
     // a cancelled order is not resurrected
     const r3 = await sup.post('/sae/sync', { entities: ['customer_orders'] });
     expect(r3.body.results[0].created).toBe(0);
+    // go-live cutoff: a brand-new validated order dated before the cutoff is never imported
+    tables.pedidos!.push({ id: 'p-6', cliente_id: 'c-walmart', num_orden_compra: '4444444444', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'validado', instrucciones: null });
+    tables.pedido_lineas!.push({ pedido_id: 'p-6', num_linea: '1', sku_cliente: null, sku_interno: '636570', gtin: null, cantidad: 6, cantidad_surtir: 6, uom: 'PZ', piezas_por_caja: 6 });
+    await sql(`INSERT INTO settings (key, value) VALUES ('orders_import_since', '"2100-01-01"') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+    const rCut = await sup.post('/sae/sync', { entities: ['customer_orders'] });
+    expect(rCut.body.results[0].created).toBe(0);
+    expect(rCut.body.results[0].notes).toContain('2100-01-01');
+    expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM orders WHERE external_ref = 'p-6'`))[0]!.n).toBe(0n);
+    await sql(`DELETE FROM settings WHERE key = 'orders_import_since'`);
     await expectReconciled();
   });
 
