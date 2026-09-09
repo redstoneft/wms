@@ -17,7 +17,7 @@ El sistema solo lee la primera pestaña. Las demás son de consulta: no se borra
 
 | Columna | Obligatoria | Qué se escribe | Ejemplo |
 |---|---|---|---|
-| `location_code` | Sí | Código de la etiqueta del hueco, sin el `LOC-`. Debe existir en la pestaña Ubicaciones | `ALM-A-R01-N01-P01` |
+| `location_code` | Sí | **Escanea la etiqueta del hueco directamente**: el lector escribe `LOC-ALM-A-R01-N01-P01` y así se acepta. También vale escribir el código sin `LOC-` | `LOC-ALM-A-R01-N01-P01` |
 | `sku` | Sí | Clave de SAE tal como viene en la caja, GTIN o Código WMS. Cualquiera de la pestaña SKUs | `636570` |
 | `qty` | Sí | Cantidad contada, entero, en la unidad de `uom_code` | `40` |
 | `uom_code` | No | `PIECE` piezas (vacío = piezas), `CASE` cajas, `INNER`, `PALLET` | `CASE` |
@@ -40,7 +40,7 @@ Reglas:
 3. Si al escribir el `sku` Excel muestra una advertencia amarilla, es normal cuando escribiste una clave de SAE o un GTIN: acepta. Si escribiste algo que no aparece en la pestaña SKUs, corrígelo.
 4. Si la clave no está en ninguna parte, ese producto no existe en el WMS: anótalo aparte y avisa al supervisor. No lo inventes.
 
-Las listas desplegables de `location_code` y `uom_code` sí bloquean valores incorrectos.
+La lista de `location_code` contiene las etiquetas tal como las escribe el lector (`LOC-…`); si escribes el código sin `LOC-` Excel avisa, acepta y sigue. `uom_code` sí bloquea valores incorrectos.
 
 ## 4. Cómo llenar el conteo
 
@@ -58,7 +58,7 @@ Las listas desplegables de `location_code` y `uom_code` sí bloquean valores inc
 
 | Error que marca | Causa | Corrección |
 |---|---|---|
-| `unknown location` | El código no existe o tiene un typo | Copiar el código exacto de la pestaña Ubicaciones |
+| `unknown location` | El código no existe o tiene un typo (con o sin `LOC-` da igual) | Volver a escanear la etiqueta o copiar el código de la pestaña Ubicaciones |
 | `unknown sku` | La clave no está en ninguna pestaña SKUs ni alias | Buscar en SKUs; si no existe, avisar |
 | `must be a positive integer` | `qty` con decimales, comas o texto | Solo números enteros |
 | `sku X requires lot` / `requires expiry` | El SKU exige lote o caducidad | Llenar `lot` o `expiry_date` (formato `AAAA-MM-DD`) |

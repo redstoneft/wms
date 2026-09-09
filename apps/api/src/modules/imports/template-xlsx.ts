@@ -13,7 +13,7 @@ const GENERIC_HELP: Record<string, Help> = {
   qty: { desc: 'Cantidad contada, número entero sin decimales, en la unidad indicada en uom_code.', required: true, example: '40' },
   uom_code: { desc: 'Unidad de la cantidad: PIECE (piezas), CASE (cajas), INNER, PALLET. Vacío = PIECE.', required: false, example: 'CASE' },
   pieces_per_case: { desc: 'Solo con uom_code = CASE: cuántas piezas trae cada caja contada en ESTA fila. Un mismo artículo puede venir con distinto factor de empaque, por eso se escribe aquí y no se toma del catálogo. Si se deja vacío se usa "Piezas por caja" de la pestaña SKUs.', required: false, example: '6' },
-  location_code: { desc: 'Código de la ubicación tal como está en su etiqueta, sin el prefijo LOC-. Ver pestaña Ubicaciones.', required: true, example: 'ALM-A-R01-N01-P01' },
+  location_code: { desc: 'Ubicación: escanea la etiqueta del hueco directamente (LOC-ALM-A-R01-N01-P01) o escribe el código sin el prefijo (ALM-A-R01-N01-P01); las dos formas valen. Ver pestaña Ubicaciones.', required: true, example: 'LOC-ALM-A-R01-N01-P01' },
   lot: { desc: 'Lote impreso en el producto. Obligatorio solo si el SKU requiere lote (pestaña SKUs).', required: false, example: 'L2409' },
   expiry_date: { desc: 'Caducidad en formato AAAA-MM-DD. Obligatoria solo si el SKU requiere caducidad.', required: false, example: '2027-03-31' },
   lpn: { desc: 'Identificador del pallet. Vacío = el sistema genera un LPN nuevo por fila. Repite el mismo texto en varias filas para un pallet mixto (varios productos en la misma tarima).', required: false, example: 'TARIMA-07' },
@@ -74,6 +74,7 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
     if (required.has(c)) data.getRow(1).getCell(i + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB45309' } };
     if (c === 'expiry_date' || c.endsWith('_date')) data.getColumn(i + 1).numFmt = '@';
     if (c === 'sku' || c === 'barcode' || c === 'lot' || c === 'lpn' || c === 'location_code') data.getColumn(i + 1).numFmt = '@'; // keep leading zeros
+    if (c === 'location_code') data.getColumn(i + 1).width = 26;
   });
   const DATA_ROWS = 2000;
   const uomCol = t.columns.indexOf('uom_code');
@@ -147,6 +148,7 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
     locCount = locs.length;
     const ws = wb.addWorksheet('Ubicaciones', { properties: { tabColor: { argb: 'FFB45309' } } });
     ws.columns = [
+      { header: 'Código de barras (escanear)', key: 'barcode', width: 26 },
       { header: 'Código (location_code)', key: 'code', width: 24 },
       { header: 'Tipo', key: 'type', width: 12 },
       { header: 'Zona', key: 'zone', width: 22 },
@@ -155,15 +157,16 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
       { header: 'Nivel', key: 'level', width: 8 },
       { header: 'Posición', key: 'pos', width: 8 },
     ];
-    styleHeader(ws, 7);
+    styleHeader(ws, 8);
     for (const l of locs) {
-      ws.addRow({ code: l.code, type: l.location_type, zone: l.zone ? `${l.zone.code} · ${l.zone.name}` : '', wh: l.warehouse.code, bay: l.bay ?? '', level: l.level ?? '', pos: l.position ?? '' });
+      ws.addRow({ barcode: l.barcode, code: l.code, type: l.location_type, zone: l.zone ? `${l.zone.code} · ${l.zone.name}` : '', wh: l.warehouse.code, bay: l.bay ?? '', level: l.level ?? '', pos: l.position ?? '' });
     }
     sheets.push('Ubicaciones');
     const locCol = t.columns.indexOf('location_code');
     if (locCount > 0 && locCol >= 0) {
       for (let r = 2; r <= DATA_ROWS; r++) {
-        data.getCell(r, locCol + 1).dataValidation = { type: 'list', allowBlank: true, formulae: [`Ubicaciones!$A$2:$A$${locCount + 1}`], showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Ubicación', error: 'La ubicación no existe. Copia el código exacto de la pestaña Ubicaciones.' };
+        // list = barcodes (what the scanner types); typing the bare code is also valid, so this is a warning, never a stop
+        data.getCell(r, locCol + 1).dataValidation = { type: 'list', allowBlank: true, formulae: [`Ubicaciones!$A$2:$A$${locCount + 1}`], showErrorMessage: true, errorStyle: 'warning', errorTitle: 'Ubicación', error: 'No coincide con una etiqueta escaneada (LOC-…). Si escribiste el código sin LOC-, acepta; si no, revisa la pestaña Ubicaciones.' };
       }
     }
   }

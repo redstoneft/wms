@@ -58,6 +58,9 @@ export const TEMPLATES: Record<ImportType, { columns: string[]; example: string[
   },
 };
 
+/** Count sheets are filled by scanning the rack label, which carries the barcode `LOC-<code>`: both forms name the same location. */
+export const normalizeLocationCode = (s: string) => s.trim().toUpperCase().replace(/^LOC-/, '');
+
 export function templateCsv(type: ImportType): string {
   const t = TEMPLATES[type];
   return Papa.unparse([t.columns, t.example]);
@@ -307,7 +310,7 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       break;
     }
     case 'INITIAL_INVENTORY': {
-      const locCodes = [...new Set(parsed.map((p) => (p.location_code as string).toUpperCase()))];
+      const locCodes = [...new Set(parsed.map((p) => normalizeLocationCode(p.location_code as string)))];
       const locs = await tx.locations.findMany({ where: { code: { in: locCodes } } });
       const anyInventory = await tx.inventory_movements.count();
       if (anyInventory > 0) summary.warning = 'Warehouse already has movements; initial inventory is added as INITIAL_LOAD on top of existing stock';
@@ -315,7 +318,7 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       parsed.forEach((p, i) => {
         const s = skuMap.get(p.sku as string);
         if (!s) errors.push({ row: i + 2, column: 'sku', message: `unknown sku ${p.sku}` });
-        const loc = locs.find((l) => l.code === (p.location_code as string).toUpperCase());
+        const loc = locs.find((l) => l.code === normalizeLocationCode(p.location_code as string));
         if (!loc) errors.push({ row: i + 2, column: 'location_code', message: `unknown location ${p.location_code}` });
         else if (!['RESERVE', 'PICKING'].includes(loc.location_type)) errors.push({ row: i + 2, column: 'location_code', message: `location ${loc.code} is ${loc.location_type}; initial inventory goes to RESERVE/PICKING` });
         else if (loc.admin_status !== 'ACTIVE') errors.push({ row: i + 2, column: 'location_code', message: `location ${loc.code} is ${loc.admin_status}` });
@@ -330,8 +333,8 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
         if (p.lpn) {
           if (!/^PLT-\d{4}-\d{8}$/.test(p.lpn as string) && !/^[A-Za-z0-9_-]{1,30}$/.test(p.lpn as string)) errors.push({ row: i + 2, column: 'lpn', message: 'lpn must be a group key (letters/digits) — real codes are generated' });
           const prev = lpnLoc.get(p.lpn as string);
-          if (prev && prev !== (p.location_code as string).toUpperCase()) errors.push({ row: i + 2, column: 'lpn', message: `lpn group ${p.lpn} appears in two locations` });
-          lpnLoc.set(p.lpn as string, (p.location_code as string).toUpperCase());
+          if (prev && prev !== normalizeLocationCode(p.location_code as string)) errors.push({ row: i + 2, column: 'lpn', message: `lpn group ${p.lpn} appears in two locations` });
+          lpnLoc.set(p.lpn as string, normalizeLocationCode(p.location_code as string));
         }
         if (s?.requires_lot && !p.lot) errors.push({ row: i + 2, column: 'lot', message: `sku ${p.sku} requires lot` });
         if (s?.requires_expiry && !p.expiry_date) errors.push({ row: i + 2, column: 'expiry_date', message: `sku ${p.sku} requires expiry_date` });
@@ -560,7 +563,7 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
       let movements = 0;
       for (const r of rows) {
         const sku = await tx.skus.findUniqueOrThrow({ where: { code: r.sku } });
-        const loc = await lockLocationByBarcode(tx, r.location_code.toUpperCase());
+        const loc = await lockLocationByBarcode(tx, normalizeLocationCode(r.location_code));
         const uom = (r.uom_code || 'PIECE') as UomCode;
         let factor: bigint;
         if (uom === 'CASE' && r.pieces_per_case) factor = BigInt(r.pieces_per_case); // packing factor of this row, not the catalogue default

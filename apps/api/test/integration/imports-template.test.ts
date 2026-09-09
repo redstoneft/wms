@@ -65,9 +65,9 @@ describe('Excel import template with catalogue sheets', () => {
     expect((await download('SKUS')).wb.worksheets.map((w) => w.name)).toEqual(['SKUS', 'Instrucciones']);
   });
 
-  it('a filled template (typed with a SAE alias) validates through the normal import, ignoring the catalogue sheets', async () => {
+  it('a filled template (scanned location barcode LOC-… and SAE alias) validates through the normal import, ignoring the catalogue sheets', async () => {
     const { wb } = await download('INITIAL_INVENTORY');
-    wb.worksheets[0]!.addRow([f.reserve[0]!.code, f.skus[0]!.piece_barcode, 5, 'PIECE', '', '', '', '']); // typed with the alias barcode, not the WMS code
+    wb.worksheets[0]!.addRow([f.reserve[0]!.barcode, f.skus[0]!.piece_barcode, 5, 'PIECE', '', '', '', '']); // scanned: location barcode (LOC-…) and product alias barcode, not WMS codes
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     const boundary = 'xxTpl';
     const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="plantilla_initial_inventory.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n`);
@@ -83,7 +83,7 @@ describe('Excel import template with catalogue sheets', () => {
 
   it('pieces_per_case: the row packing factor wins over the catalogue and is stored in pieces', async () => {
     const a = await getApp();
-    const loc = [{ code: f.reserve[1]!.code }];
+    const loc = [{ code: f.reserve[1]!.barcode }]; // scanned form on APPLY too
     const sku = [{ code: f.skus[1]!.code }];
     const send = async (rows: string, mode: 'VALIDATE' | 'APPLY') => {
       const csv = `location_code,sku,qty,uom_code,pieces_per_case,lot,expiry_date,lpn\n${rows}`;
@@ -99,8 +99,10 @@ describe('Excel import template with catalogue sheets', () => {
     // 3 cases × 7 pieces each = 21 pieces, whatever the catalogue says
     const ok = await send(`${loc[0]!.code},${sku[0]!.code},3,CASE,7,,,`, 'APPLY');
     expect(ok.status).toBe('APPLIED');
-    const mv = await sql<{ qty: bigint; uom_code: string; uom_qty: bigint }>(`SELECT m.qty, m.uom_code, m.uom_qty FROM inventory_movements m JOIN skus s ON s.id = m.sku_id JOIN locations l ON l.id = m.to_location_id WHERE s.code = '${sku[0]!.code}' AND l.code = '${loc[0]!.code}' AND m.movement_type = 'INITIAL_LOAD' ORDER BY m.id DESC LIMIT 1`);
+    const mv = await sql<{ qty: bigint; uom_code: string; uom_qty: bigint }>(`SELECT m.qty, m.uom_code, m.uom_qty FROM inventory_movements m JOIN skus s ON s.id = m.sku_id JOIN locations l ON l.id = m.to_location_id WHERE s.code = '${sku[0]!.code}' AND l.code = '${f.reserve[1]!.code}' AND m.movement_type = 'INITIAL_LOAD' ORDER BY m.id DESC LIMIT 1`);
     expect(mv[0]!.qty).toBe(21n);
+    const where = await sql<{ code: string }>(`SELECT l.code FROM inventory_movements m JOIN locations l ON l.id = m.to_location_id WHERE m.id = (SELECT max(id) FROM inventory_movements WHERE movement_type = 'INITIAL_LOAD')`);
+    expect(where[0]!.code).toBe(f.reserve[1]!.code);
     expect(mv[0]!.uom_code).toBe('CASE');
     expect(mv[0]!.uom_qty).toBe(3n);
   });
