@@ -350,3 +350,14 @@ export async function closeReceipt(tx: Tx, ctx: ActorContext, receiptId: string)
   await audit(tx, ctx, { action: 'receipt.close', entity_type: 'receipt', entity_id: receiptId, before: { status: r.status }, after: { status: 'CLOSED' } });
   return updated;
 }
+
+/** A receipt opened by mistake: allowed only while nothing has been received (no LPN, no movement). The number is not reused. */
+export async function cancelReceipt(tx: Tx, ctx: ActorContext, receiptId: string, reason: string) {
+  const r = await tx.receipts.findUnique({ where: { id: receiptId }, include: { _count: { select: { lpns: true } } } });
+  if (!r) throw new NotFoundError('receipt', receiptId);
+  if (!['OPEN', 'IN_PROGRESS'].includes(r.status)) throw new RuleError('RECEIPT_STATUS', `Receipt is ${r.status}`);
+  if (r._count.lpns > 0) throw new RuleError('RECEIPT_HAS_LPNS', 'La recepción ya tiene pallets recibidos; no se puede cancelar. Complétala y ajusta con incidencia.');
+  const updated = await tx.receipts.update({ where: { id: receiptId }, data: { status: 'CANCELLED', closed_at: new Date(), notes: [r.notes, `CANCELADA: ${reason}`].filter(Boolean).join(' · ') } });
+  await audit(tx, ctx, { action: 'receipt.cancel', entity_type: 'receipt', entity_id: receiptId, before: { status: r.status }, after: { status: 'CANCELLED' }, reason });
+  return updated;
+}

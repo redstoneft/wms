@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReceiveScan, zUuid } from '@wms/shared';
+import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReason, zReceiveScan, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
@@ -156,6 +156,11 @@ export async function inboundRoutes(app: FastifyInstance) {
     return withTx((tx) => svc.completeReceipt(tx, req.actor!, body));
   });
 
+  app.post('/receipts/:id/cancel', { preHandler: app.requirePermission('receiving.close') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const body = z.object({ reason: zReason }).parse(req.body);
+    return withTx((tx) => svc.cancelReceipt(tx, req.actor!, id, body.reason));
+  });
   app.post('/receipts/:id/close', { preHandler: app.requirePermission('receiving.close') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
     return withTx((tx) => svc.closeReceipt(tx, req.actor!, id));

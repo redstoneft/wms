@@ -1,3 +1,4 @@
+import { trainingStatusForMe } from '../training/service.js';
 import { permissionsForRoles, type Role } from '@wms/shared';
 import { loadConfig } from '../../config.js';
 import { getSettingsCached } from '../settings/routes.js';
@@ -134,7 +135,9 @@ export async function logout(sessionId: string, ctx: ActorContext): Promise<void
 export async function me(ctx: ActorContext, mfaPending: boolean) {
   const user = await getDb().users.findUnique({ where: { id: ctx.userId } });
   if (!user) throw new NotFoundError('user');
+  const training = mfaPending ? { required: false, completed: !!user.training_completed_at, current_page: null, steps_done: 0, steps_total: 0 } : await trainingStatusForMe(ctx);
   return {
+    training,
     id: user.id,
     username: user.username,
     full_name: user.full_name,

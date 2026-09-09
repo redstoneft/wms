@@ -21,6 +21,8 @@ export const inboundApi = {
   scan: (body: Record<string, unknown>, key: string) => api.postIdem<ReceiveScanResult>('/receipts/scan', body, key),
   /** idempotent */
   closeLpn: (lpn_code: string, key: string) => api.postIdem<{ lpn_code: string; putaway_task: { id: string; suggested_location_id: string | null } | null }>('/receipts/lpn/close', { lpn_code }, key),
+  /** receipt opened by mistake (nothing received): status CANCELLED, audited, number not reused */
+  cancel: (id: string, reason: string) => api.post<{ id: string; status: string }>(`/receipts/${id}/cancel`, { reason }),
   complete: (body: { receipt_id: string; accept_differences: boolean; notes?: string }) =>
     api.post<{ receipt: Receipt; incidents: string[]; putaway_tasks: string[]; differences: { sku: string; expected: string; received: string }[] }>('/receipts/complete', body),
   close: (id: string) => api.post<Receipt>(`/receipts/${id}/close`),

@@ -54,6 +54,7 @@ function describe(e: unknown): WmError {
 export function WmShell({ title, children, backTo = '/wm', step, onBack }: { title: string; children: ReactNode; backTo?: string; step?: ReactNode; onBack?: () => void }) {
   const nav = useNavigate();
   const { user, logout } = useAuth();
+  const training = user?.training?.required ? user.training : null;
   const [flash, setFlash] = useState<'ok' | 'err' | null>(null);
   const [toast, setToast] = useState<{ tone: 'ok' | 'warn'; msg: string } | null>(null);
   const [error, setError] = useState<WmError | null>(null);
@@ -112,6 +113,12 @@ export function WmShell({ title, children, backTo = '/wm', step, onBack }: { tit
             {user?.username?.slice(0, 10).toUpperCase() ?? 'SALIR'}
           </button>
         </header>
+      {training && (
+        <button type="button" onClick={() => nav('/wm/training')} className="flex w-full items-center justify-between bg-amber-500 px-3 py-2 text-left text-sm font-bold text-slate-950" data-testid="training-banner">
+          <span>MODO CAPACITACIÓN · paso {training.steps_done + 1} de {training.steps_total} · usa solo etiquetas ESC-… / CAP…</span>
+          <span className="underline">Ver guía</span>
+        </button>
+      )}
         {step && <div className="shrink-0 bg-sky-700 px-4 py-2 text-center text-base font-bold uppercase tracking-wide text-white">{step}</div>}
         <main className="thin-scroll flex-1 overflow-y-auto p-3 sm:p-4">{children}</main>
 

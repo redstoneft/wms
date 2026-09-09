@@ -35,10 +35,13 @@ model users {
   failed_login_count  Int       @default(0)
   locked_until        DateTime? @db.Timestamptz(6)
   password_changed_at DateTime  @default(now()) @db.Timestamptz(6)
+  training_completed_at DateTime? @db.Timestamptz(6) // guided warehouse-mode training finished (or waived by an admin)
+  training_completed_by String?   @db.Uuid
   created_at          DateTime  @default(now()) @db.Timestamptz(6)
   updated_at          DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
   user_roles user_roles[]
+  training_progress training_progress[]
   trusted_devices trusted_devices[]
   sessions   sessions[]
 
@@ -1213,4 +1216,20 @@ model assembly_outputs {
 
   @@index([order_id])
   @@index([lpn_id])
+}
+
+// Guided training: every step the user must perform in the school warehouse before operating for real.
+model training_progress {
+  user_id      String    @db.Uuid
+  step         String    @db.VarChar(20)
+  status       String    @default("PENDING") @db.VarChar(20) // PENDING | COMPLETED
+  prepared     Json?
+  prepared_at  DateTime? @db.Timestamptz(6)
+  completed_at DateTime? @db.Timestamptz(6)
+  evidence     Json?
+  attempts     Int       @default(0)
+
+  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, step])
 }

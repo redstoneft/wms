@@ -9,6 +9,7 @@ import { inventoryRoutes } from './modules/inventory/routes.js';
 import { putawayRoutes } from './modules/putaway/routes.js';
 import { transferRoutes } from './modules/transfers/routes.js';
 import { assemblyRoutes } from './modules/assembly/routes.js';
+import { trainingRoutes } from './modules/training/routes.js';
 import { replenishmentRoutes } from './modules/replenishment/routes.js';
 import { countRoutes } from './modules/counts/routes.js';
 import { orderRoutes } from './modules/orders/routes.js';
@@ -40,6 +41,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(putawayRoutes);
       await api.register(transferRoutes);
       await api.register(assemblyRoutes);
+      await api.register(trainingRoutes);
       await api.register(replenishmentRoutes);
       await api.register(countRoutes);
       await api.register(orderRoutes);

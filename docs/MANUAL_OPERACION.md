@@ -11,6 +11,8 @@ Todas las pantallas de piso están en **Modo Almacén** (botón en la parte supe
 
 ## RECEPCIÓN
 
+Recepción abierta por error (sin pallets recibidos): el supervisor la cancela desde la oficina (`Recepciones → detalle → Cancelar recepción`, con motivo). El folio no se reutiliza y la cancelación queda en auditoría; no afecta inventario.
+
 1. `Almacén → Recibir`. Elija la recepción abierta (contenedor). Si no existe, el supervisor la crea desde oficina.
 2. Escanee el **código de barras del producto** (caja o pieza). La pantalla muestra SKU y descripción.
 3. Teclee la **cantidad** y la unidad (CAJAS / PIEZAS). Pulse **NUEVO PALLET** para iniciar un pallet o **MISMO PALLET** para agregar al pallet actual (pallet mixto).

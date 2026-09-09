@@ -64,3 +64,6 @@ El proyecto `integration` de vitest aplica migraciones y seed base en `DATABASE_
 
 ## Cobertura de requerimientos
 Ver [REQUIREMENTS_MATRIX.md](REQUIREMENTS_MATRIX.md): requerimiento → implementación → prueba.
+
+* 2026-09-09 · Pallet mixto (dos SKUs) no se podía mover: el trigger `wms_validate_movement` rechazaba el segundo movimiento porque el primero ya había reubicado el LPN. Corregido admitiendo movimientos hermanos de la misma transacción (`20260909110000_mixed_pallet_move`); cubierto por `training.test.ts` (pedido de dos productos surtido a un solo pallet y llevado a staging).
+* 2026-09-09 · El carril de staging se asignaba en cualquier almacén y podía caer en una estación de armado; ahora solo en el almacén del pedido y en zonas tipo STAGING.

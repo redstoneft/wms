@@ -143,7 +143,7 @@ export const CONTAINER_TRANSITIONS: Record<ContainerStatus, readonly ContainerSt
   WITH_INCIDENT: ['ARRIVED', 'UNLOADING', 'UNLOADED', 'RECEIVING', 'RECEIVED', 'CLOSED'],
 };
 
-export const RECEIPT_STATUSES = ['OPEN', 'IN_PROGRESS', 'COMPLETED', 'CLOSED', 'WITH_INCIDENT'] as const;
+export const RECEIPT_STATUSES = ['OPEN', 'IN_PROGRESS', 'COMPLETED', 'CLOSED', 'WITH_INCIDENT', 'CANCELLED'] as const;
 export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 
 export const LPN_TYPES = ['INBOUND', 'STORAGE', 'OUTBOUND', 'RETURN'] as const;

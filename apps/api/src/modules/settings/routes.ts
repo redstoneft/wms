@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = {
   require_mfa_for_admin: true,
   mfa_trusted_device_days: 30,
   auto_print_lpn_labels: true,
+  training_required: true,
 } as const;
 
 export type SettingsShape = { [K in keyof typeof DEFAULT_SETTINGS]: (typeof DEFAULT_SETTINGS)[K] extends string ? string : (typeof DEFAULT_SETTINGS)[K] extends boolean ? boolean : number };

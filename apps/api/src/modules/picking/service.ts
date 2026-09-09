@@ -46,9 +46,11 @@ export async function createPickTask(tx: Tx, ctx: ActorContext, orderId: string,
 async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string) {
   const current = await tx.staging_assignments.findFirst({ where: { order_id: orderId, released_at: null }, include: { location: true } });
   if (current) return current.location;
+  // the lane lives in the warehouse where the order's stock is allocated (never a lane of another site)
   const rows = await tx.$queryRaw<{ id: string; code: string; barcode: string }[]>`
-    SELECT loc.id, loc.code, loc.barcode FROM locations loc
+    SELECT loc.id, loc.code, loc.barcode FROM locations loc JOIN zones z ON z.id = loc.zone_id AND z.zone_type = 'STAGING'
      WHERE loc.location_type = 'STAGING' AND loc.is_active AND loc.admin_status = 'ACTIVE'
+       AND loc.warehouse_id IN (SELECT DISTINCT l.warehouse_id FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id JOIN lpns l ON l.id = a.lpn_id WHERE ol.order_id = ${orderId}::uuid AND a.status = 'ACTIVE')
        AND NOT EXISTS (SELECT 1 FROM staging_assignments sa WHERE sa.location_id = loc.id AND sa.released_at IS NULL)
        AND NOT EXISTS (SELECT 1 FROM lpns l WHERE l.current_location_id = loc.id)
      ORDER BY loc.code FOR UPDATE SKIP LOCKED LIMIT 1`;

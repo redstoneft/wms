@@ -42,7 +42,11 @@ Cada persona entra con **su** usuario: la auditoría registra quién hizo cada m
 3. Cambiar la contraseña temporal en `Mi cuenta`.
 4. La sesión dura 12 horas; al terminar el turno tocar **Salir** para que el siguiente entre con su usuario.
 
-## 5. Prueba de aceptación por equipo
+## 5. Primera entrada: capacitación guiada
+
+Al entrar al modo almacén, el usuario nuevo solo ve **Capacitación guiada** y debe completarla (recibir, ubicar, trasladar… en el almacén escuela con las etiquetas de práctica). Ver `CAPACITACION.md`. Un supervisor puede reiniciarla o marcar exento desde Usuarios.
+
+## 6. Prueba de aceptación por equipo
 
 1. Modo almacén → **Ubicar**: escanear una etiqueta de rack → debe leerse sin teclear nada.
 2. **Traslados** → escanear un LPN existente → debe mostrar su contenido.

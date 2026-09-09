@@ -37,6 +37,18 @@ export default function ReceiptDetailPage() {
       toast.error('No se pudo completar', e);
     },
   });
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const cancel = useMutation({
+    mutationFn: () => inboundApi.cancel(id, cancelReason.trim()),
+    onSuccess: () => {
+      toast.success('Recepción cancelada', 'No se recibió nada; el folio queda como cancelado.');
+      setCancelOpen(false);
+      void qc.invalidateQueries({ queryKey: ['receipt', id] });
+      void qc.invalidateQueries({ queryKey: ['receipts'] });
+    },
+    onError: (e) => toast.error('No se pudo cancelar', e),
+  });
   const close = useMutation({
     mutationFn: () => inboundApi.close(id),
     onSuccess: () => {
@@ -86,6 +98,11 @@ export default function ReceiptDetailPage() {
                 <Button onClick={() => setConfirmComplete(true)}>Completar recepción</Button>
               </>
             )}
+            {open && can('receiving.close') && r.lpns.length === 0 && (
+              <Button variant="danger" onClick={() => setCancelOpen(true)}>
+                Cancelar recepción
+              </Button>
+            )}
             {(r.status === 'COMPLETED' || r.status === 'WITH_INCIDENT') && can('receiving.close') && (
               <Button variant="secondary" onClick={() => close.mutate()} loading={close.isPending}>
                 Cerrar recepción
@@ -94,6 +111,12 @@ export default function ReceiptDetailPage() {
           </>
         }
       />
+      <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancelar recepción" footer={<Button variant="danger" onClick={() => cancel.mutate()} disabled={cancelReason.trim().length < 3} loading={cancel.isPending}>Cancelar recepción</Button>}>
+        <p className="text-sm text-slate-600">Solo se puede cancelar una recepción sin pallets recibidos. El folio no se reutiliza y la cancelación queda en auditoría con el motivo.</p>
+        <Field label="Motivo" required>
+          <Input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="abierta por error" />
+        </Field>
+      </Modal>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Esperado vs recibido" className="lg:col-span-2" padded={false}>
           <Table
