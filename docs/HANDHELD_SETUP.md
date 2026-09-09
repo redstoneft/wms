@@ -8,7 +8,7 @@ El WMS no se instala como APK: es una aplicación web que se **agrega a la panta
 2. Ajustes → Pantalla: **tiempo de espera 10 min** o más; brillo automático apagado si están en zonas oscuras.
 3. Ajustes → Fecha y hora: **automática** (la sesión depende de la hora correcta).
 4. Ajustes → Idioma: Español (México). Teclado: dejar Gboard, pero **desactivar "sugerencias" y "corrección automática"** (Ajustes → Sistema → Idiomas → Gboard → Corrección de texto) para que no altere claves ni lotes.
-5. Google Play → Chrome → **Actualizar**. Si el equipo no trae Play, usar el Chrome que viene y no cambiarlo.
+5. Google Play → Chrome → **Actualizar**. Abrir después `https://wms.104-248-116-147.sslip.io/diag.html` en el equipo: todo debe salir en verde y el recuadro azul oscuro con letras blancas. Si algo sale en rojo, tomar captura y enviarla antes de seguir.
 
 ## 2. Escáner (modo teclado)
 
@@ -59,4 +59,5 @@ Cada persona entra con **su** usuario: la auditoría registra quién hizo cada m
 | Pide 2FA cada vez | No se marcó "confiar en este dispositivo" o se borraron datos de Chrome | Volver a marcarlo al entrar; no usar modo incógnito |
 | "Sin conexión" en la barra | Wi-Fi cayó; la app espera y reintenta | Verificar cobertura; los movimientos no se pierden, se reintentan |
 | Abre con barra de direcciones | Se abrió desde Chrome y no desde el ícono | Usar el ícono WMS de la pantalla principal |
+| Pantalla en blanco después de entrar | Chrome o WebView muy viejos (antes de la versión 111 no entendían los colores del WMS; ya corregido) o error de la app | Actualizar Chrome desde Play Store; abrir `/diag.html` y enviar captura; recargar la página |
 | Etiqueta no imprime | Impresora Zebra apagada o sin red | El servidor imprime por IP; revisar en `Etiquetas → Impresoras` |
