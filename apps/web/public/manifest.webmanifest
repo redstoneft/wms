@@ -1,0 +1,17 @@
+{
+  "name": "WMS CEDIS · Modo almacén",
+  "short_name": "WMS",
+  "description": "Terminal de almacén: recibir, ubicar, trasladar, surtir, verificar, cargar, contar y armar.",
+  "start_url": "/wm",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "es-MX",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
