@@ -257,6 +257,7 @@ model racks {
   x_m            Decimal @default(0) @db.Decimal(8, 2)
   y_m            Decimal @default(0) @db.Decimal(8, 2)
   rotation_deg   Int     @default(0)
+  bridges        Json? // [{ after_bay, width_m, levels: number[], positions, code }]: beam over a walkway, positions only on `levels`
   is_active      Boolean @default(true)
 
   aisle     aisles      @relation(fields: [aisle_id], references: [id])

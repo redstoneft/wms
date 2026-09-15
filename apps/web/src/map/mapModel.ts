@@ -143,11 +143,17 @@ export function buildSceneModel(p: MapPayload): SceneModel {
     const sin = Math.sin(theta);
     const toWorld = (lx: number, ly: number, h: number): Vec3 => [r.x_m + lx * cos - ly * sin, h, r.y_m + lx * sin + ly * cos];
     const H = r.levels * r.level_height_m + 0.15;
-    const L = r.bays * r.bay_width_m;
+    const bridges = [...(r.bridges ?? [])].sort((a, b) => a.after_bay - b.after_bay);
+    // local X where bay `bay` (1-based) starts: bridges before it push it along the rack
+    const bayStart = (bay: number) => (bay - 1) * r.bay_width_m + bridges.filter((br) => br.after_bay < bay).reduce((acc, br) => acc + br.width_m, 0);
+    const L = r.bays * r.bay_width_m + bridges.reduce((acc, br) => acc + br.width_m, 0);
     const post = 0.09;
-    for (let b = 0; b <= r.bays; b++) {
+    const uprightXs = new Set<number>();
+    for (let b = 0; b <= r.bays; b++) uprightXs.add(Math.round(bayStart(b + 1) * 1000) / 1000);
+    for (const br of bridges) uprightXs.add(Math.round((bayStart(br.after_bay) + r.bay_width_m) * 1000) / 1000); // near end of the bridge
+    for (const x of uprightXs) {
       for (const ly of [post / 2, r.depth_m - post / 2]) {
-        uprights.push({ rackId: r.id, center: toWorld(b * r.bay_width_m, ly, H / 2), size: [post, H, post], rotY: -theta });
+        uprights.push({ rackId: r.id, center: toWorld(x, ly, H / 2), size: [post, H, post], rotY: -theta });
       }
     }
     for (let b = 0; b < r.bays; b++) {
@@ -155,7 +161,21 @@ export function buildSceneModel(p: MapPayload): SceneModel {
         // beams at the base of every level above the floor and at the top
         const h = lvl === r.levels ? r.levels * r.level_height_m : lvl * r.level_height_m;
         for (const ly of [post / 2, r.depth_m - post / 2]) {
-          beams.push({ rackId: r.id, center: toWorld((b + 0.5) * r.bay_width_m, ly, h), size: [r.bay_width_m - post, 0.1, post], rotY: -theta });
+          beams.push({ rackId: r.id, center: toWorld(bayStart(b + 1) + r.bay_width_m / 2, ly, h), size: [r.bay_width_m - post, 0.1, post], rotY: -theta });
+        }
+      }
+    }
+    // bridge: a beam over the walkway at the base and top of each bridge level only (the passage below stays open)
+    for (const br of bridges) {
+      const x0 = bayStart(br.after_bay) + r.bay_width_m;
+      const hs = new Set<number>();
+      for (const lvl of br.levels) {
+        if (lvl > 1) hs.add((lvl - 1) * r.level_height_m);
+        hs.add(lvl * r.level_height_m);
+      }
+      for (const h of hs) {
+        for (const ly of [post / 2, r.depth_m - post / 2]) {
+          beams.push({ rackId: r.id, center: toWorld(x0 + br.width_m / 2, ly, h), size: [br.width_m + post, 0.14, post * 1.4], rotY: -theta });
         }
       }
     }

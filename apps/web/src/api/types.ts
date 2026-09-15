@@ -145,6 +145,7 @@ export interface Rack {
   x_m: Dec | number;
   y_m: Dec | number;
   rotation_deg: number;
+  bridges?: RackBridge[] | null;
   is_active: boolean;
   aisle?: Aisle & { zone: Zone };
 }
@@ -228,6 +229,15 @@ export interface MapRack {
   x_m: number;
   y_m: number;
   rotation_deg: number;
+  /** beams over walkways: bays after a bridge shift by width_m; positions only on `levels` */
+  bridges: RackBridge[];
+}
+export interface RackBridge {
+  after_bay: number;
+  width_m: number;
+  levels: number[];
+  positions: number;
+  code: string;
 }
 export interface MapLocation {
   id: Uuid;

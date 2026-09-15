@@ -20,6 +20,8 @@ export default function LabelsPage() {
   const [preview, setPreview] = useState<LabelPreviewT | null>(null);
   const [needsReason, setNeedsReason] = useState(false);
   const printers = useQuery({ queryKey: ['printers'], queryFn: masterdataApi.printers });
+  const [loose, setLoose] = useState({ codes: '', title: '' });
+  const looseList = loose.codes.split(/[,\s]+/).map((c) => c.trim().toUpperCase().replace(/^LOC-/, '')).filter(Boolean);
   // batch labelling of a whole rack (or zone) — the first thing to do after building the layout
   const zones = useQuery({ queryKey: ['zones', 'all'], queryFn: () => layoutApi.zones() });
   const [batch, setBatch] = useState({ zone_id: '', rack_id: '', printer_id: '' });
@@ -104,6 +106,28 @@ export default function LabelsPage() {
           {preview ? <LabelPreview model={preview.model} barcodePng={preview.barcode_png} qrPng={preview.qr_png} zpl={preview.zpl} /> : <p className="text-sm text-slate-500">Genera una vista previa para ver la etiqueta y su ZPL.</p>}
         </Card>
       </div>
+      <Card title="Etiquetas sueltas (faltantes, puentes, reimpresiones)" className="mt-4">
+        <div className="grid gap-3 lg:grid-cols-[1fr_260px]">
+          <Field label="Ubicaciones" hint="Una por línea o separadas por coma; vale el código (ALM-A-R01-N01-P35) o lo que escanea el lector (LOC-…). Rangos: escribe cada código.">
+            <textarea className="min-h-28 w-full rounded-md border border-slate-300 p-2 font-mono text-sm" value={loose.codes} onChange={(e) => setLoose({ ...loose, codes: e.target.value })} placeholder={'ALM-A-R01-N01-P35\nALM-A-R01-N02-P35\nALM-F-PTE-N03-P01'} data-testid="loose-codes" />
+          </Field>
+          <div className="grid gap-2">
+            <Field label="Nombre del pedido" hint="Se vuelve el número de orden en la app de etiquetas: WMS-HIDRO-<nombre>">
+              <Input value={loose.title} onChange={(e) => setLoose({ ...loose, title: e.target.value })} placeholder="A-P35-P40-Y-PUENTE-F" />
+            </Field>
+            <div className="text-xs text-slate-500">{looseList.length} etiqueta(s)</div>
+            <a className={`rounded-md px-3 py-2 text-center text-sm font-semibold ${looseList.length ? 'bg-sky-600 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'}`} href={labelsApi.embarqueUrl({ codes: looseList.join(','), title: loose.title || undefined })} download>
+              Pedido para la app de etiquetas (.json)
+            </a>
+            <a className={`rounded-md px-3 py-2 text-center text-sm font-semibold ${looseList.length ? 'bg-slate-700 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'}`} href={labelsApi.sheetUrl({ codes: looseList.join(','), title: loose.title || undefined })} target="_blank" rel="noreferrer">
+              Hoja imprimible
+            </a>
+            <a className={`rounded-md px-3 py-2 text-center text-sm font-semibold ${looseList.length ? 'bg-slate-700 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'}`} href={labelsApi.zplUrl({ codes: looseList.join(','), title: loose.title || undefined })} download>
+              Archivo ZPL
+            </a>
+          </div>
+        </div>
+      </Card>
       <Card title="Etiquetar un rack completo" className="mt-4">
         <div className="grid gap-3 lg:grid-cols-4">
           <Field label="Zona" required>

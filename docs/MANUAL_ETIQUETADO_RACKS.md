@@ -27,7 +27,7 @@ Debajo del código va el código de barras `LOC-…`. Las etiquetas impresas en 
 | `ALM-C` | 11 | 3 | 66 | Espalda con B. Módulo 1 del lado del frente |
 | `ALM-D` | 11 | 3 | 66 | Doble con E, junto al pasillo del medianero. Módulo 1 del lado del frente |
 | `ALM-E` | 11 | 3 | 66 | Espalda con D. Módulo 1 del lado del frente |
-| `ALM-F` | 14 | 3 | 84 | Muro medianero con los vecinos. Módulo 1 del lado del frente |
+| `ALM-F` | 14 | 3 | 84 + 2 | Muro medianero con los vecinos. Módulo 1 del lado del frente. **Puente** entre los módulos 12 y 13 (sobre el pasillo, solo nivel 3): etiquetas `ALM-F-PTE-N03-P01` y `P02`, se pegan en la viga del puente, izquierda y derecha |
 | `ALM-X` | 7 | 3 | 42 | Muro del fondo, mitad izquierda. Módulo 1 en el extremo izquierdo, crece hacia el rack A |
 | `ALM-Z` | 1 | 3 | 9 | Pegado a las oficinas, lado de los portones. Un módulo de 3 tarimas |
 
@@ -74,7 +74,7 @@ Las reimpresiones las hace el supervisor en **Etiquetas** con motivo; quedan reg
 | C | 66 | | | | |
 | D | 66 | | | | |
 | E | 66 | | | | |
-| F | 84 | | | | |
+| F | 84 + 2 (puente) | | | | |
 | X | 42 | | | | |
 
 Antes de entregar: todos los racks completos y sin sobrantes; primer y último módulo de cada rack verificados con escáner; lista de reimpresión entregada; ninguna etiqueta sobre tornillos, soldaduras u otra etiqueta. Firma quien etiquetó y quien revisó.

@@ -1,3 +1,4 @@
+import type { RackBridge } from '@wms/shared';
 import type { Tx } from '../../db.js';
 import { RuleError } from '../../errors.js';
 
@@ -11,6 +12,29 @@ export interface RackGeometry {
   x_m: number;
   y_m: number;
   rotation_deg: number;
+  /** bridges over walkways (see zRackBridge, parsed by rackBridges()); bays after a bridge shift by its width. Raw JSON from the DB is accepted. */
+  bridges?: unknown;
+}
+
+export function rackBridges(g: { bridges?: unknown }): RackBridge[] {
+  const raw = Array.isArray(g.bridges) ? (g.bridges as RackBridge[]) : [];
+  return [...raw].sort((a, b) => a.after_bay - b.after_bay);
+}
+
+/** Local X (meters along the rack) where bay `bay` starts, counting the bridges before it. */
+export function bayStartM(g: RackGeometry, bay: number): number {
+  const shift = rackBridges(g).filter((b) => b.after_bay < bay).reduce((acc, b) => acc + b.width_m, 0);
+  return (bay - 1) * g.bay_width_m + shift;
+}
+
+/** Local X where a bridge starts: right after its bay (earlier bridges already counted). */
+export function bridgeStartM(g: RackGeometry, bridge: RackBridge): number {
+  return bayStartM(g, bridge.after_bay) + g.bay_width_m;
+}
+
+/** Total length of the rack along its axis, bridges included. */
+export function rackLengthM(g: RackGeometry): number {
+  return g.bays * g.bay_width_m + rackBridges(g).reduce((acc, b) => acc + b.width_m, 0);
 }
 
 /** Location code: <ZONE>-<AISLE>-R<RACK>-N<LEVEL>-P<POSITION> e.g. A-03-R05-N02-P04 */
@@ -23,7 +47,22 @@ export function locationCode(zone: string, aisle: string, rack: string, level: n
 /** World coordinates (meters) of a position center within a rack. */
 export function positionWorldCoords(g: RackGeometry, bay: number, level: number, posInBay: number): { x: number; y: number; z: number } {
   const slotW = g.bay_width_m / g.positions_per_bay;
-  const localX = (bay - 1) * g.bay_width_m + (posInBay - 0.5) * slotW;
+  return localToWorld(g, bayStartM(g, bay) + (posInBay - 0.5) * slotW, level);
+}
+
+/** World coordinates of a pallet position on a bridge. */
+export function bridgeWorldCoords(g: RackGeometry, bridge: RackBridge, level: number, pos: number): { x: number; y: number; z: number } {
+  const slotW = bridge.width_m / bridge.positions;
+  return localToWorld(g, bridgeStartM(g, bridge) + (pos - 0.5) * slotW, level);
+}
+
+/** Bridge location code: <ZONE>-<AISLE>-<PTE>-N<LEVEL>-P<POS> e.g. ALM-F-PTE-N03-P01 */
+export function bridgeLocationCode(zone: string, aisle: string, seg: string, level: number, pos: number): string {
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  return `${zone}-${aisle}-${seg}-N${pad2(level)}-P${pad2(pos)}`;
+}
+
+function localToWorld(g: RackGeometry, localX: number, level: number): { x: number; y: number; z: number } {
   const localY = g.depth_m / 2;
   const rad = (g.rotation_deg * Math.PI) / 180;
   const x = g.x_m + localX * Math.cos(rad) - localY * Math.sin(rad);
@@ -48,6 +87,7 @@ export async function syncRackLocations(
   const existing = await tx.locations.findMany({ where: { rack_id: rack.id } });
   const byCode = new Map(existing.map((l) => [l.code, l]));
   const wanted = new Set<string>();
+  const bridgeOps: { code: string; geometry: Record<string, number> }[] = [];
   let created = 0;
   let updated = 0;
   for (let bay = 1; bay <= rack.bays; bay++) {
@@ -91,6 +131,44 @@ export async function syncRackLocations(
           created++;
         }
       }
+    }
+  }
+  // bridges: positions only on their levels, coded <ZONE>-<AISLE>-<PTE>-N##-P## so the labels stand out
+  rackBridges(rack).forEach((br, k) => {
+    if (br.after_bay >= rack.bays) throw new RuleError('BRIDGE_AFTER_LAST_BAY', `Bridge after bay ${br.after_bay}: the rack has ${rack.bays} bays`);
+    const seg = k === 0 ? br.code : `${br.code}${k + 1}`;
+    for (const level of br.levels) {
+      if (level > rack.levels) throw new RuleError('BRIDGE_LEVEL', `Bridge level ${level} exceeds the rack's ${rack.levels} levels`);
+      for (let p = 1; p <= br.positions; p++) {
+        const code = bridgeLocationCode(aisle.zone.code, aisle.code, seg, level, p);
+        wanted.add(code);
+        const w = bridgeWorldCoords(rack, br, level, p);
+        bridgeOps.push({
+          code,
+          geometry: {
+            bay: br.after_bay,
+            level,
+            position: 900 + k * 10 + p, // sorts after every regular position of the rack
+            x_m: w.x,
+            y_m: w.y,
+            z_m: w.z,
+            width_m: round2(br.width_m / br.positions),
+            depth_m: rack.depth_m,
+            height_m: rack.level_height_m,
+            pick_sequence: pickSequence(aisle.code, rack.code, br.after_bay, level, Math.min(9, rack.positions_per_bay + p)),
+          },
+        });
+      }
+    }
+  });
+  for (const { code, geometry } of bridgeOps) {
+    const ex = byCode.get(code);
+    if (ex) {
+      await tx.locations.update({ where: { id: ex.id }, data: { ...geometry, is_active: true } });
+      updated++;
+    } else {
+      await tx.locations.create({ data: { warehouse_id: aisle.zone.warehouse_id, zone_id: aisle.zone_id, rack_id: rack.id, code, barcode: `LOC-${code}`, location_type: opts.location_type, pallet_capacity: opts.pallet_capacity, max_weight_kg: opts.max_weight_kg, ...geometry } });
+      created++;
     }
   }
   let deactivated = 0;

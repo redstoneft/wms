@@ -32,7 +32,7 @@ Racks según el croquis del usuario (2026-09-02), todos de 3 niveles, módulos d
 | X | 7 | 42 | Contra el muro del fondo, mitad izquierda (misma zona `ALM`) |
 | Z | 1 (3 tarimas) | 9 | Pegado a las oficinas por el lado de los portones |
 
-Total 519 posiciones de rack.
+Total 519 posiciones de rack, más el **puente** del rack F: entre los módulos 12 y 13 (posiciones F24 y F25) hay una viga sobre el pasillo con tarimas solo en el nivel 3; sus dos posiciones se llaman `ALM-F-PTE-N03-P01` y `P02` (521 en total). Los puentes se configuran en el rack (**Layout → rack → Puente sobre pasillo**: después de qué bahía, ancho, nivel, posiciones, nombre); los módulos posteriores se recorren el ancho del puente en el 3D.
 
 Zona `ARM` (Armado): área de piso `HID-ARM-01` (tipo STAGING) donde se transforman insumos en producto terminado; es la "estación" que se escanea al iniciar un armado. Puede moverse o redimensionarse desde **Layout**. Las coordenadas exactas de cada rack se ajustan en `Mapa 3D → Modo edición`: **arrastrar el rack por su cuerpo y soltarlo** guarda la nueva posición (redondeada a 10 cm, dentro del paño; las ubicaciones se recalculan y conservan su código y su inventario); el clic abre el formulario para teclear X/Y/rotación. La separación entre racks quedó en pasillos de 4.4 m para montacargas.
 

@@ -254,27 +254,44 @@ const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 // office printer, ZPL file for Zebra, or direct print. Used to label a rack
 // before it goes into operation.
 // ---------------------------------------------------------------------------
-export interface LocationBatchFilter { rack_id?: string; zone_id?: string; warehouse_id?: string }
+/** bridge positions are numbered from 900 (see syncRackLocations) */
+const isBridge = (loc: { position: number | null }) => (loc.position ?? 0) >= 900;
+
+export interface LocationBatchFilter {
+  rack_id?: string;
+  zone_id?: string;
+  warehouse_id?: string;
+  /** explicit list of location codes or barcodes (LOC-…): loose labels — the missing ones of a rack, a bridge, a reprint */
+  codes?: string[];
+  /** name of the batch (also the Embarque order number suffix) */
+  title?: string;
+}
 
 export async function locationLabelBatch(filter: LocationBatchFilter) {
   const db = getDb();
-  if (!filter.rack_id && !filter.zone_id && !filter.warehouse_id) throw new RuleError('FILTER_REQUIRED', 'Indique rack_id, zone_id o warehouse_id');
+  const codes = (filter.codes ?? []).map((c) => c.trim().toUpperCase().replace(/^LOC-/, '')).filter(Boolean);
+  if (!filter.rack_id && !filter.zone_id && !filter.warehouse_id && !codes.length) throw new RuleError('FILTER_REQUIRED', 'Indique rack_id, zone_id, warehouse_id o codes');
   const rows = await db.locations.findMany({
-    where: { is_active: true, ...(filter.rack_id ? { rack_id: filter.rack_id } : {}), ...(filter.zone_id ? { zone_id: filter.zone_id } : {}), ...(filter.warehouse_id ? { warehouse_id: filter.warehouse_id } : {}) },
+    where: { is_active: true, ...(codes.length ? { code: { in: codes } } : {}), ...(filter.rack_id ? { rack_id: filter.rack_id } : {}), ...(filter.zone_id ? { zone_id: filter.zone_id } : {}), ...(filter.warehouse_id ? { warehouse_id: filter.warehouse_id } : {}) },
     include: { zone: true, rack: { include: { aisle: true } } },
     // labelling order: rack by rack (aisle → rack), then one column at a time from the floor up
     // (P01 N01, N02, N03 → P02 N01, N02, N03 …) — never interleaved across racks
     orderBy: [{ rack: { aisle: { code: 'asc' } } }, { rack: { code: 'asc' } }, { position: 'asc' }, { level: 'asc' }, { code: 'asc' }],
   });
   if (!rows.length) throw new NotFoundError('locations', JSON.stringify(filter));
-  const title = filter.rack_id && rows[0]?.rack ? `Rack ${rows[0].rack.aisle.code}-${rows[0].rack.code} · ${rows[0].zone?.name ?? ''}` : rows[0]?.zone ? `Zona ${rows[0].zone.code} · ${rows[0].zone.name}` : 'Ubicaciones';
+  if (codes.length) {
+    const found = new Set(rows.map((r) => r.code));
+    const missing = codes.filter((c) => !found.has(c));
+    if (missing.length) throw new NotFoundError('locations', missing.join(', '));
+  }
+  const title = filter.title ? filter.title : filter.rack_id && rows[0]?.rack ? `Rack ${rows[0].rack.aisle.code}-${rows[0].rack.code} · ${rows[0].zone?.name ?? ''}` : rows[0]?.zone ? `Zona ${rows[0].zone.code} · ${rows[0].zone.name}` : 'Ubicaciones';
   const models: LabelModel[] = rows.map((loc) => ({
     label_type: 'LOCATION',
     title: loc.code,
     barcode: loc.barcode,
     qr: loc.barcode,
     lines: [
-      { label: 'TIPO', value: loc.location_type },
+      { label: 'TIPO', value: isBridge(loc) ? 'PUENTE' : loc.location_type },
       { label: 'ZONA', value: loc.zone?.code ?? '-' },
       ...(loc.level ? [{ label: 'NIVEL', value: String(loc.level) }] : []),
       { label: 'CAP', value: `${loc.pallet_capacity} PLT / ${loc.max_weight_kg} kg` },
@@ -292,7 +309,7 @@ export async function locationLabelSheetHtml(filter: LocationBatchFilter): Promi
   for (const loc of rows) {
     const png = await bwipjs.toBuffer({ bcid: 'code128', text: loc.barcode, scale: 3, height: 18, includetext: false });
     const levelTxt = loc.level ? `NIVEL ${loc.level}` : loc.location_type;
-    const where = loc.rack ? `Pasillo ${esc(loc.rack.aisle.code)} · Rack ${esc(loc.rack.code)} · Módulo ${loc.bay ?? '-'} · Pos ${loc.position ?? '-'}` : `${esc(loc.zone?.name ?? '')}`;
+    const where = loc.rack ? (isBridge(loc) ? `Pasillo ${esc(loc.rack.aisle.code)} · PUENTE después del módulo ${loc.bay ?? '-'} · Pos ${(loc.position ?? 0) % 10}` : `Pasillo ${esc(loc.rack.aisle.code)} · Rack ${esc(loc.rack.code)} · Módulo ${loc.bay ?? '-'} · Pos ${loc.position ?? '-'}`) : `${esc(loc.zone?.name ?? '')}`;
     cells.push(`<div class="l"><div class="code">${esc(loc.code)}</div><img src="data:image/png;base64,${png.toString('base64')}" alt=""><div class="bc">${esc(loc.barcode)}</div><div class="meta"><b>${esc(levelTxt)}</b> · ${where}</div></div>`);
   }
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>
@@ -333,7 +350,7 @@ export async function locationLabelsAsEmbarquePedido(filter: LocationBatchFilter
   const first = rows[0]!;
   const wh = await getDb().warehouses.findUnique({ where: { id: first.warehouse_id }, select: { code: true, name: true } });
   const rackCode = first.rack ? `${first.rack.aisle.code}-${first.rack.code}` : (first.zone?.code ?? 'AREA');
-  const oc = `WMS-${wh?.code ?? 'WMS'}-${first.zone?.code ?? ''}-${rackCode}`.replace(/-+/g, '-').replace(/-$/, '');
+  const oc = (filter.title ? `WMS-${wh?.code ?? 'WMS'}-${filter.title.toUpperCase().replace(/[^A-Z0-9]+/g, '-')}` : `WMS-${wh?.code ?? 'WMS'}-${first.zone?.code ?? ''}-${rackCode}`).replace(/-+/g, '-').replace(/-$/, '').slice(0, 60);
   const today = new Date().toISOString().slice(0, 10);
   const n = rows.length;
   const lineas = rows.map((loc, i) => ({
@@ -343,7 +360,7 @@ export async function locationLabelsAsEmbarquePedido(filter: LocationBatchFilter
     sku_interno: loc.code,
     gtin: loc.barcode,
     color: null,
-    descripcion: `Ubicación ${loc.code}${loc.level ? ` · nivel ${loc.level}` : ''}${loc.rack ? ` · rack ${loc.rack.aisle.code}-${loc.rack.code} módulo ${loc.bay ?? ''}` : ''}`,
+    descripcion: `Ubicación ${loc.code}${loc.level ? ` · nivel ${loc.level}` : ''}${loc.rack ? (isBridge(loc) ? ` · PUENTE rack ${loc.rack.aisle.code} después del módulo ${loc.bay ?? ''}` : ` · rack ${loc.rack.aisle.code}-${loc.rack.code} módulo ${loc.bay ?? ''}`) : ''}`,
     cantidad: 1,
     cantidad_surtir: 1,
     uom: 'EA',

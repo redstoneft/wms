@@ -132,12 +132,13 @@ function RacksTab() {
   const racks = useQuery({ queryKey: ['racks'], queryFn: () => layoutApi.racks() });
   const zones = useQuery({ queryKey: ['zones'], queryFn: () => layoutApi.zones() });
   const aisles = (zones.data ?? []).flatMap((z) => (z.aisles ?? []).map((a) => ({ ...a, zone: z })));
-  const empty = { aisle_id: '', code: '', bays: '8', levels: '4', positions_per_bay: '1', bay_width_m: '2.7', level_height_m: '1.8', depth_m: '1.2', x_m: '0', y_m: '0', rotation_deg: '0', location_type: 'RESERVE', pallet_capacity: '1', max_weight_kg: '1500' };
+  const empty = { aisle_id: '', code: '', bays: '8', levels: '4', positions_per_bay: '1', bay_width_m: '2.7', level_height_m: '1.8', depth_m: '1.2', x_m: '0', y_m: '0', rotation_deg: '0', location_type: 'RESERVE', pallet_capacity: '1', max_weight_kg: '1500', bridge_after_bay: '', bridge_width_m: '3', bridge_level: '3', bridge_positions: '2', bridge_code: 'PTE' };
   const [form, setForm] = useState<typeof empty & { id?: string } | null>(null);
   const save = useMutation({
     mutationFn: () => {
       const f = form!;
-      const geo = { bays: Number(f.bays), levels: Number(f.levels), positions_per_bay: Number(f.positions_per_bay), bay_width_m: Number(f.bay_width_m), level_height_m: Number(f.level_height_m), depth_m: Number(f.depth_m), x_m: Number(f.x_m), y_m: Number(f.y_m), rotation_deg: Number(f.rotation_deg) };
+      const bridges = f.bridge_after_bay ? [{ after_bay: Number(f.bridge_after_bay), width_m: Number(f.bridge_width_m) || 3, levels: [Number(f.bridge_level) || Number(f.levels)], positions: Number(f.bridge_positions) || 2, code: (f.bridge_code || 'PTE').toUpperCase() }] : [];
+      const geo = { bays: Number(f.bays), levels: Number(f.levels), positions_per_bay: Number(f.positions_per_bay), bay_width_m: Number(f.bay_width_m), level_height_m: Number(f.level_height_m), depth_m: Number(f.depth_m), x_m: Number(f.x_m), y_m: Number(f.y_m), rotation_deg: Number(f.rotation_deg), bridges };
       return f.id ? layoutApi.updateRack(f.id, { code: f.code, ...geo }) : layoutApi.createRack({ aisle_id: f.aisle_id, code: f.code, ...geo, location_type: f.location_type, pallet_capacity: Number(f.pallet_capacity), max_weight_kg: Number(f.max_weight_kg), generate_locations: true });
     },
     onSuccess: (r) => {
@@ -149,7 +150,7 @@ function RacksTab() {
     },
     onError: (e) => toast.error('No se pudo guardar', e),
   });
-  const edit = (r: Rack) => setForm({ id: r.id, aisle_id: r.aisle_id, code: r.code, bays: String(r.bays), levels: String(r.levels), positions_per_bay: String(r.positions_per_bay), bay_width_m: String(r.bay_width_m), level_height_m: String(r.level_height_m), depth_m: String(r.depth_m), x_m: String(r.x_m), y_m: String(r.y_m), rotation_deg: String(r.rotation_deg), location_type: 'RESERVE', pallet_capacity: '1', max_weight_kg: '1500' });
+  const edit = (r: Rack) => setForm({ id: r.id, aisle_id: r.aisle_id, code: r.code, bays: String(r.bays), levels: String(r.levels), positions_per_bay: String(r.positions_per_bay), bay_width_m: String(r.bay_width_m), level_height_m: String(r.level_height_m), depth_m: String(r.depth_m), x_m: String(r.x_m), y_m: String(r.y_m), rotation_deg: String(r.rotation_deg), location_type: 'RESERVE', pallet_capacity: '1', max_weight_kg: '1500', bridge_after_bay: r.bridges?.[0] ? String(r.bridges[0].after_bay) : '', bridge_width_m: r.bridges?.[0] ? String(r.bridges[0].width_m) : '3', bridge_level: r.bridges?.[0] ? String(r.bridges[0].levels[0] ?? r.levels) : String(r.levels), bridge_positions: r.bridges?.[0] ? String(r.bridges[0].positions) : '2', bridge_code: r.bridges?.[0]?.code ?? 'PTE' });
   return (
     <div>
       {can('layout.manage') && <div className="mb-3"><Button onClick={() => setForm({ ...empty, aisle_id: aisles[0]?.id ?? '' })}>Nuevo rack</Button></div>}
@@ -159,7 +160,7 @@ function RacksTab() {
         rowKey={(r) => r.id}
         columns={[
           { key: 'c', header: 'Rack', render: (r) => <b>{r.aisle?.zone.code}-{r.aisle?.code} {r.code}</b> },
-          { key: 'g', header: 'Bahías × niveles × pos.', render: (r) => `${r.bays} × ${r.levels} × ${r.positions_per_bay} = ${r.bays * r.levels * r.positions_per_bay} ubic.` },
+          { key: 'g', header: 'Bahías × niveles × pos.', render: (r) => `${r.bays} × ${r.levels} × ${r.positions_per_bay} = ${r.bays * r.levels * r.positions_per_bay} ubic.${r.bridges?.length ? ` + puente (${r.bridges.map((b) => `tras bahía ${b.after_bay}, ${b.levels.length * b.positions} pos.`).join('; ')})` : ''}` },
           { key: 'd', header: 'Dimensiones', render: (r) => `${r.bay_width_m} m × ${r.level_height_m} m · fondo ${r.depth_m} m` },
           { key: 'p', header: 'Posición', render: (r) => `${r.x_m}, ${r.y_m} m · ${r.rotation_deg}°` },
           { key: 'a', header: '', render: (r) => can('layout.manage') && <Button size="sm" variant="secondary" onClick={() => edit(r)}>Editar geometría</Button> },
@@ -185,6 +186,16 @@ function RacksTab() {
             <Field label="X (m)"><Input type="number" step="0.1" value={form.x_m} onChange={(e) => setForm({ ...form, x_m: e.target.value })} /></Field>
             <Field label="Y (m)"><Input type="number" step="0.1" value={form.y_m} onChange={(e) => setForm({ ...form, y_m: e.target.value })} /></Field>
             <Field label="Rotación (°)"><Input type="number" value={form.rotation_deg} onChange={(e) => setForm({ ...form, rotation_deg: e.target.value })} /></Field>
+            <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-800">Puente sobre pasillo (opcional)</div>
+              <div className="grid gap-2 sm:grid-cols-5">
+                <Field label="Después de la bahía" hint="vacío = sin puente"><Input type="number" value={form.bridge_after_bay} onChange={(e) => setForm({ ...form, bridge_after_bay: e.target.value })} /></Field>
+                <Field label="Ancho (m)"><Input type="number" step="0.1" value={form.bridge_width_m} onChange={(e) => setForm({ ...form, bridge_width_m: e.target.value })} /></Field>
+                <Field label="Nivel con tarimas"><Input type="number" value={form.bridge_level} onChange={(e) => setForm({ ...form, bridge_level: e.target.value })} /></Field>
+                <Field label="Posiciones"><Input type="number" value={form.bridge_positions} onChange={(e) => setForm({ ...form, bridge_positions: e.target.value })} /></Field>
+                <Field label="Nombre" hint="ALM-F-PTE-N03-P01"><Input value={form.bridge_code} onChange={(e) => setForm({ ...form, bridge_code: e.target.value.toUpperCase() })} /></Field>
+              </div>
+            </div>
             {!form.id && (
               <>
                 <Field label="Tipo de ubicación"><Select value={form.location_type} onChange={(e) => setForm({ ...form, location_type: e.target.value })}><option>RESERVE</option><option>PICKING</option></Select></Field>

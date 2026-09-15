@@ -271,6 +271,7 @@ export async function layoutRoutes(app: FastifyInstance) {
         bays: r.bays,
         levels: r.levels,
         positions_per_bay: r.positions_per_bay,
+        bridges: Array.isArray(r.bridges) ? r.bridges : [],
         bay_width_m: Number(r.bay_width_m),
         level_height_m: Number(r.level_height_m),
         depth_m: Number(r.depth_m),

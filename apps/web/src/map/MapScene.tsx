@@ -478,7 +478,7 @@ function RackHandles({ model, drag, selectedRackId, onDragStart, onSelectRack }:
   return (
     <group>
       {model.rackLabels.map(({ rack }) => {
-        const L = rack.bays * rack.bay_width_m;
+        const L = rack.bays * rack.bay_width_m + (rack.bridges ?? []).reduce((acc, b) => acc + b.width_m, 0);
         const H = rack.levels * rack.level_height_m;
         const th = (rack.rotation_deg * Math.PI) / 180;
         const cx = rack.x_m + (L / 2) * Math.cos(th) - (rack.depth_m / 2) * Math.sin(th);

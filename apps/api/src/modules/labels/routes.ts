@@ -20,13 +20,26 @@ export async function labelRoutes(app: FastifyInstance) {
     return printLabel(req.actor!, body, 'PRINT');
   });
 
-  const zBatch = z.object({ rack_id: zUuid.optional(), zone_id: zUuid.optional(), warehouse_id: zUuid.optional() });
+  const zBatch = z
+    .object({
+      rack_id: zUuid.optional(),
+      zone_id: zUuid.optional(),
+      warehouse_id: zUuid.optional(),
+      /** comma-separated location codes/barcodes for loose labels (max 500) */
+      codes: z
+        .string()
+        .trim()
+        .max(20000)
+        .optional()
+        .transform((v) => (v ? v.split(/[,\s]+/).filter(Boolean).slice(0, 500) : undefined)),
+      title: z.string().trim().max(60).optional(),
+    });
 
   /** Printable sheet (any printer / save as PDF) with one label per location of a rack or zone. */
   app.get('/labels/locations.html', { preHandler: app.requirePermission('labels.print') }, async (req, reply) => {
     const q = zBatch.parse(req.query);
     const html = await locationLabelSheetHtml(q);
-    await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_sheet', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? '-', after: q }));
+    await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_sheet', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? q.title ?? '-', after: { ...q, codes: q.codes?.length } }));
     reply.type('text/html; charset=utf-8');
     return html;
   });
@@ -35,7 +48,7 @@ export async function labelRoutes(app: FastifyInstance) {
   app.get('/labels/locations.zpl', { preHandler: app.requirePermission('labels.print') }, async (req, reply) => {
     const q = zBatch.parse(req.query);
     const { title, models } = await locationLabelBatch(q);
-    await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_zpl', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? '-', after: { ...q, labels: models.length } }));
+    await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_zpl', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? q.title ?? '-', after: { ...q, labels: models.length } }));
     reply.type('text/plain; charset=utf-8');
     reply.header('Content-Disposition', `attachment; filename="${title.replace(/[^A-Za-z0-9_-]+/g, '_')}.zpl"`);
     return models.map((m) => renderZpl(m)).join('\n');
@@ -45,7 +58,7 @@ export async function labelRoutes(app: FastifyInstance) {
   app.get('/labels/locations.embarque.json', { preHandler: app.requirePermission('labels.print') }, async (req, reply) => {
     const q = zBatch.parse(req.query);
     const pedido = await locationLabelsAsEmbarquePedido(q);
-    await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_export_embarque', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? '-', after: { ...q, oc: pedido.encabezado.num_orden_compra, labels: pedido.etiquetas.length } }));
+    await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_export_embarque', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? q.title ?? '-', after: { ...q, oc: pedido.encabezado.num_orden_compra, labels: pedido.etiquetas.length } }));
     reply.type('application/json; charset=utf-8');
     reply.header('Content-Disposition', `attachment; filename="${pedido.encabezado.num_orden_compra}.json"`);
     return JSON.stringify(pedido);

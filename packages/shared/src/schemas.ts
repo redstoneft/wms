@@ -151,6 +151,17 @@ export const zUpdateZone = z.object({
 
 export const zCreateAisle = z.object({ zone_id: zUuid, code: zCode.max(20), name: z.string().trim().max(120).optional() });
 
+/** A bridge: beam(s) spanning a walkway right after `after_bay`, with pallet positions only on `levels` (e.g. [3]).
+ * Locations are coded <ZONE>-<AISLE>-<code>-N##-P## (ALM-F-PTE-N03-P01) so the labels stand out. */
+export const zRackBridge = z.object({
+  after_bay: z.number().int().min(1).max(200),
+  width_m: z.number().positive().max(20).default(3),
+  levels: z.array(z.number().int().min(1).max(30)).min(1).max(30).default([3]),
+  positions: z.number().int().min(1).max(10).default(2),
+  code: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{2,6}$/, '2-6 letras o dígitos').default('PTE'),
+});
+export type RackBridge = z.infer<typeof zRackBridge>;
+
 export const zCreateRack = z.object({
   aisle_id: zUuid,
   code: zCode.max(20),
@@ -163,6 +174,7 @@ export const zCreateRack = z.object({
   x_m: z.number().min(0).max(10000).default(0),
   y_m: z.number().min(0).max(10000).default(0),
   rotation_deg: z.number().int().min(0).max(359).default(0),
+  bridges: z.array(zRackBridge).max(10).optional(),
   location_type: z.enum(['RESERVE', 'PICKING']).default('RESERVE'),
   pallet_capacity: z.number().int().min(1).max(10).default(1),
   max_weight_kg: z.number().positive().max(100000).default(1500),
@@ -180,6 +192,8 @@ export const zUpdateRack = z.object({
   x_m: z.number().min(0).max(10000).optional(),
   y_m: z.number().min(0).max(10000).optional(),
   rotation_deg: z.number().int().min(0).max(359).optional(),
+  /** [] removes every bridge; omitted = unchanged */
+  bridges: z.array(zRackBridge).max(10).optional(),
   is_active: z.boolean().optional(),
 });
 
