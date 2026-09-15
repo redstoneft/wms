@@ -24,14 +24,14 @@ El sistema solo lee la primera pestaña. Las demás son de consulta: no se borra
 | `pieces_per_case` | Si `CASE` | Piezas que trae cada caja contada **en esa fila**. El mismo artículo puede venir con distinto factor de empaque, por eso se escribe aquí. Vacío = se usa "Piezas por caja" del catálogo | `6` |
 | `lot` | Según SKU | Lote impreso en el producto; obligatorio si la pestaña SKUs dice "Requiere lote = SÍ" | `L2409` |
 | `expiry_date` | Según SKU | Caducidad `AAAA-MM-DD`; obligatoria si "Requiere caducidad = SÍ" | `2027-03-31` |
-| `lpn` | No | Nombre de la tarima. Vacío = una tarima nueva por fila. El mismo texto en varias filas = tarima mixta | `TARIMA-07` |
+| `lpn` | No | Nombre de la tarima. **Vacío = todas las filas de la misma ubicación son una sola tarima** (una posición = una tarima). Solo si en una posición hay dos tarimas, ponles nombres distintos | (vacío) |
 
 Reglas:
 
 * No mover ni renombrar los encabezados de la fila 1. Sin filas vacías intermedias.
 * `qty` sin decimales, sin comas ni letras. Si contaste cajas: `uom_code = CASE`, `qty` = número de cajas y `pieces_per_case` = piezas por caja de esa fila. Piezas guardadas = `qty × pieces_per_case`. Si el mismo artículo está en cajas de 6 y en cajas de 12, son dos filas.
 * Las celdas de `sku`, `location_code`, `lot` y `lpn` están en formato texto para que Excel no quite ceros ni convierta a número. No cambiar el formato de la columna.
-* Una ubicación puede tener varias filas (varios productos en el mismo hueco). Cada fila, o cada grupo con el mismo `lpn`, se convierte en una tarima real con etiqueta LPN.
+* Una ubicación puede tener varias filas (varios productos, o cajas completas más una caja abierta). Con `lpn` vacío todas forman una tarima real con etiqueta LPN. Un `lpn` distinto por fila solo si de verdad hay varias tarimas en esa posición; la validación avisa si pones más tarimas de las que caben.
 
 ## 3. Cómo encontrar el SKU
 
@@ -45,7 +45,7 @@ La lista de `location_code` contiene las etiquetas tal como las escribe el lecto
 ## 4. Cómo llenar el conteo
 
 1. Recorre rack por rack en el mismo orden de las etiquetas: módulo 1, columna izquierda de abajo hacia arriba, luego la derecha.
-2. En cada hueco con mercancía: escribe el `location_code` de la etiqueta, la clave de la caja en `sku`, la cantidad y la unidad. Si hay más de un producto en el hueco, una fila por producto; si comparten tarima, mismo `lpn`.
+2. En cada hueco con mercancía: escribe el `location_code` de la etiqueta, la clave de la caja en `sku`, la cantidad y la unidad. Si hay más de un producto en el hueco, una fila por producto; con `lpn` vacío quedan en la misma tarima.
 3. Huecos vacíos no se capturan.
 4. Al terminar guarda como `.xlsx` (no CSV, no Google Sheets sin descargar).
 

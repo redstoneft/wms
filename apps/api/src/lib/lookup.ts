@@ -33,11 +33,26 @@ export async function getSkuById(tx: Tx, id: string): Promise<SkuRow> {
 }
 
 /** Resolve a scanned barcode (SKU code or any registered barcode) to a SKU + packaging level. */
+/** Spellings of the same code: UPC-A (12 digits) is the EAN-13 with a leading zero, which Excel loves to drop; SAE keys may carry spaces. */
+export function barcodeVariants(code: string): string[] {
+  const c = code.trim();
+  const out = new Set<string>([c, c.replace(/\s+/g, '_'), c.toUpperCase()]);
+  if (/^\d{12}$/.test(c)) out.add(`0${c}`);
+  if (/^0\d{12}$/.test(c)) out.add(c.slice(1));
+  if (/^\d{1,11}$/.test(c) && c.length >= 8) out.add(c.padStart(13, '0')); // GTIN-8/-12 typed without zeros
+  return [...out].filter(Boolean);
+}
+
 export async function resolveSkuBarcode(tx: Tx, scanned: string): Promise<{ sku: SkuRow; uom_code: UomCode }> {
   const s = scanned.trim();
   if (!s) throw new RuleError('EMPTY_SCAN', 'Empty barcode');
-  const rows = await tx.$queryRaw<{ sku_id: string; uom_code: UomCode }[]>`SELECT sku_id, uom_code FROM sku_barcodes WHERE barcode = ${s}`;
-  if (rows[0]) return { sku: await getSkuById(tx, rows[0].sku_id), uom_code: rows[0].uom_code };
+  const variants = barcodeVariants(s);
+  const rows = await tx.$queryRaw<{ sku_id: string; uom_code: UomCode; barcode: string }[]>`SELECT sku_id, uom_code, barcode FROM sku_barcodes WHERE barcode = ANY(${variants}::text[])`;
+  const exact = rows.find((r) => r.barcode === s) ?? rows[0];
+  if (exact) return { sku: await getSkuById(tx, exact.sku_id), uom_code: exact.uom_code };
+  const byGtin = await tx.$queryRaw<SkuRow[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
+      allow_negative, is_active, requires_lot, requires_expiry FROM skus WHERE gtin = ANY(${variants}::text[])`;
+  if (byGtin[0]) return { sku: byGtin[0], uom_code: 'PIECE' };
   const bySku = await tx.$queryRaw<SkuRow[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
       allow_negative, is_active, requires_lot, requires_expiry FROM skus WHERE code = ${s}`;
   if (bySku[0]) return { sku: bySku[0], uom_code: 'PIECE' };

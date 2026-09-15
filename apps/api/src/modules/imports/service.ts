@@ -9,6 +9,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { createInventory, createLpn, lockLocationByBarcode } from '../../inventory/ledger.js';
+import { barcodeVariants } from '../../lib/lookup.js';
 import { createOrder } from '../orders/service.js';
 
 export interface RowError {
@@ -60,6 +61,18 @@ export const TEMPLATES: Record<ImportType, { columns: string[]; example: string[
 
 /** Count sheets are filled by scanning the rack label, which carries the barcode `LOC-<code>`: both forms name the same location. */
 export const normalizeLocationCode = (s: string) => s.trim().toUpperCase().replace(/^LOC-/, '');
+
+/** The sku column may hold the WMS code or any alias (SAE key, GTIN with or without its leading zero). */
+async function resolveImportSku(tx: Tx, code: string) {
+  const direct = await tx.skus.findUnique({ where: { code } });
+  if (direct) return direct;
+  const vs = barcodeVariants(code);
+  const alias = await tx.sku_barcodes.findFirst({ where: { barcode: { in: vs } }, include: { sku: true } });
+  if (alias) return alias.sku;
+  const byGtin = await tx.skus.findFirst({ where: { gtin: { in: vs } } });
+  if (byGtin) return byGtin;
+  throw new NotFoundError('sku', code);
+}
 
 export function templateCsv(type: ImportType): string {
   const t = TEMPLATES[type];
@@ -116,7 +129,10 @@ async function parseXlsx(buf: Buffer): Promise<{ rows: Row[]; errors: RowError[]
       if (s) empty = false;
       if (h) obj[h] = s;
     });
-    if (!empty) rows.push(obj);
+    if (!empty) {
+      obj.__row = String(idx); // the Excel row, so errors point at what the person sees (blank rows are skipped)
+      rows.push(obj);
+    }
   });
   return { rows, errors: [] };
 }
@@ -206,17 +222,18 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
   const t = TEMPLATES[type];
   if (rows.length === 0) errors.push({ row: 1, column: '', message: 'file has no data rows' });
   if (rows.length > 50_000) errors.push({ row: 1, column: '', message: 'max 50,000 rows per file' });
-  const present = new Set(Object.keys(rows[0] ?? {}));
+  const present = new Set(Object.keys(rows[0] ?? {}).filter((k) => k !== '__row'));
   const required = t.columns.filter((c) => !isOptionalColumn(type, c));
   for (const c of required) if (!present.has(c)) errors.push({ row: 1, column: c, message: `missing column '${c}'` });
   if (errors.length) return { ok: false, total_rows: rows.length, valid_rows: 0, errors, summary: {} };
 
   const schema = ROW_SCHEMAS[type];
   const parsed: Record<string, unknown>[] = [];
+  const rowNo = (i: number) => Number(rows[i]?.__row) || i + 2;
   rows.forEach((r, i) => {
     const res = schema.safeParse(r);
     if (!res.success) {
-      for (const iss of res.error.issues) errors.push({ row: i + 2, column: String(iss.path[0] ?? ''), message: iss.message });
+      for (const iss of res.error.issues) errors.push({ row: rowNo(i), column: String(iss.path[0] ?? ''), message: iss.message });
     } else parsed.push(res.data as Record<string, unknown>);
   });
   if (errors.length) return { ok: false, total_rows: rows.length, valid_rows: parsed.length, errors, summary: {} };
@@ -231,10 +248,17 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
   if (type !== 'SKUS') {
     const missing = skuCodes.filter((c) => !skuMap.has(c));
     if (missing.length) {
-      const aliases = await tx.sku_barcodes.findMany({ where: { barcode: { in: [...new Set(missing.flatMap((c) => [c, c.replace(/\s+/g, '_'), c.toUpperCase()]))] } }, include: { sku: { include: { uoms: true } } } });
+      const wanted = [...new Set(missing.flatMap((c) => barcodeVariants(c)))];
+      const aliases = await tx.sku_barcodes.findMany({ where: { barcode: { in: wanted } }, include: { sku: { include: { uoms: true } } } });
+      const byGtin = await tx.skus.findMany({ where: { gtin: { in: wanted } }, include: { uoms: true } });
       for (const c of missing) {
-        const hit = aliases.find((b) => b.barcode === c || b.barcode === c.replace(/\s+/g, '_') || b.barcode === c.toUpperCase());
+        const vs = barcodeVariants(c);
+        const hit = aliases.find((b) => vs.includes(b.barcode));
         if (hit) skuMap.set(c, hit.sku);
+        else {
+          const g = byGtin.find((x) => x.gtin && vs.includes(x.gtin));
+          if (g) skuMap.set(c, g);
+        }
       }
     }
   }
@@ -243,20 +267,20 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
     case 'SKUS': {
       parsed.forEach((p, i) => {
         const code = p.sku as string;
-        if (dup.has(code)) errors.push({ row: i + 2, column: 'sku', message: `duplicate sku ${code} in file` });
+        if (dup.has(code)) errors.push({ row: rowNo(i), column: 'sku', message: `duplicate sku ${code} in file` });
         dup.add(code);
         const caseQ = p.case_qty ? BigInt(p.case_qty as string) : null;
         const palletC = p.pallet_cases ? BigInt(p.pallet_cases as string) : null;
         const innerQ = p.inner_qty ? BigInt(p.inner_qty as string) : null;
-        if (palletC && !caseQ) errors.push({ row: i + 2, column: 'pallet_cases', message: 'pallet_cases requires case_qty' });
+        if (palletC && !caseQ) errors.push({ row: rowNo(i), column: 'pallet_cases', message: 'pallet_cases requires case_qty' });
         const defs = [{ uom_code: 'PIECE' as UomCode, base_qty: 1n }];
         if (innerQ) defs.push({ uom_code: 'INNER', base_qty: innerQ });
         if (caseQ) defs.push({ uom_code: 'CASE', base_qty: caseQ });
         if (caseQ && palletC) defs.push({ uom_code: 'PALLET', base_qty: caseQ * palletC });
         try {
-          for (const e of validateUomHierarchy(defs)) errors.push({ row: i + 2, column: 'case_qty', message: e });
+          for (const e of validateUomHierarchy(defs)) errors.push({ row: rowNo(i), column: 'case_qty', message: e });
         } catch (e) {
-          errors.push({ row: i + 2, column: 'case_qty', message: (e as Error).message });
+          errors.push({ row: rowNo(i), column: 'case_qty', message: (e as Error).message });
         }
       });
       summary.existing = skus.length;
@@ -267,21 +291,21 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       const bcs = parsed.map((p) => p.barcode as string);
       const existing = await tx.sku_barcodes.findMany({ where: { barcode: { in: bcs } }, include: { sku: true } });
       parsed.forEach((p, i) => {
-        if (!skuMap.has(p.sku as string)) errors.push({ row: i + 2, column: 'sku', message: `unknown sku ${p.sku}` });
-        if (dup.has(p.barcode as string)) errors.push({ row: i + 2, column: 'barcode', message: 'duplicate barcode in file' });
+        if (!skuMap.has(p.sku as string)) errors.push({ row: rowNo(i), column: 'sku', message: `unknown sku ${p.sku}` });
+        if (dup.has(p.barcode as string)) errors.push({ row: rowNo(i), column: 'barcode', message: 'duplicate barcode in file' });
         dup.add(p.barcode as string);
         const ex = existing.find((e) => e.barcode === p.barcode);
-        if (ex && ex.sku.code !== p.sku) errors.push({ row: i + 2, column: 'barcode', message: `barcode already assigned to ${ex.sku.code}` });
+        if (ex && ex.sku.code !== p.sku) errors.push({ row: rowNo(i), column: 'barcode', message: `barcode already assigned to ${ex.sku.code}` });
         const uom = (p.uom_code as string) || 'PIECE';
         const s = skuMap.get(p.sku as string);
-        if (s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
+        if (s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: rowNo(i), column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
       });
       break;
     }
     case 'CUSTOMERS':
     case 'SUPPLIERS':
       parsed.forEach((p, i) => {
-        if (dup.has(p.code as string)) errors.push({ row: i + 2, column: 'code', message: 'duplicate code in file' });
+        if (dup.has(p.code as string)) errors.push({ row: rowNo(i), column: 'code', message: 'duplicate code in file' });
         dup.add(p.code as string);
       });
       break;
@@ -289,9 +313,9 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       const zones = await tx.zones.findMany();
       parsed.forEach((p, i) => {
         const code = (p.code as string).toUpperCase();
-        if (dup.has(code)) errors.push({ row: i + 2, column: 'code', message: 'duplicate code in file' });
+        if (dup.has(code)) errors.push({ row: rowNo(i), column: 'code', message: 'duplicate code in file' });
         dup.add(code);
-        if (p.zone_code && !zones.find((z) => z.code === p.zone_code)) errors.push({ row: i + 2, column: 'zone_code', message: `unknown zone ${p.zone_code}` });
+        if (p.zone_code && !zones.find((z) => z.code === p.zone_code)) errors.push({ row: rowNo(i), column: 'zone_code', message: `unknown zone ${p.zone_code}` });
       });
       break;
     }
@@ -299,13 +323,13 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       const zones = await tx.zones.findMany({ include: { aisles: { include: { racks: true } } } });
       parsed.forEach((p, i) => {
         const z = zones.find((x) => x.code === p.zone_code);
-        if (!z) errors.push({ row: i + 2, column: 'zone_code', message: `unknown zone ${p.zone_code}` });
+        if (!z) errors.push({ row: rowNo(i), column: 'zone_code', message: `unknown zone ${p.zone_code}` });
         const key = `${p.zone_code}/${p.aisle_code}/${p.rack_code}`;
-        if (dup.has(key)) errors.push({ row: i + 2, column: 'rack_code', message: 'duplicate rack in file' });
+        if (dup.has(key)) errors.push({ row: rowNo(i), column: 'rack_code', message: 'duplicate rack in file' });
         dup.add(key);
-        if (z?.aisles.find((a) => a.code === p.aisle_code)?.racks.find((r) => r.code === p.rack_code)) errors.push({ row: i + 2, column: 'rack_code', message: `rack ${key} already exists` });
-        if (Number(p.bays) < 1 || Number(p.bays) > 200) errors.push({ row: i + 2, column: 'bays', message: '1-200' });
-        if (Number(p.levels) < 1 || Number(p.levels) > 30) errors.push({ row: i + 2, column: 'levels', message: '1-30' });
+        if (z?.aisles.find((a) => a.code === p.aisle_code)?.racks.find((r) => r.code === p.rack_code)) errors.push({ row: rowNo(i), column: 'rack_code', message: `rack ${key} already exists` });
+        if (Number(p.bays) < 1 || Number(p.bays) > 200) errors.push({ row: rowNo(i), column: 'bays', message: '1-200' });
+        if (Number(p.levels) < 1 || Number(p.levels) > 30) errors.push({ row: rowNo(i), column: 'levels', message: '1-30' });
       });
       break;
     }
@@ -315,29 +339,38 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       const anyInventory = await tx.inventory_movements.count();
       if (anyInventory > 0) summary.warning = 'Warehouse already has movements; initial inventory is added as INITIAL_LOAD on top of existing stock';
       const lpnLoc = new Map<string, string>();
+      // one pallet per location unless the rows name different lpn groups; a position holds `pallet_capacity` pallets
+      const groupsByLoc = new Map<string, Set<string>>();
+      parsed.forEach((p) => {
+        const lc = normalizeLocationCode(p.location_code as string);
+        const g = (p.lpn as string) || lc;
+        if (!groupsByLoc.has(lc)) groupsByLoc.set(lc, new Set());
+        groupsByLoc.get(lc)!.add(g);
+      });
       parsed.forEach((p, i) => {
         const s = skuMap.get(p.sku as string);
-        if (!s) errors.push({ row: i + 2, column: 'sku', message: `unknown sku ${p.sku}` });
+        if (!s) errors.push({ row: rowNo(i), column: 'sku', message: `unknown sku ${p.sku}` });
         const loc = locs.find((l) => l.code === normalizeLocationCode(p.location_code as string));
-        if (!loc) errors.push({ row: i + 2, column: 'location_code', message: `unknown location ${p.location_code}` });
-        else if (!['RESERVE', 'PICKING'].includes(loc.location_type)) errors.push({ row: i + 2, column: 'location_code', message: `location ${loc.code} is ${loc.location_type}; initial inventory goes to RESERVE/PICKING` });
-        else if (loc.admin_status !== 'ACTIVE') errors.push({ row: i + 2, column: 'location_code', message: `location ${loc.code} is ${loc.admin_status}` });
+        if (!loc) errors.push({ row: rowNo(i), column: 'location_code', message: `unknown location ${p.location_code}` });
+        else if (!['RESERVE', 'PICKING'].includes(loc.location_type)) errors.push({ row: rowNo(i), column: 'location_code', message: `location ${loc.code} is ${loc.location_type}; initial inventory goes to RESERVE/PICKING` });
+        else if (loc.admin_status !== 'ACTIVE') errors.push({ row: rowNo(i), column: 'location_code', message: `location ${loc.code} is ${loc.admin_status}` });
+        else if ((groupsByLoc.get(loc.code)?.size ?? 0) > loc.pallet_capacity) errors.push({ row: rowNo(i), column: 'lpn', message: `location ${loc.code}: ${groupsByLoc.get(loc.code)!.size} pallets for a capacity of ${loc.pallet_capacity}; rows of the same pallet must share the lpn (or leave it empty)` });
         const uom = (p.uom_code as string) || 'PIECE';
         const ppc = p.pieces_per_case as string;
         // Packing factor comes from the row when counting cases: the same article ships with different case sizes.
-        if (ppc && uom !== 'CASE') errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case only applies with uom_code = CASE' });
-        else if (ppc && BigInt(ppc) === 0n) errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case must be > 0' });
-        else if (uom === 'CASE' && !ppc && s && !s.uoms.some((u) => u.uom_code === 'CASE')) errors.push({ row: i + 2, column: 'pieces_per_case', message: `sku ${p.sku} has no default pieces per case; fill pieces_per_case` });
-        else if (uom !== 'CASE' && s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
-        if (BigInt(p.qty as string) === 0n) errors.push({ row: i + 2, column: 'qty', message: 'qty must be > 0' });
+        if (ppc && uom !== 'CASE') errors.push({ row: rowNo(i), column: 'pieces_per_case', message: 'pieces_per_case only applies with uom_code = CASE' });
+        else if (ppc && BigInt(ppc) === 0n) errors.push({ row: rowNo(i), column: 'pieces_per_case', message: 'pieces_per_case must be > 0' });
+        else if (uom === 'CASE' && !ppc && s && !s.uoms.some((u) => u.uom_code === 'CASE')) errors.push({ row: rowNo(i), column: 'pieces_per_case', message: `sku ${p.sku} has no default pieces per case; fill pieces_per_case` });
+        else if (uom !== 'CASE' && s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: rowNo(i), column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
+        if (BigInt(p.qty as string) === 0n) errors.push({ row: rowNo(i), column: 'qty', message: 'qty must be > 0' });
         if (p.lpn) {
-          if (!/^PLT-\d{4}-\d{8}$/.test(p.lpn as string) && !/^[A-Za-z0-9_-]{1,30}$/.test(p.lpn as string)) errors.push({ row: i + 2, column: 'lpn', message: 'lpn must be a group key (letters/digits) — real codes are generated' });
+          if (!/^PLT-\d{4}-\d{8}$/.test(p.lpn as string) && !/^[A-Za-z0-9_-]{1,30}$/.test(p.lpn as string)) errors.push({ row: rowNo(i), column: 'lpn', message: 'lpn must be a group key (letters/digits) — real codes are generated' });
           const prev = lpnLoc.get(p.lpn as string);
-          if (prev && prev !== normalizeLocationCode(p.location_code as string)) errors.push({ row: i + 2, column: 'lpn', message: `lpn group ${p.lpn} appears in two locations` });
+          if (prev && prev !== normalizeLocationCode(p.location_code as string)) errors.push({ row: rowNo(i), column: 'lpn', message: `lpn group ${p.lpn} appears in two locations` });
           lpnLoc.set(p.lpn as string, normalizeLocationCode(p.location_code as string));
         }
-        if (s?.requires_lot && !p.lot) errors.push({ row: i + 2, column: 'lot', message: `sku ${p.sku} requires lot` });
-        if (s?.requires_expiry && !p.expiry_date) errors.push({ row: i + 2, column: 'expiry_date', message: `sku ${p.sku} requires expiry_date` });
+        if (s?.requires_lot && !p.lot) errors.push({ row: rowNo(i), column: 'lot', message: `sku ${p.sku} requires lot` });
+        if (s?.requires_expiry && !p.expiry_date) errors.push({ row: rowNo(i), column: 'expiry_date', message: `sku ${p.sku} requires expiry_date` });
       });
       break;
     }
@@ -348,21 +381,21 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       const existing = await tx.orders.findMany({ where: { order_number: { in: orderNos } }, select: { order_number: true } });
       const orderCustomer = new Map<string, string>();
       parsed.forEach((p, i) => {
-        if (!custs.find((c) => c.code === p.customer_code)) errors.push({ row: i + 2, column: 'customer_code', message: `unknown customer ${p.customer_code}` });
-        if (existing.find((e) => e.order_number === p.order_number)) errors.push({ row: i + 2, column: 'order_number', message: `order ${p.order_number} already exists` });
+        if (!custs.find((c) => c.code === p.customer_code)) errors.push({ row: rowNo(i), column: 'customer_code', message: `unknown customer ${p.customer_code}` });
+        if (existing.find((e) => e.order_number === p.order_number)) errors.push({ row: rowNo(i), column: 'order_number', message: `order ${p.order_number} already exists` });
         const s = skuMap.get(p.sku as string);
-        if (!s) errors.push({ row: i + 2, column: 'sku', message: `unknown sku ${p.sku}` });
-        else if (!s.is_active) errors.push({ row: i + 2, column: 'sku', message: `sku ${p.sku} is inactive` });
+        if (!s) errors.push({ row: rowNo(i), column: 'sku', message: `unknown sku ${p.sku}` });
+        else if (!s.is_active) errors.push({ row: rowNo(i), column: 'sku', message: `sku ${p.sku} is inactive` });
         const uom = (p.uom_code as string) || 'PIECE';
         const ppc = p.pieces_per_case as string;
         // Packing factor comes from the row when counting cases: the same article ships with different case sizes.
-        if (ppc && uom !== 'CASE') errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case only applies with uom_code = CASE' });
-        else if (ppc && BigInt(ppc) === 0n) errors.push({ row: i + 2, column: 'pieces_per_case', message: 'pieces_per_case must be > 0' });
-        else if (uom === 'CASE' && !ppc && s && !s.uoms.some((u) => u.uom_code === 'CASE')) errors.push({ row: i + 2, column: 'pieces_per_case', message: `sku ${p.sku} has no default pieces per case; fill pieces_per_case` });
-        else if (uom !== 'CASE' && s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
-        if (BigInt(p.qty as string) === 0n) errors.push({ row: i + 2, column: 'qty', message: 'qty must be > 0' });
+        if (ppc && uom !== 'CASE') errors.push({ row: rowNo(i), column: 'pieces_per_case', message: 'pieces_per_case only applies with uom_code = CASE' });
+        else if (ppc && BigInt(ppc) === 0n) errors.push({ row: rowNo(i), column: 'pieces_per_case', message: 'pieces_per_case must be > 0' });
+        else if (uom === 'CASE' && !ppc && s && !s.uoms.some((u) => u.uom_code === 'CASE')) errors.push({ row: rowNo(i), column: 'pieces_per_case', message: `sku ${p.sku} has no default pieces per case; fill pieces_per_case` });
+        else if (uom !== 'CASE' && s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: rowNo(i), column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
+        if (BigInt(p.qty as string) === 0n) errors.push({ row: rowNo(i), column: 'qty', message: 'qty must be > 0' });
         const prev = orderCustomer.get(p.order_number as string);
-        if (prev && prev !== p.customer_code) errors.push({ row: i + 2, column: 'customer_code', message: `order ${p.order_number} has two different customers` });
+        if (prev && prev !== p.customer_code) errors.push({ row: rowNo(i), column: 'customer_code', message: `order ${p.order_number} has two different customers` });
         orderCustomer.set(p.order_number as string, p.customer_code as string);
       });
       summary.orders = orderNos.length;
@@ -374,12 +407,12 @@ export async function validateRows(tx: Tx, type: ImportType, rows: Row[], parseE
       const poNos = [...new Set(parsed.map((p) => p.po_number as string))];
       const existing = await tx.purchase_orders.findMany({ where: { po_number: { in: poNos } } });
       parsed.forEach((p, i) => {
-        if (!sups.find((c) => c.code === p.supplier_code)) errors.push({ row: i + 2, column: 'supplier_code', message: `unknown supplier ${p.supplier_code}` });
-        if (existing.find((e) => e.po_number === p.po_number)) errors.push({ row: i + 2, column: 'po_number', message: `PO ${p.po_number} already exists` });
+        if (!sups.find((c) => c.code === p.supplier_code)) errors.push({ row: rowNo(i), column: 'supplier_code', message: `unknown supplier ${p.supplier_code}` });
+        if (existing.find((e) => e.po_number === p.po_number)) errors.push({ row: rowNo(i), column: 'po_number', message: `PO ${p.po_number} already exists` });
         const s = skuMap.get(p.sku as string);
-        if (!s) errors.push({ row: i + 2, column: 'sku', message: `unknown sku ${p.sku}` });
+        if (!s) errors.push({ row: rowNo(i), column: 'sku', message: `unknown sku ${p.sku}` });
         const uom = (p.uom_code as string) || 'CASE';
-        if (s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: i + 2, column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
+        if (s && !s.uoms.some((u) => u.uom_code === uom)) errors.push({ row: rowNo(i), column: 'uom_code', message: `sku ${p.sku} has no UoM ${uom}` });
       });
       summary.purchase_orders = poNos.length;
       break;
@@ -562,14 +595,15 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
       let lpns = 0;
       let movements = 0;
       for (const r of rows) {
-        const sku = await tx.skus.findUniqueOrThrow({ where: { code: r.sku } });
+        const sku = await resolveImportSku(tx, r.sku);
         const loc = await lockLocationByBarcode(tx, normalizeLocationCode(r.location_code));
         const uom = (r.uom_code || 'PIECE') as UomCode;
         let factor: bigint;
         if (uom === 'CASE' && r.pieces_per_case) factor = BigInt(r.pieces_per_case); // packing factor of this row, not the catalogue default
         else factor = (await tx.sku_uoms.findUniqueOrThrow({ where: { sku_id_uom_code: { sku_id: sku.id, uom_code: uom } } })).base_qty;
         const base = BigInt(r.qty) * factor;
-        let lpnRef = r.lpn ? groups.get(r.lpn) : undefined;
+        const groupKey = r.lpn || loc.code; // rows of the same location form ONE pallet unless they name different lpn groups
+        let lpnRef = groups.get(groupKey);
         let lpnRow;
         if (!lpnRef) {
           // physical capacity of the slot is enforced for initial loads too
@@ -579,7 +613,7 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
           lpnRow = await createLpn(tx, ctx, { warehouse_id: loc.warehouse_id, lpn_type: 'STORAGE', location_id: loc.id, lot: r.lot || null, expiry_date: r.expiry_date || null, cases_count: uom === 'CASE' ? Number(r.qty) : 0 });
           await tx.lpns.update({ where: { id: lpnRow.id }, data: { status: 'STORED' } });
           lpnRef = { id: lpnRow.id, code: lpnRow.code };
-          if (r.lpn) groups.set(r.lpn, lpnRef);
+          groups.set(groupKey, lpnRef);
           lpns++;
         } else {
           const rows2 = await tx.$queryRaw<{ id: string; code: string; lpn_type: string; status: string; warehouse_id: string; current_location_id: string | null; receipt_id: string | null; container_id: string | null; supplier_id: string | null; order_id: string | null; shipment_id: string | null; cases_count: number; weight_kg: string | null; version: number }[]>`
@@ -604,7 +638,7 @@ async function applyRows(tx: Tx, ctx: ActorContext, type: ImportType, rowsIn: Re
           order_date: first.order_date ? new Date(first.order_date) : undefined,
           priority: first.priority ? Number(first.priority) : 5,
           source: 'IMPORT',
-          lines: lines.map((l) => ({ sku_code: l.sku, qty: BigInt(l.qty), uom_code: (l.uom_code || 'PIECE') as UomCode })),
+          lines: await Promise.all(lines.map(async (l) => ({ sku_code: (await resolveImportSku(tx, l.sku)).code, qty: BigInt(l.qty), uom_code: (l.uom_code || 'PIECE') as UomCode }))),
         });
         n++;
       }

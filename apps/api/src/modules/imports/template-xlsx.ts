@@ -16,7 +16,7 @@ const GENERIC_HELP: Record<string, Help> = {
   location_code: { desc: 'Ubicación: escanea la etiqueta del hueco directamente (LOC-ALM-A-R01-N01-P01) o escribe el código sin el prefijo (ALM-A-R01-N01-P01); las dos formas valen. Ver pestaña Ubicaciones.', required: true, example: 'LOC-ALM-A-R01-N01-P01' },
   lot: { desc: 'Lote impreso en el producto. Obligatorio solo si el SKU requiere lote (pestaña SKUs).', required: false, example: 'L2409' },
   expiry_date: { desc: 'Caducidad en formato AAAA-MM-DD. Obligatoria solo si el SKU requiere caducidad.', required: false, example: '2027-03-31' },
-  lpn: { desc: 'Identificador del pallet. Vacío = el sistema genera un LPN nuevo por fila. Repite el mismo texto en varias filas para un pallet mixto (varios productos en la misma tarima).', required: false, example: 'TARIMA-07' },
+  lpn: { desc: 'Nombre de la tarima. Vacío = todas las filas de la misma ubicación son UNA tarima (una posición = una tarima). Solo si en una misma ubicación hay dos tarimas, ponles nombres distintos (TARIMA-A, TARIMA-B).', required: false, example: '' },
   customer_code: { desc: 'Código del cliente. Ver pestaña Clientes.', required: true, example: 'CLI-001' },
   supplier_code: { desc: 'Código del proveedor. Ver pestaña Proveedores.', required: true, example: 'PROV-001' },
   order_number: { desc: 'Número de pedido; las filas con el mismo número forman un pedido.', required: true, example: 'PED-48571' },
@@ -225,7 +225,7 @@ export async function templateXlsx(type: ImportType): Promise<{ buffer: Buffer; 
     notes.push(
       'Cada fila (o grupo de filas con el mismo lpn) crea una tarima real con etiqueta LPN. Imprime esas etiquetas en Etiquetas → LPN y pégalas en la tarima.',
       'Si contaste cajas: uom_code = CASE, qty = número de cajas y pieces_per_case = piezas que trae cada caja de esa fila (el mismo artículo puede venir en cajas de distinto tamaño). Piezas = qty × pieces_per_case.',
-      'Una ubicación puede tener varias filas (varios productos). Una tarima mixta = mismo lpn en varias filas y misma ubicación.',
+      'Una ubicación puede tener varias filas (varios productos o cajas completas + una caja abierta): con lpn vacío todas van en la misma tarima. Un lpn distinto por fila solo si de verdad hay varias tarimas en esa posición.',
     );
   }
   if (type === 'ORDERS') {
