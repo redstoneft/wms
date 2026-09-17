@@ -11,6 +11,9 @@ Configure la IP fija de la impresora (menú de red de la Zebra o Zebra Setup Uti
 printf '^XA^FO50,50^A0N,50,50^FDWMS OK^FS^XZ' | nc -w 3 192.168.1.50 9100
 ```
 
+## Etiquetas por rack: ubicaciones o tarimas
+`Etiquetas → Etiquetar un rack completo` tiene dos modos. **Ubicaciones**: una etiqueta por hueco (para rotular el rack). **Tarimas**: una etiqueta LPN por cada tarima guardada en ese rack, en el mismo orden de módulo y nivel, para pegarla en la mercancía (por ejemplo tras el inventario inicial). Los cuatro botones (hoja, ZPL, exportar a la app de etiquetas, imprimir en Zebra) funcionan igual en ambos modos; en la API es el parámetro `kind=LPN` de `/labels/locations.*`.
+
 ## Impresora en USB (sin red): estación de impresión
 Si la Zebra está conectada por USB a una PC, no hace falta red ni IP. Dar de alta la impresora en modo **Estación (USB)** y pulsar **Generar token**. En esa PC corre `tools/print-agent/wms_print_agent.py` (ver su README): cada 3 s pide al WMS las etiquetas en cola para esa impresora (`GET /api/print-agent/jobs`, autenticado con `X-Agent-Token`), las manda a la cola RAW de Windows y confirma (`POST /api/print-agent/jobs/:id/result`). Estados: `QUEUED` → `PRINTING` (tomada por la estación) → `SENT` / `FAILED`; una etiqueta tomada y no confirmada en 2 min vuelve a la cola. En Impresoras se ve la última conexión de la estación y el nombre de la PC. Es el mismo esquema que la estación de la app de etiquetas, así que la misma PC y la misma Zebra sirven para ambos sistemas.
 

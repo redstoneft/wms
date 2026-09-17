@@ -1,6 +1,6 @@
 // Batch location labels: printable sheet, ZPL file and direct print for a whole rack.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { closeApp, sql, userWithRoles, type Client } from '../helpers.js';
+import { closeApp, makeFixture, sql, storedPallet, userWithRoles, type Client } from '../helpers.js';
 
 let sup: Client;
 let rackId: string;
@@ -63,5 +63,29 @@ describe('location labels in batch (labelling a rack)', () => {
     const after = await sql<{ n: bigint; bays: number; ppb: number }>(`SELECT count(*) AS n, r.bays, r.positions_per_bay AS ppb FROM locations l JOIN racks r ON r.id = l.rack_id WHERE l.rack_id = '${rackId}' AND l.is_active GROUP BY r.bays, r.positions_per_bay`);
     expect(after).toEqual(before);
     await sup.patch(`/racks/${rackId}`, { x_m: Number(rack[0]!.x_m) }); // restore
+  });
+
+  it('kind=LPN: one label per pallet stored in the rack, in the slots\' walking order, for sheet, ZPL and Embarque export', async () => {
+    const f = await makeFixture({ skus: 2 });
+    const rack = await sql<{ rack_id: string }>(`SELECT rack_id FROM locations WHERE id = '${f.reserve[0]!.id}'`);
+    const p2 = await storedPallet(f, 1, f.reserve[2]!.id, 30n); // later slot first on purpose
+    const p1 = await storedPallet(f, 0, f.reserve[0]!.id, 12n);
+    const html = await sup.raw('GET', `/labels/locations.html?rack_id=${rack[0]!.rack_id}&kind=LPN`);
+    expect(html.status).toBe(200);
+    const codes = [...html.text.matchAll(/<div class="code">([^<]+)<\/div>/g)].map((m) => m[1]);
+    expect(codes).toEqual([p1.code, p2.code]); // slot order, not creation order
+    expect(html.text).toContain(f.reserve[0]!.code);
+    const zpl = await sup.raw('GET', `/labels/locations.zpl?rack_id=${rack[0]!.rack_id}&kind=LPN`);
+    expect((zpl.text.match(/\^XA/g) ?? []).length).toBe(2);
+    expect(zpl.text).toContain(p1.code);
+    const emb = await sup.raw('GET', `/labels/locations.embarque.json?rack_id=${rack[0]!.rack_id}&kind=LPN`);
+    const pedido = JSON.parse(emb.text);
+    expect(pedido.tipo).toBe('etiquetas_lpn');
+    expect(pedido.encabezado.num_orden_compra).toContain('-LPN-');
+    expect(pedido.etiquetas.map((e: { sku_interno: string }) => e.sku_interno)).toEqual([p1.code, p2.code]);
+    expect(pedido.lineas[0].descripcion).toContain(f.reserve[0]!.code);
+    // a rack without pallets is a clear 404, not an empty sheet
+    const empty = await sup.raw('GET', `/labels/locations.html?rack_id=${(await sql<{ rack_id: string }>(`SELECT rack_id FROM locations WHERE id = '${f.picking[0]!.id}'`))[0]!.rack_id}&kind=LPN`);
+    expect(empty.status).toBe(404);
   });
 });

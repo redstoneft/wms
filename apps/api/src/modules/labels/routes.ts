@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zPrintLabel, zUuid } from '@wms/shared';
 import { getDb } from '../../db.js';
-import { locationLabelBatch, locationLabelSheetHtml, locationLabelsAsEmbarquePedido, printLabel, printLocationBatch } from './service.js';
+import { labelBatch, locationLabelSheetHtml, locationLabelsAsEmbarquePedido, printLabel, printLocationBatch } from './service.js';
 import { withTx } from '../../db.js';
 import { audit } from '../../lib/audit.js';
 import { renderZpl } from '@wms/shared';
@@ -33,6 +33,12 @@ export async function labelRoutes(app: FastifyInstance) {
         .optional()
         .transform((v) => (v ? v.split(/[,\s]+/).filter(Boolean).slice(0, 500) : undefined)),
       title: z.string().trim().max(60).optional(),
+      /** LOCATION (default): the slots; LPN: the pallets stored in them */
+      kind: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => (v && v.toUpperCase() === 'LPN' ? 'LPN' : 'LOCATION') as 'LOCATION' | 'LPN'),
     });
 
   /** Printable sheet (any printer / save as PDF) with one label per location of a rack or zone. */
@@ -47,7 +53,8 @@ export async function labelRoutes(app: FastifyInstance) {
   /** ZPL file with every location label of a rack or zone (send to a Zebra with any tool). */
   app.get('/labels/locations.zpl', { preHandler: app.requirePermission('labels.print') }, async (req, reply) => {
     const q = zBatch.parse(req.query);
-    const { title, models } = await locationLabelBatch(q);
+    const { title, entries } = await labelBatch(q);
+    const models = entries.map((e) => e.model);
     await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_zpl', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? q.title ?? '-', after: { ...q, labels: models.length } }));
     reply.type('text/plain; charset=utf-8');
     reply.header('Content-Disposition', `attachment; filename="${title.replace(/[^A-Za-z0-9_-]+/g, '_')}.zpl"`);

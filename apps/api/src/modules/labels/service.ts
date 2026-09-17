@@ -265,6 +265,18 @@ export interface LocationBatchFilter {
   codes?: string[];
   /** name of the batch (also the Embarque order number suffix) */
   title?: string;
+  /** LOCATION = the slots of the rack (label the steel); LPN = the pallets currently stored in those slots (label the goods) */
+  kind?: 'LOCATION' | 'LPN';
+}
+
+/** One label of a batch, whatever it labels: rendered model + where it goes, for the sheet / ZPL / Embarque / direct print. */
+export interface BatchEntry {
+  code: string;
+  barcode: string;
+  label_type: 'LOCATION' | 'LPN';
+  where: string;
+  descripcion: string;
+  model: LabelModel;
 }
 
 export async function locationLabelBatch(filter: LocationBatchFilter) {
@@ -302,15 +314,56 @@ export async function locationLabelBatch(filter: LocationBatchFilter) {
 
 const esc = (v: unknown) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
+const locWhere = (loc: { rack: { code: string; aisle: { code: string } } | null; bay: number | null; position: number | null; zone: { name: string } | null }) =>
+  loc.rack ? (isBridge(loc) ? `Pasillo ${loc.rack.aisle.code} · PUENTE después del módulo ${loc.bay ?? '-'} · Pos ${(loc.position ?? 0) % 10}` : `Pasillo ${loc.rack.aisle.code} · Rack ${loc.rack.code} · Módulo ${loc.bay ?? '-'} · Pos ${loc.position ?? '-'}`) : `${loc.zone?.name ?? ''}`;
+
+/** The pallets (LPN) currently stored in the selected locations, in the same walking order as the locations. */
+export async function palletLabelBatch(filter: LocationBatchFilter) {
+  const { title, rows } = await locationLabelBatch(filter);
+  const db = getDb();
+  const lpns = await db.lpns.findMany({ where: { current_location_id: { in: rows.map((r) => r.id) }, status: { notIn: ['SHIPPED', 'CANCELLED', 'CONSUMED'] } }, orderBy: { code: 'asc' } });
+  if (!lpns.length) throw new NotFoundError('lpns', `no pallets stored in ${title}`);
+  const order = new Map(rows.map((r, i) => [r.id, i]));
+  lpns.sort((a, b) => (order.get(a.current_location_id ?? '') ?? 0) - (order.get(b.current_location_id ?? '') ?? 0) || a.code.localeCompare(b.code));
+  const models = await withTx(async (tx) => Promise.all(lpns.map((l) => buildLabelModel(tx, 'LPN', l.code))));
+  return { title: `Tarimas · ${title}`, rows, lpns, models };
+}
+
+/** Uniform view of a batch (locations or pallets) for every output format. */
+export async function labelBatch(filter: LocationBatchFilter): Promise<{ title: string; entries: BatchEntry[]; first: { warehouse_id: string; zone: { code: string; name: string } | null; rack: { code: string; aisle: { code: string } } | null } }> {
+  if (filter.kind === 'LPN') {
+    const { title, rows, lpns, models } = await palletLabelBatch(filter);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const entries: BatchEntry[] = lpns.map((l, i) => {
+      const loc = byId.get(l.current_location_id ?? '')!;
+      const contents = models[i]!.lines.filter((x) => x.label === 'SKU' || x.label === 'CONTENIDO').map((x) => x.value).join(' · ');
+      return { code: l.code, barcode: l.code, label_type: 'LPN', where: `${loc.code} · ${locWhere(loc)}`, descripcion: `Tarima ${l.code} en ${loc.code}${contents ? ` · ${contents}` : ''}`.slice(0, 300), model: models[i]! };
+    });
+    const first = rows[0]!;
+    return { title, entries, first: { warehouse_id: first.warehouse_id, zone: first.zone, rack: first.rack } };
+  }
+  const { title, rows, models } = await locationLabelBatch(filter);
+  const entries: BatchEntry[] = rows.map((loc, i) => ({
+    code: loc.code,
+    barcode: loc.barcode,
+    label_type: 'LOCATION',
+    where: `${loc.level ? `NIVEL ${loc.level}` : loc.location_type} · ${locWhere(loc)}`,
+    descripcion: `Ubicación ${loc.code}${loc.level ? ` · nivel ${loc.level}` : ''}${loc.rack ? (isBridge(loc) ? ` · PUENTE rack ${loc.rack.aisle.code} después del módulo ${loc.bay ?? ''}` : ` · rack ${loc.rack.aisle.code}-${loc.rack.code} módulo ${loc.bay ?? ''}`) : ''}`,
+    model: models[i]!,
+  }));
+  const first = rows[0]!;
+  return { title, entries, first: { warehouse_id: first.warehouse_id, zone: first.zone, rack: first.rack } };
+}
+
 /** Self-contained HTML sheet (A4, 3 labels of 101.6 × 84 mm per page — the same stock as the company's other label apps) with Code128 barcodes as embedded PNGs. */
 export async function locationLabelSheetHtml(filter: LocationBatchFilter): Promise<string> {
-  const { title, rows } = await locationLabelBatch(filter);
+  const { title, entries } = await labelBatch(filter);
+  const rows = entries;
   const cells: string[] = [];
-  for (const loc of rows) {
-    const png = await bwipjs.toBuffer({ bcid: 'code128', text: loc.barcode, scale: 3, height: 18, includetext: false });
-    const levelTxt = loc.level ? `NIVEL ${loc.level}` : loc.location_type;
-    const where = loc.rack ? (isBridge(loc) ? `Pasillo ${esc(loc.rack.aisle.code)} · PUENTE después del módulo ${loc.bay ?? '-'} · Pos ${(loc.position ?? 0) % 10}` : `Pasillo ${esc(loc.rack.aisle.code)} · Rack ${esc(loc.rack.code)} · Módulo ${loc.bay ?? '-'} · Pos ${loc.position ?? '-'}`) : `${esc(loc.zone?.name ?? '')}`;
-    cells.push(`<div class="l"><div class="code">${esc(loc.code)}</div><img src="data:image/png;base64,${png.toString('base64')}" alt=""><div class="bc">${esc(loc.barcode)}</div><div class="meta"><b>${esc(levelTxt)}</b> · ${where}</div></div>`);
+  for (const e of entries) {
+    const png = await bwipjs.toBuffer({ bcid: 'code128', text: e.barcode, scale: 3, height: 18, includetext: false });
+    const extra = e.label_type === 'LPN' ? `<div class="meta">${esc(e.model.lines.filter((x) => x.label === 'SKU' || x.label === 'CONTENIDO' || x.label === 'CAJAS').map((x) => x.value).join(' · ').slice(0, 120))}</div>` : '';
+    cells.push(`<div class="l"><div class="code">${esc(e.code)}</div><img src="data:image/png;base64,${png.toString('base64')}" alt=""><div class="bc">${esc(e.barcode)}</div><div class="meta">${esc(e.where)}</div>${extra}</div>`);
   }
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
@@ -325,15 +378,16 @@ img{height:26mm;max-width:90mm}.bc{font-family:Menlo,Consolas,monospace;font-siz
 
 /** Prints every location of a rack/zone on a Zebra printer, one label per position, in walking order. */
 export async function printLocationBatch(ctx: ActorContext, filter: LocationBatchFilter, printerId?: string) {
-  const { rows } = await locationLabelBatch(filter);
+  const { entries } = await labelBatch(filter);
+  const rows = entries;
   let sent = 0;
   const failed: { code: string; error: string }[] = [];
-  for (const loc of rows) {
+  for (const e of entries) {
     try {
-      await printLabel(ctx, { label_type: 'LOCATION', entity_id: loc.code, printer_id: printerId, copies: 1, reprint_reason: 'Etiquetado de rack en lote' }, 'PRINT');
+      await printLabel(ctx, { label_type: e.label_type, entity_id: e.code, printer_id: printerId, copies: 1, reprint_reason: e.label_type === 'LPN' ? 'Etiquetado de tarimas en lote' : 'Etiquetado de rack en lote' }, 'PRINT');
       sent++;
-    } catch (e) {
-      failed.push({ code: loc.code, error: (e as Error).message.slice(0, 120) });
+    } catch (e2) {
+      failed.push({ code: e.code, error: (e2 as Error).message.slice(0, 120) });
       if (failed.length >= 3 && sent === 0) break; // printer clearly unreachable: stop early
     }
   }
@@ -346,21 +400,23 @@ export async function printLocationBatch(ctx: ActorContext, filter: LocationBatc
  * The app imports it like any retailer order, shows it in its dashboard and prints it on its Zebra station.
  */
 export async function locationLabelsAsEmbarquePedido(filter: LocationBatchFilter) {
-  const { title, rows, models } = await locationLabelBatch(filter);
-  const first = rows[0]!;
+  const { title, entries, first } = await labelBatch(filter);
+  const rows = entries;
+  const models = entries.map((e) => e.model);
+  const isLpn = filter.kind === 'LPN';
   const wh = await getDb().warehouses.findUnique({ where: { id: first.warehouse_id }, select: { code: true, name: true } });
   const rackCode = first.rack ? `${first.rack.aisle.code}-${first.rack.code}` : (first.zone?.code ?? 'AREA');
-  const oc = (filter.title ? `WMS-${wh?.code ?? 'WMS'}-${filter.title.toUpperCase().replace(/[^A-Z0-9]+/g, '-')}` : `WMS-${wh?.code ?? 'WMS'}-${first.zone?.code ?? ''}-${rackCode}`).replace(/-+/g, '-').replace(/-$/, '').slice(0, 60);
+  const oc = (filter.title ? `WMS-${wh?.code ?? 'WMS'}-${filter.title.toUpperCase().replace(/[^A-Z0-9]+/g, '-')}` : `WMS-${wh?.code ?? 'WMS'}-${isLpn ? 'LPN-' : ''}${first.zone?.code ?? ''}-${rackCode}`).replace(/-+/g, '-').replace(/-$/, '').slice(0, 60);
   const today = new Date().toISOString().slice(0, 10);
   const n = rows.length;
-  const lineas = rows.map((loc, i) => ({
+  const lineas = rows.map((e, i) => ({
     num_linea: i + 1,
-    sku_walmart: loc.code,
-    sku_cliente: loc.code,
-    sku_interno: loc.code,
-    gtin: loc.barcode,
+    sku_walmart: e.code,
+    sku_cliente: e.code,
+    sku_interno: e.code,
+    gtin: e.barcode,
     color: null,
-    descripcion: `Ubicación ${loc.code}${loc.level ? ` · nivel ${loc.level}` : ''}${loc.rack ? (isBridge(loc) ? ` · PUENTE rack ${loc.rack.aisle.code} después del módulo ${loc.bay ?? ''}` : ` · rack ${loc.rack.aisle.code}-${loc.rack.code} módulo ${loc.bay ?? ''}`) : ''}`,
+    descripcion: e.descripcion,
     cantidad: 1,
     cantidad_surtir: 1,
     uom: 'EA',
@@ -373,7 +429,7 @@ export async function locationLabelsAsEmbarquePedido(filter: LocationBatchFilter
   return {
     origen: 'WMS',
     version: 1,
-    tipo: 'etiquetas_ubicacion',
+    tipo: isLpn ? 'etiquetas_lpn' : 'etiquetas_ubicacion',
     cliente: 'WMS',
     generado_en: new Date().toISOString(),
     encabezado: {
@@ -381,7 +437,7 @@ export async function locationLabelsAsEmbarquePedido(filter: LocationBatchFilter
       fecha_pedido: today,
       fecha_envio: today,
       fecha_cancelacion: null,
-      tipo_orden: 'ETIQUETAS_UBICACION',
+      tipo_orden: isLpn ? 'ETIQUETAS_LPN' : 'ETIQUETAS_UBICACION',
       moneda: 'MXN',
       departamento: null,
       evento_promocional: null,
@@ -390,7 +446,7 @@ export async function locationLabelsAsEmbarquePedido(filter: LocationBatchFilter
       cedis_nombre: wh?.name ?? null,
       gln_destino: null,
       formato_tienda: null,
-      instrucciones: `${title}: ${n} etiquetas de ubicación (101.6 × 84 mm). Pegar en orden de módulo y nivel.`,
+      instrucciones: isLpn ? `${title}: ${n} etiquetas de tarima (101.6 × 84 mm). Pegar cada una en la tarima indicada, en orden de módulo y nivel.` : `${title}: ${n} etiquetas de ubicación (101.6 × 84 mm). Pegar en orden de módulo y nivel.`,
     },
     lineas,
     totales_pdf: { total: 0, total_unidades: n, total_lineas: n },

@@ -24,10 +24,10 @@ export default function LabelsPage() {
   const looseList = loose.codes.split(/[,\s]+/).map((c) => c.trim().toUpperCase().replace(/^LOC-/, '')).filter(Boolean);
   // batch labelling of a whole rack (or zone) — the first thing to do after building the layout
   const zones = useQuery({ queryKey: ['zones', 'all'], queryFn: () => layoutApi.zones() });
-  const [batch, setBatch] = useState({ zone_id: '', rack_id: '', printer_id: '' });
+  const [batch, setBatch] = useState({ zone_id: '', rack_id: '', printer_id: '' , kind: 'LOCATION' });
   const batchZone = zones.data?.find((z) => z.id === batch.zone_id);
   const batchRacks = (batchZone?.aisles ?? []).flatMap((a) => (a.racks ?? []).map((r) => ({ id: r.id, label: `Pasillo ${a.code} · Rack ${r.code}` })));
-  const batchFilter = batch.rack_id ? { rack_id: batch.rack_id } : batch.zone_id ? { zone_id: batch.zone_id } : null;
+  const batchFilter = batch.rack_id ? { rack_id: batch.rack_id, kind: batch.kind } : batch.zone_id ? { zone_id: batch.zone_id, kind: batch.kind } : null;
   const doBatch = useMutation({
     mutationFn: () => labelsApi.printBatch({ ...batchFilter!, printer_id: batch.printer_id || undefined }),
     onSuccess: (r) => (r.failed.length ? toast.warn(`${r.sent}/${r.total} etiquetas enviadas`, r.failed[0]?.error) : toast.success(`${r.sent} etiquetas enviadas a la Zebra`)),
@@ -129,7 +129,13 @@ export default function LabelsPage() {
         </div>
       </Card>
       <Card title="Etiquetar un rack completo" className="mt-4">
-        <div className="grid gap-3 lg:grid-cols-4">
+        <div className="grid gap-3 lg:grid-cols-5">
+          <Field label="Qué etiquetas" required hint={batch.kind === 'LPN' ? 'Una etiqueta por tarima guardada en el rack, en orden de módulo y nivel.' : 'Una etiqueta por hueco del rack.'}>
+            <Select value={batch.kind} onChange={(e) => setBatch({ ...batch, kind: e.target.value })} data-testid="labels-kind">
+              <option value="LOCATION">Ubicaciones (huecos del rack)</option>
+              <option value="LPN">Tarimas (LPN guardados en el rack)</option>
+            </Select>
+          </Field>
           <Field label="Zona" required>
             <Select value={batch.zone_id} onChange={(e) => setBatch({ ...batch, zone_id: e.target.value, rack_id: '' })}>
               <option value="">Elegir zona…</option>
@@ -177,7 +183,7 @@ export default function LabelsPage() {
         </div>
         <Alert tone="info" className="mt-3">
           <b>Hoja para imprimir</b>: etiquetas de 101.6 × 84 mm (3 por hoja A4) para cualquier impresora o para guardar como PDF; imprimir al 100 %. Orden de pegado: por pasillo, módulo y nivel, igual que la ruta de surtido.
-          <b> Descargar ZPL</b>: archivo listo para una Zebra (203 dpi). <b>Exportar a app de etiquetas</b>: archivo <code>.json</code> que tu app Embarque importa como un pedido más y manda a su estación Zebra. <b>Imprimir en Zebra</b>: envía una etiqueta por posición y queda auditado.
+          <b> Descargar ZPL</b>: archivo listo para una Zebra (203 dpi). <b>Exportar a app de etiquetas</b>: archivo <code>.json</code> que tu app Embarque importa como un pedido más y manda a su estación Zebra. <b>Imprimir en Zebra</b>: envía una etiqueta por posición (o por tarima) y queda auditado. Con <b>Tarimas</b> salen las etiquetas LPN de todo lo que está guardado en el rack, listas para pegar en cada tarima.
         </Alert>
       </Card>
       <Card title="Historial" className="mt-4" padded={false}>
