@@ -104,8 +104,9 @@ describe('authorization / IDOR / privilege escalation', () => {
     expect((await picker.post('/authorizations', { exception_type: 'SAME_USER_VERIFICATION', entity_type: 'order', entity_id: 'x', reason: 'self-approve' })).status).toBe(403);
     expect((await picker.put('/settings', { allocation_strategy: 'LPN' })).status).toBe(403);
   });
-  it('a picker cannot act on another picker\'s task (IDOR on task ids)', async () => {
+  it('shared picking: a picker may join another picker\'s task but cannot touch a line the other already started, and a non-picker cannot scan at all', async () => {
     const other = await userWithRoles('spick2', ['PICKER']);
+    const verifier = await userWithRoles('sverif2', ['VERIFIER']);
     await storedPallet(f, 0, f.reserve[0]!.id, 60n);
     const o = await sup.post('/orders', { order_number: `S-${f.tag}-1`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 1, uom_code: 'CASE' }] });
     await sup.post(`/orders/${o.body.id}/accept`);
@@ -113,9 +114,17 @@ describe('authorization / IDOR / privilege escalation', () => {
     const t = await sup.post('/picking/tasks', { order_id: o.body.id });
     await other.post(`/picking/tasks/${t.body.task.id}/start`);
     const view = await other.get(`/picking/tasks/${t.body.task.id}`);
-    const r = await picker.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: view.body.lines[0].id, step: 'LOCATION', scanned: view.body.lines[0].location_barcode }, idem());
+    const line = view.body.lines[0];
+    const taken = await other.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: line.id, step: 'LOCATION', scanned: line.location_barcode }, idem());
+    expect(taken.status).toBe(200); // `other` is now on this line
+    const r = await picker.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: line.id, step: 'LOCATION', scanned: line.location_barcode }, idem());
     expect(r.status).toBe(409);
-    expect(r.body.error).toBe('NOT_YOUR_TASK');
+    expect(r.body.error).toBe('LINE_TAKEN');
+    const forbidden = await verifier.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: line.id, step: 'LOCATION', scanned: line.location_barcode }, idem());
+    expect(forbidden.status).toBe(403);
+    // task ids are still not guessable/usable across orders: a random id is a clean 404, never a leak
+    const nope = await picker.post('/picking/scan', { pick_task_id: '00000000-0000-7000-8000-000000000000', line_id: line.id, step: 'LOCATION', scanned: line.location_barcode }, idem());
+    expect(nope.status).toBe(404);
   });
   it('a user cannot deactivate themselves or grant unknown roles', async () => {
     const adminUser = await userWithRoles('sadmin2', ['ADMIN']);

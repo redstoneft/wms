@@ -50,3 +50,7 @@ Al verificar el código TOTP el usuario puede marcar **"Recordar este dispositiv
 5. **Recuperación de contraseña** es administrativa (reset por `users.manage`), no hay flujo por correo.
 6. Sin firma/antivirus de adjuntos: se validan tipo y magic bytes, pero un PDF malicioso no se analiza; los adjuntos se sirven por fuera del navegador de operación.
 7. `npm audit` se ejecuta en CI a nivel `high` como advertencia; deben revisarse periódicamente las dependencias.
+
+## Surtido compartido
+
+Varios surtidores pueden trabajar el mismo pedido. La protección es por línea: una línea que un surtidor ya empezó (`picker_id`) rechaza a cualquier otro con `LINE_TAKEN`; cada escaneo, tarima de surtido libre, deshacer o cierre queda auditado con el usuario que lo hizo. Eliminar un surtido libre sigue reservado a quien lo creó o a un supervisor.
