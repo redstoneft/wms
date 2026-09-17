@@ -1,14 +1,15 @@
 // Tasks an operator creates for themself from the handheld, always stating the purpose ("para qué").
 // Pick: the order is accepted/allocated if needed and the pick task is assigned to the operator.
 // Count: a blind location count assigned to the operator. Put-away: a task for a pallet left without one.
-import type { SelfTaskInput } from '@wms/shared';
+import type { HandheldOrderInput, SelfTaskInput } from '@wms/shared';
 import type { Tx } from '../../db.js';
 import { ForbiddenError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { lockLpnByCode } from '../../inventory/ledger.js';
 import { createCountTask } from '../counts/service.js';
-import { acceptOrder, allocateOrder } from '../orders/service.js';
+import { resolveImportSku } from '../imports/service.js';
+import { acceptOrder, allocateOrder, createOrder } from '../orders/service.js';
 import { createPickTask } from '../picking/service.js';
 import { createPutawayTask } from '../putaway/service.js';
 
@@ -60,4 +61,29 @@ export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskI
       return { kind: 'PUTAWAY' as const, id: task.id, lpn: lpn.code, next: '/wm/putaway' };
     }
   }
+}
+
+/** A manual order captured on the handheld (products scanned, quantities typed). Accepted right away; optionally picked now. */
+export async function createHandheldOrder(tx: Tx, ctx: ActorContext, input: HandheldOrderInput) {
+  const number = input.order_number.trim().toUpperCase();
+  if (await tx.orders.findFirst({ where: { order_number: { equals: number, mode: 'insensitive' } } })) throw new RuleError('ORDER_EXISTS', `Order ${number} already exists`);
+  // several scans of the same product collapse into one line
+  const merged = new Map<string, { sku_code: string; qty: bigint; uom_code: HandheldOrderInput['lines'][number]['uom_code'] }>();
+  for (const l of input.lines) {
+    const sku = await resolveImportSku(tx, l.sku_code.trim());
+    if (!sku.is_active) throw new RuleError('SKU_INACTIVE', `SKU ${sku.code} is inactive`);
+    const key = `${sku.code}|${l.uom_code}`;
+    const cur = merged.get(key);
+    if (cur) cur.qty += BigInt(l.qty);
+    else merged.set(key, { sku_code: sku.code, qty: BigInt(l.qty), uom_code: l.uom_code });
+  }
+  const order = await createOrder(tx, ctx, { order_number: number, customer_code: input.customer_code, destination: input.destination, order_date: new Date(), priority: 5, notes: input.purpose, source: 'MANUAL', lines: [...merged.values()] });
+  await acceptOrder(tx, ctx, order.id);
+  await audit(tx, ctx, { action: 'order.handheld_capture', entity_type: 'order', entity_id: order.id, after: { order_number: number, customer: input.customer_code, lines: merged.size, start_now: input.start_now }, reason: input.purpose });
+  if (!input.start_now) return { order_id: order.id, order_number: number, lines: merged.size, task_id: null, next: '/wm' };
+  const alloc = await allocateOrder(tx, ctx, { order_id: order.id, allow_partial: true });
+  const r = await createPickTask(tx, ctx, order.id, ctx.userId);
+  await tx.pick_tasks.update({ where: { id: r.task.id }, data: { purpose: input.purpose } });
+  await audit(tx, ctx, { action: 'task.self_created', entity_type: 'pick_task', entity_id: r.task.id, after: { kind: 'PICK', order: number, lines: r.lines, staging: r.staging.code, allocation: alloc }, reason: input.purpose });
+  return { order_id: order.id, order_number: number, lines: merged.size, task_id: r.task.id, staging: r.staging.code, next: '/wm/pick' };
 }

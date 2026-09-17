@@ -125,4 +125,39 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect((await picker.get('/picking/tasks?mine=true')).body.some((t: { id: string }) => t.id === r.body.id)).toBe(false);
     await expectReconciled();
   });
+
+  it('a manual order captured on the handheld (scanned aliases, cases and pieces) is accepted and can be picked right away', async () => {
+    await storedPallet(f, 0, f.reserve[6]!.id, 60n);
+    const number = `PED-CAP-${f.tag}`;
+    const bad = await picker.post('/wm/orders', { order_number: number, customer_code: f.customer.code, purpose: 'mostrador', lines: [] });
+    expect(bad.status).toBe(400); // no lines
+    const r = await picker.post('/wm/orders', {
+      order_number: number.toLowerCase(),
+      customer_code: f.customer.code,
+      purpose: 'pedido de mostrador, pasa hoy',
+      lines: [
+        { sku_code: f.skus[0]!.case_barcode, qty: 2, uom_code: 'CASE' }, // scanned case barcode → 12 pieces
+        { sku_code: f.skus[0]!.piece_barcode, qty: 3, uom_code: 'PIECE' },
+        { sku_code: f.skus[1]!.code, qty: 4, uom_code: 'PIECE' },
+      ],
+      start_now: true,
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body).toMatchObject({ order_number: number, next: '/wm/pick' });
+    expect(r.body.task_id).toBeTruthy();
+    const lines = await sql<{ code: string; required_qty: bigint; allocated_qty: bigint }>(`SELECT s.code, ol.required_qty, ol.allocated_qty FROM order_lines ol JOIN skus s ON s.id = ol.sku_id JOIN orders o ON o.id = ol.order_id WHERE o.order_number = '${number}' ORDER BY ol.line_no`);
+    expect(lines.map((l) => `${l.code}:${l.required_qty}/${l.allocated_qty}`)).toEqual([`${f.skus[0]!.code}:15/15`, `${f.skus[1]!.code}:4/0`]); // 2 cases × 6 + 3 pieces merge into one line; sku 1 has no stock: partial
+    const order = await sql<{ status: string; source: string; notes: string }>(`SELECT status, source, notes FROM orders WHERE order_number = '${number}'`);
+    expect(order[0]).toMatchObject({ status: 'PARTIALLY_ALLOCATED', source: 'MANUAL', notes: 'pedido de mostrador, pasa hoy' });
+    const task = await sql<{ mode: string; purpose: string; assigned_to: string | null }>(`SELECT mode, purpose, assigned_to FROM pick_tasks WHERE id = '${r.body.task_id}'`);
+    expect(task[0]!.mode).toBe('ALLOCATED');
+    expect(task[0]!.purpose).toBe('pedido de mostrador, pasa hoy');
+    const dup = await picker.post('/wm/orders', { order_number: number, customer_code: f.customer.code, purpose: 'otra vez', lines: [{ sku_code: f.skus[0]!.code, qty: 1 }] });
+    expect(dup.status).toBe(422);
+    // saved for later: accepted, no task
+    const later = await picker.post('/wm/orders', { order_number: `${number}-B`, customer_code: f.customer.code, purpose: 'para mañana', lines: [{ sku_code: f.skus[0]!.code, qty: 1 }], start_now: false });
+    expect(later.status).toBe(201);
+    expect(later.body.task_id).toBeNull();
+    expect((await sql<{ status: string }>(`SELECT status FROM orders WHERE order_number = '${number}-B'`))[0]!.status).toBe('ACCEPTED');
+  });
 });

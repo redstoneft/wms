@@ -82,6 +82,10 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 `Almacén → Consultar`: escanee un **LPN** y verá su ubicación, estado, lote/caducidad, pedido o recepción, y cada producto con sus piezas. Escanee una **etiqueta de ubicación** y verá las tarimas que hay en ese hueco con su contenido. Solo consulta: no mueve nada.
 
+## CAPTURAR PEDIDO (pedido manual desde el handheld)
+
+`Almacén → Capturar pedido`: número de pedido (la orden de compra del cliente), cliente, y luego escanee cada producto y teclee la cantidad (piezas o cajas); escrito el motivo, **Guardar y surtirlo ahora** (asigna inventario y abre la tarea de surtido a su nombre) o **Solo guardar** (queda aceptado para surtirse después desde Surtir o Nueva tarea). El pedido aparece en la oficina como cualquier otro.
+
 ## NUEVA TAREA (el operador crea su propia tarea)
 
 `Almacén → Nueva tarea` permite empezar trabajo sin esperar a que el supervisor lo asigne: **surtir un pedido** (escanee o escriba el número; si el pedido ya existe el sistema asigna inventario y la tarea queda a su nombre; si **no existe**, elija el cliente y el pedido se crea ahí mismo en **surtido libre**), **contar una ubicación** (conteo a ciegas de ese hueco) o **ubicar una tarima** que quedó sin tarea de acomodo. Siempre pide **para qué** se hace (mínimo 5 letras): queda en la tarea y en la auditoría con su usuario. Solo puede crear tareas del tipo que su rol ejecuta.

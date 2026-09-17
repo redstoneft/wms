@@ -105,6 +105,10 @@ function Flow() {
       <div>
         <StepBar text="3 · PEDIDO NUEVO · ¿DE QUÉ CLIENTE ES?" />
         <BigValue label="Pedido nuevo" value={reference} tone="accent" />
+        <BigButton tone="primary" className="mt-3" onClick={() => nav('/wm/new-order')} testId="new-task-capture-order">
+          Mejor capturar el pedido (productos y cantidades)
+        </BigButton>
+        <div className="mt-2 text-xs text-slate-400">Si eliges cliente aquí, el pedido se arma escaneando tarimas (surtido libre).</div>
         <input value={customerQ} onChange={(e) => setCustomerQ(e.target.value)} placeholder="Buscar cliente…" className="mt-3 w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-xl text-white" data-testid="new-task-customer-q" />
         <div className="mt-2 grid gap-2">
           {customerRows.map((c) => (

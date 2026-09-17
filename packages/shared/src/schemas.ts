@@ -342,6 +342,19 @@ export const zSelfTask = z.object({
 });
 export type SelfTaskInput = z.infer<typeof zSelfTask>;
 
+/** Manual order captured on the handheld: customer, scanned products with quantities, mandatory purpose. */
+export const zHandheldOrder = z.object({
+  order_number: zCode.max(60),
+  customer_code: zCode,
+  destination: z.string().trim().max(500).optional(),
+  purpose: z.string().trim().min(5).max(300),
+  /** sku_code may be any alias: scanned GTIN, SAE key or WMS code */
+  lines: z.array(z.object({ sku_code: z.string().trim().min(1).max(64), qty: zQty, uom_code: zUom.default('PIECE') })).min(1).max(200),
+  /** allocate and create my pick task right away */
+  start_now: z.boolean().default(false),
+});
+export type HandheldOrderInput = z.infer<typeof zHandheldOrder>;
+
 /** Free picking: add a whole pallet (no qty) or part of a single-SKU pallet to the order being built. */
 export const zFreePickScan = z.object({
   pick_task_id: zUuid,

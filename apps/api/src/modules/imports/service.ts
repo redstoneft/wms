@@ -63,7 +63,7 @@ export const TEMPLATES: Record<ImportType, { columns: string[]; example: string[
 export const normalizeLocationCode = (s: string) => s.trim().toUpperCase().replace(/^LOC-/, '');
 
 /** The sku column may hold the WMS code or any alias (SAE key, GTIN with or without its leading zero). */
-async function resolveImportSku(tx: Tx, code: string) {
+export async function resolveImportSku(tx: Tx, code: string) {
   const direct = await tx.skus.findUnique({ where: { code } });
   if (direct) return direct;
   const vs = barcodeVariants(code);
