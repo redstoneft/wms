@@ -33,7 +33,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
   /** Inventory by LPN with location. */
   app.get('/inventory/lpns', { preHandler: read }, async (req) => {
     const q = z
-      .object({ q: z.string().trim().max(60).optional(), status: z.string().optional(), location_id: z.string().uuid().optional(), zone_id: z.string().uuid().optional(), sku: z.string().optional(), limit: z.coerce.number().int().min(1).max(1000).default(200), offset: z.coerce.number().int().min(0).default(0) })
+      .object({ q: z.string().trim().max(60).optional(), status: z.string().optional(), location_id: z.string().uuid().optional(), location_code: z.string().trim().max(64).optional(), zone_id: z.string().uuid().optional(), sku: z.string().optional(), limit: z.coerce.number().int().min(1).max(1000).default(200), offset: z.coerce.number().int().min(0).default(0) })
       .parse(req.query);
     return db.$queryRaw<Record<string, unknown>[]>`
       SELECT l.id, l.code, l.status, l.lpn_type, l.created_at, l.cases_count, l.weight_kg, l.lot, l.expiry_date, loc.code AS location_code, loc.id AS location_id, z.code AS zone_code,
@@ -47,6 +47,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
          AND (${await includeTraining(req)}::boolean OR l.warehouse_id IS DISTINCT FROM wms_school_warehouse_id())
          AND (${q.status ?? null}::text IS NULL OR l.status = ANY(string_to_array(${q.status ?? ''}, ',')))
          AND (${q.location_id ?? null}::uuid IS NULL OR l.current_location_id = ${q.location_id ?? null}::uuid)
+         AND (${q.location_code ?? null}::text IS NULL OR loc.code = upper(regexp_replace(${q.location_code ?? ''}, '^LOC-', '')) OR loc.barcode = upper(${q.location_code ?? ''}))
          AND (${q.zone_id ?? null}::uuid IS NULL OR loc.zone_id = ${q.zone_id ?? null}::uuid)
          AND (${q.sku ?? null}::text IS NULL OR EXISTS (SELECT 1 FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = l.id AND b.qty > 0 AND s.code = ${q.sku ?? ''}))
        ORDER BY l.created_at DESC LIMIT ${q.limit} OFFSET ${q.offset}`;

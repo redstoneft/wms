@@ -78,6 +78,10 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 2. Al llegar, escanee el **LPN** y la **ubicación** → completado. Destino equivocado = rojo. Si no puede completar, pida cancelar (el pallet vuelve a su origen).
 3. Reabasto: `Almacén → Reabasto` muestra las caras de picking bajas; **INICIAR** indica qué pallet de reserva llevar; el resto es igual a una transferencia.
 
+## CONSULTAR (qué contiene una tarima o una ubicación)
+
+`Almacén → Consultar`: escanee un **LPN** y verá su ubicación, estado, lote/caducidad, pedido o recepción, y cada producto con sus piezas. Escanee una **etiqueta de ubicación** y verá las tarimas que hay en ese hueco con su contenido. Solo consulta: no mueve nada.
+
 ## NUEVA TAREA (el operador crea su propia tarea)
 
 `Almacén → Nueva tarea` permite empezar trabajo sin esperar a que el supervisor lo asigne: **surtir un pedido** (escanee o escriba el número; si el pedido ya existe el sistema asigna inventario y la tarea queda a su nombre; si **no existe**, elija el cliente y el pedido se crea ahí mismo en **surtido libre**), **contar una ubicación** (conteo a ciegas de ese hueco) o **ubicar una tarima** que quedó sin tarea de acomodo. Siempre pide **para qué** se hace (mínimo 5 letras): queda en la tarea y en la auditoría con su usuario. Solo puede crear tareas del tipo que su rol ejecuta.

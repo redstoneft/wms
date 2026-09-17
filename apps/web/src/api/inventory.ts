@@ -3,7 +3,7 @@ import type { InventoryLpnRow, InventorySkuRow, LpnDetail, LpnTimeline, Movement
 
 export const inventoryApi = {
   skus: (q?: { q?: string; status?: string; limit?: number; offset?: number }) => api.get<InventorySkuRow[]>('/inventory/skus', q),
-  lpns: (q?: { q?: string; status?: string; location_id?: string; zone_id?: string; sku?: string; limit?: number; offset?: number }) => api.get<InventoryLpnRow[]>('/inventory/lpns', q),
+  lpns: (q?: { q?: string; status?: string; location_id?: string; location_code?: string; zone_id?: string; sku?: string; limit?: number; offset?: number }) => api.get<InventoryLpnRow[]>('/inventory/lpns', q),
   lpn: (code: string) => api.get<LpnDetail>(`/inventory/lpns/${encodeURIComponent(code)}`),
   lpnTimeline: (code: string) => api.get<LpnTimeline>(`/inventory/lpns/${encodeURIComponent(code)}/timeline`),
   skuTimeline: (code: string) => api.get<SkuTimeline>(`/inventory/skus/${encodeURIComponent(code)}/timeline`),

@@ -71,6 +71,7 @@ export const NAV: NavGroup[] = [
 
 /** Warehouse-mode entry points (handheld). */
 export const WM_NAV: NavItem[] = [
+  { to: '/wm/lookup', label: 'Consultar', icon: '🔍', perms: ['inventory.read'], wm: true },
   { to: '/wm/new-task', label: 'Nueva tarea', icon: '＋', perms: ['tasks.self_create'], wm: true },
   { to: '/wm/receive', label: 'Recibir', icon: '⇩', perms: ['receiving.scan'], wm: true },
   { to: '/wm/putaway', label: 'Ubicar', icon: '⇲', perms: ['putaway.execute'], wm: true },
