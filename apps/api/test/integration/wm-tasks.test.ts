@@ -146,9 +146,9 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect(r.body).toMatchObject({ order_number: number, next: '/wm/pick' });
     expect(r.body.task_id).toBeTruthy();
     const lines = await sql<{ code: string; required_qty: bigint; allocated_qty: bigint }>(`SELECT s.code, ol.required_qty, ol.allocated_qty FROM order_lines ol JOIN skus s ON s.id = ol.sku_id JOIN orders o ON o.id = ol.order_id WHERE o.order_number = '${number}' ORDER BY ol.line_no`);
-    expect(lines.map((l) => `${l.code}:${l.required_qty}/${l.allocated_qty}`)).toEqual([`${f.skus[0]!.code}:15/15`, `${f.skus[1]!.code}:4/0`]); // 2 cases × 6 + 3 pieces merge into one line; sku 1 has no stock: partial
+    expect(lines.map((l) => `${l.code}:${l.required_qty}/${l.allocated_qty}`)).toEqual([`${f.skus[0]!.code}:15/15`, `${f.skus[1]!.code}:4/4`]); // 2 cases × 6 + 3 pieces merge into one line; sku 1 stock left by the free-pick test above
     const order = await sql<{ status: string; source: string; notes: string }>(`SELECT status, source, notes FROM orders WHERE order_number = '${number}'`);
-    expect(order[0]).toMatchObject({ status: 'PARTIALLY_ALLOCATED', source: 'MANUAL', notes: 'pedido de mostrador, pasa hoy' });
+    expect(order[0]).toMatchObject({ status: 'ALLOCATED', source: 'MANUAL', notes: 'pedido de mostrador, pasa hoy' });
     const task = await sql<{ mode: string; purpose: string; assigned_to: string | null }>(`SELECT mode, purpose, assigned_to FROM pick_tasks WHERE id = '${r.body.task_id}'`);
     expect(task[0]!.mode).toBe('ALLOCATED');
     expect(task[0]!.purpose).toBe('pedido de mostrador, pasa hoy');
