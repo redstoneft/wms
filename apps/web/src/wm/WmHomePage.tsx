@@ -15,9 +15,9 @@ export default function WmHomePage() {
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {training && !training.completed && (
-            <button type="button" onClick={() => nav('/wm/training')} data-testid="wm-nav-training" className="col-span-2 flex min-h-28 flex-col items-center justify-center gap-2 rounded-2xl bg-amber-500 text-slate-950 active:bg-amber-400 sm:col-span-3">
+            <button type="button" onClick={() => nav('/wm/training')} data-testid="wm-nav-training" className={`col-span-2 flex min-h-28 flex-col items-center justify-center gap-2 rounded-2xl text-slate-950 sm:col-span-3 ${training.required ? 'bg-amber-500 active:bg-amber-400' : 'bg-sky-300 active:bg-sky-200'}`}>
               <span className="text-4xl leading-none">🎓</span>
-              <span className="text-xl font-black uppercase tracking-wide">Capacitación guiada · {training.steps_done} de {training.steps_total}</span>
+              <span className="text-xl font-black uppercase tracking-wide">Capacitación guiada{training.required ? '' : ' (opcional)'} · {training.steps_done} de {training.steps_total}</span>
             </button>
           )}
           {items.map((i) => (

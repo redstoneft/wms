@@ -37,7 +37,7 @@ export default function SettingsPage() {
           <Field label="Importar pedidos de la plataforma (Walmart/HEB) desde" hint="Fecha de arranque: los pedidos con fecha anterior nunca se importan al WMS aunque sigan abiertos en la plataforma de etiquetas. Solo se importan pedidos en estatus validado.">
             <Input type="date" value={f.orders_import_since ?? ''} onChange={(e) => setF({ ...f, orders_import_since: e.target.value })} />
           </Field>
-          <Checkbox label="Capacitación guiada obligatoria en modo almacén (todos los usuarios excepto ADMIN)" checked={f.training_required ?? true} onChange={(e) => setF({ ...f, training_required: e.target.checked })} />
+          <Checkbox label="Capacitación guiada obligatoria en modo almacén (todos los usuarios excepto ADMIN). Desmarcada = opcional: cada usuario la encuentra en el inicio del modo almacén y la toma cuando quiera." checked={f.training_required ?? true} onChange={(e) => setF({ ...f, training_required: e.target.checked })} />
           <Alert tone="info">La regla de liberación de embarques (cargado = requerido por pedido y SKU) no es configurable por diseño.</Alert>
           <div>
             <Button onClick={() => save.mutate()} loading={save.isPending}>Guardar</Button>
