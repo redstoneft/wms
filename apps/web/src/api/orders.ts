@@ -20,6 +20,8 @@ export const pickingApi = {
   freeScan: (body: { pick_task_id: string; lpn_code: string; qty?: string; uom_code?: string }, key: string) =>
     api.postIdem<{ ok: true; lpn: string; whole_pallet: boolean; added: { sku: string; qty: string }[]; outbound_lpn: string | null; view: PickTaskView }>('/picking/free-scan', body, key),
   close: (id: string) => api.post<PickTaskView>(`/picking/tasks/${id}/close`),
+  undoLine: (id: string, lineId: string, reason?: string) => api.post<PickTaskView>(`/picking/tasks/${id}/lines/${lineId}/undo`, { reason }),
+  cancelFree: (id: string, reason: string) => api.post<{ task_id: string; status: string; order_number: string; order_status: string; undone: number }>(`/picking/tasks/${id}/cancel`, { reason }),
   /** idempotent */
   scan: (body: { pick_task_id: string; line_id: string; step: 'LOCATION' | 'LPN' | 'QTY'; scanned?: string; qty?: string; uom_code?: string }, key: string) =>
     api.postIdem<PickScanResult>('/picking/scan', body, key),

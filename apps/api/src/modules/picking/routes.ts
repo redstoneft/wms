@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zPickScan, zPickShort, zStageLpn, zUuid, zFreePickScan } from '@wms/shared';
+import { zPickScan, zPickShort, zStageLpn, zUuid, zFreePickScan, zReason } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { includeTraining } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
@@ -45,6 +45,17 @@ export async function pickingRoutes(app: FastifyInstance) {
     const r = await runIdempotent(req.actor!, fingerprint('POST', '/picking/free-scan', body), async (tx) => ({ status: 200, body: await svc.freePickScan(tx, req.actor!, { ...body, qty: body.qty === undefined ? undefined : BigInt(body.qty) }) }));
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
+  });
+  /** Free pick edits: undo one scanned line, or cancel the whole free pick (everything back to stock). */
+  app.post('/picking/tasks/:id/lines/:lineId/undo', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const { id, lineId } = req.params as { id: string; lineId: string };
+    const body = z.object({ reason: z.string().trim().max(300).optional() }).parse(req.body ?? {});
+    return withTx((tx) => svc.undoFreeLine(tx, req.actor!, zUuid.parse(id), zUuid.parse(lineId), body.reason));
+  });
+  app.post('/picking/tasks/:id/cancel', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const body = z.object({ reason: zReason }).parse(req.body);
+    return withTx((tx) => svc.cancelFreeTask(tx, req.actor!, id, body.reason));
   });
   app.post('/picking/tasks/:id/close', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

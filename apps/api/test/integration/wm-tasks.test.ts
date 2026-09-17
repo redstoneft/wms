@@ -94,4 +94,35 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const again = await picker.post('/wm/tasks', { kind: 'PICK', reference: number, purpose: 'continuar el pedido' });
     expect(again.status).toBe(422);
   });
+
+  it('editing and deleting a free pick: a line scanned by mistake goes back to its pallet; cancelling returns everything and cancels the floor-born order', async () => {
+    const whole = await storedPallet(f, 0, f.reserve[4]!.id, 18n);
+    const part = await storedPallet(f, 1, f.reserve[5]!.id, 30n);
+    const number = `PED-EDIT-${f.tag}`;
+    const r = await picker.post('/wm/tasks', { kind: 'PICK', reference: number, purpose: 'pedido de mostrador', new_order: { customer_code: f.customer.code } });
+    expect(r.status).toBe(201);
+    const s1 = await picker.post('/picking/free-scan', { pick_task_id: r.body.id, lpn_code: whole.code }, idem());
+    const s2 = await picker.post('/picking/free-scan', { pick_task_id: r.body.id, lpn_code: part.code, qty: 10, uom_code: 'PIECE' }, idem());
+    expect(s1.status).toBe(200);
+    expect(s2.status).toBe(200);
+    const partLine = s2.body.view.lines.find((l: { lpn_code: string }) => l.lpn_code === part.code);
+    // undo the partial line: 10 pieces go back from the outbound pallet to the source pallet
+    const u = await picker.post(`/picking/tasks/${r.body.id}/lines/${partLine.id}/undo`, { reason: 'tarima equivocada' });
+    expect(u.status, JSON.stringify(u.body)).toBe(200);
+    expect((await sql<{ q: bigint }>(`SELECT COALESCE(sum(qty),0)::bigint AS q FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${part.code}' AND b.status = 'AVAILABLE'`))[0]!.q).toBe(30n);
+    expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_number = '${number}'`))[0]!.n).toBe(1n);
+    expect(u.body.lines.filter((l: { status: string }) => l.status === 'PICKED')).toHaveLength(1);
+    // delete the whole pick: the whole pallet flips back to stock, order cancelled, lane released
+    const noReason = await picker.post(`/picking/tasks/${r.body.id}/cancel`, { reason: '' });
+    expect(noReason.status).toBe(400);
+    const c = await picker.post(`/picking/tasks/${r.body.id}/cancel`, { reason: 'el cliente canceló' });
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    expect(c.body).toMatchObject({ status: 'CANCELLED', order_status: 'CANCELLED', undone: 1 });
+    const wholeRow = await sql<{ status: string; lpn_type: string; order_id: string | null; avail: bigint }>(`SELECT l.status, l.lpn_type, l.order_id, (SELECT COALESCE(sum(qty),0)::bigint FROM inventory_balances b WHERE b.lpn_id = l.id AND b.status = 'AVAILABLE') AS avail FROM lpns l WHERE l.code = '${whole.code}'`);
+    expect(wholeRow[0]).toEqual({ status: 'STORED', lpn_type: 'STORAGE', order_id: null, avail: 18n });
+    expect((await sql<{ status: string }>(`SELECT status FROM orders WHERE order_number = '${number}'`))[0]!.status).toBe('CANCELLED');
+    expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM staging_assignments sa JOIN orders o ON o.id = sa.order_id WHERE o.order_number = '${number}' AND sa.released_at IS NULL`))[0]!.n).toBe(0n);
+    expect((await picker.get('/picking/tasks?mine=true')).body.some((t: { id: string }) => t.id === r.body.id)).toBe(false);
+    await expectReconciled();
+  });
 });

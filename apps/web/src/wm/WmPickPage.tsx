@@ -109,6 +109,7 @@ function Flow() {
         onRefresh={(nv) => qc.setQueryData(['pick-task', v.task.id], nv)}
         onPause={() => { setTaskId(null); void qc.invalidateQueries({ queryKey: ['pick-tasks'] }); }}
         onClosed={(nv) => { qc.setQueryData(['pick-task', v.task.id], nv); setCompleted(nv); void qc.invalidateQueries({ queryKey: ['pick-tasks'] }); }}
+        onCancelled={() => { setTaskId(null); setCompleted(null); void qc.invalidateQueries({ queryKey: ['pick-tasks'] }); }}
       />
     );
   const line = nextLine(v);

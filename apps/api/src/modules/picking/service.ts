@@ -428,3 +428,70 @@ export async function closeFreeTask(tx: Tx, ctx: ActorContext, taskId: string) {
   await audit(tx, ctx, { action: 'pick.free_closed', entity_type: 'pick_task', entity_id: taskId, after: { lines: picked } });
   return pickTaskView(tx, taskId);
 }
+
+/** Editing a free pick: a pallet (or quantity) scanned by mistake goes back to stock exactly where it was. */
+export async function undoFreeLine(tx: Tx, ctx: ActorContext, taskId: string, lineId: string, reason: string | undefined) {
+  const trows = await tx.$queryRaw<{ id: string; status: string; mode: string; assigned_to: string | null; order_id: string; outbound_lpn_id: string | null }[]>`SELECT id, status, mode, assigned_to, order_id, outbound_lpn_id FROM pick_tasks WHERE id = ${taskId}::uuid FOR UPDATE`;
+  const task = trows[0];
+  if (!task) throw new NotFoundError('pick task', taskId);
+  if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'Only free-pick lines can be undone here; directed picks are corrected by a supervisor');
+  if (!['PENDING', 'IN_PROGRESS'].includes(task.status)) throw new RuleError('TASK_STATUS', `Task is ${task.status}; a closed pick is undone by cancelling the order`);
+  if (task.assigned_to && task.assigned_to !== ctx.userId && !ctx.permissions.has('picking.assign')) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
+  const line = await tx.pick_task_lines.findFirst({ where: { id: lineId, pick_task_id: taskId } });
+  if (!line) throw new NotFoundError('pick line', lineId);
+  if (line.status !== 'PICKED' || line.picked_qty <= 0n) throw new RuleError('LINE_STATUS', `Line is ${line.status}`);
+  const source = await lockLpn(tx, line.lpn_id);
+  const qty = line.picked_qty;
+  let via: string;
+  if (source.status === 'PICKING' && source.lpn_type === 'OUTBOUND' && source.order_id === task.order_id) {
+    // whole pallet converted in place: flip it back
+    await recordMovement(tx, ctx, { movement_type: 'UNPICK', sku_id: line.sku_id, qty, from_lpn_id: source.id, to_lpn_id: source.id, from_location_id: source.current_location_id, to_location_id: source.current_location_id, from_status: 'PICKING', to_status: 'AVAILABLE', order_id: task.order_id, task_id: task.id, reference_type: 'free_pick_undo', reference_id: line.id, reason, idempotency_suffix: `UNPICK:${line.id}` });
+    const stillPicking = await tx.inventory_balances.count({ where: { lpn_id: source.id, status: 'PICKING', qty: { gt: 0n } } });
+    if (stillPicking === 0) await tx.lpns.update({ where: { id: source.id }, data: { status: 'STORED', lpn_type: 'STORAGE', order_id: null, version: { increment: 1 } } });
+    via = 'in_place';
+  } else {
+    if (!task.outbound_lpn_id) throw new RuleError('NO_OUTBOUND', 'Task has no outbound pallet');
+    const outbound = await lockLpn(tx, task.outbound_lpn_id);
+    await transferBetweenLpns(tx, ctx, { movement_type: 'UNPICK', from_lpn: outbound, to_lpn: source, sku_id: line.sku_id, qty, from_status: 'PICKING', to_status: 'AVAILABLE', to_location_id: source.current_location_id ?? outbound.current_location_id, order_id: task.order_id, task_id: task.id, reference_type: 'free_pick_undo', reference_id: line.id, reason });
+    if (source.status === 'CONSUMED') await tx.lpns.update({ where: { id: source.id }, data: { status: 'STORED', version: { increment: 1 } } });
+    const left = await tx.inventory_balances.count({ where: { lpn_id: outbound.id, qty: { gt: 0n } } });
+    if (left === 0) {
+      await tx.lpns.update({ where: { id: outbound.id }, data: { status: 'CANCELLED', version: { increment: 1 } } });
+      await tx.pick_tasks.update({ where: { id: task.id }, data: { outbound_lpn_id: null } });
+    }
+    via = 'outbound';
+  }
+  await tx.allocations.update({ where: { id: line.allocation_id }, data: { status: 'RELEASED', picked_qty: 0n } });
+  const ol = await tx.order_lines.findUniqueOrThrow({ where: { id: line.order_line_id } });
+  if (ol.required_qty - qty <= 0n) {
+    // the line existed only because of this scan: it disappears entirely (the audit row and the UNPICK movement keep the trace)
+    await tx.pick_task_lines.deleteMany({ where: { order_line_id: ol.id } });
+    await tx.allocations.deleteMany({ where: { order_line_id: ol.id } });
+    await tx.order_lines.delete({ where: { id: ol.id } });
+  } else {
+    await tx.order_lines.update({ where: { id: ol.id }, data: { required_qty: { decrement: qty }, uom_qty: { decrement: qty }, picked_qty: { decrement: qty } } });
+    await tx.pick_task_lines.update({ where: { id: line.id }, data: { status: 'CANCELLED', picked_qty: 0n } });
+  }
+  await audit(tx, ctx, { action: 'pick.free_undo', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, lpn: source.code, qty: qty.toString(), via }, reason: reason ?? null });
+  return pickTaskView(tx, task.id);
+}
+
+/** Deleting a free pick: everything scanned goes back to stock, the task is cancelled and an order born on the floor is cancelled too. */
+export async function cancelFreeTask(tx: Tx, ctx: ActorContext, taskId: string, reason: string) {
+  const trows = await tx.$queryRaw<{ id: string; status: string; mode: string; assigned_to: string | null; order_id: string }[]>`SELECT id, status, mode, assigned_to, order_id FROM pick_tasks WHERE id = ${taskId}::uuid FOR UPDATE`;
+  const task = trows[0];
+  if (!task) throw new NotFoundError('pick task', taskId);
+  if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'Directed pick tasks are cancelled by a supervisor from the order');
+  if (!['PENDING', 'IN_PROGRESS'].includes(task.status)) throw new RuleError('TASK_STATUS', `Task is ${task.status}`);
+  if (task.assigned_to && task.assigned_to !== ctx.userId && !ctx.permissions.has('picking.assign')) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
+  const picked = await tx.pick_task_lines.findMany({ where: { pick_task_id: taskId, status: 'PICKED' }, orderBy: { sequence: 'desc' } });
+  for (const l of picked) await undoFreeLine(tx, ctx, taskId, l.id, reason);
+  await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'CANCELLED', completed_at: new Date(), version: { increment: 1 } } });
+  await tx.staging_assignments.updateMany({ where: { order_id: task.order_id, released_at: null }, data: { released_at: new Date() } });
+  const linesLeft = await tx.order_lines.count({ where: { order_id: task.order_id } });
+  const order = await tx.orders.findUniqueOrThrow({ where: { id: task.order_id } });
+  const orderStatus = linesLeft === 0 ? 'CANCELLED' : 'ACCEPTED';
+  await tx.orders.update({ where: { id: task.order_id }, data: { status: orderStatus, picker_id: null, notes: `${order.notes ?? ''}\nSurtido eliminado: ${reason}`.trim().slice(0, 2000), version: { increment: 1 } } });
+  await audit(tx, ctx, { action: 'pick.free_cancelled', entity_type: 'pick_task', entity_id: taskId, after: { order: order.order_number, undone: picked.length, order_status: orderStatus }, reason });
+  return { task_id: taskId, status: 'CANCELLED', order_number: order.order_number, order_status: orderStatus, undone: picked.length };
+}

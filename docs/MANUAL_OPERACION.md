@@ -94,6 +94,8 @@ Para pedidos que no vienen de la plataforma: en `Nueva tarea → Surtir` con un 
 2. Cada tarima escaneada queda asignada y surtida al pedido en ese momento; las líneas del pedido se construyen con lo que escanea.
 3. Puede **Guardar y seguir después**: la tarea sigue en "Mis tareas" y se puede continuar otro día. Nadie más la ve como pendiente.
 4. Al terminar, **Cerrar surtido**: el pedido queda surtido y sigue el flujo normal (staging, verificación, carga). No se puede cerrar sin al menos una tarima.
+5. **Editar**: en la lista de tarimas surtidas, **Quitar** regresa esa tarima (o esa cantidad) a su lugar en el inventario; para cambiar una cantidad, quítela y vuelva a escanearla.
+6. **Eliminar el surtido**: botón rojo al final, pide el motivo. Todo lo escaneado regresa al inventario, la tarea se cancela y, si el pedido nació en el handheld, el pedido queda cancelado. Queda en auditoría con su usuario.
 
 ## ARMADO (insumo → producto terminado)
 

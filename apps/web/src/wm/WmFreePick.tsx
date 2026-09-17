@@ -17,11 +17,14 @@ interface Pallet {
   contents: { sku_code: string; description: string; qty: string }[];
 }
 
-export function WmFreePick({ view, onRefresh, onPause, onClosed }: { view: PickTaskView; onRefresh: (v: PickTaskView) => void; onPause: () => void; onClosed: (v: PickTaskView) => void }) {
+export function WmFreePick({ view, onRefresh, onPause, onClosed, onCancelled }: { view: PickTaskView; onRefresh: (v: PickTaskView) => void; onPause: () => void; onClosed: (v: PickTaskView) => void; onCancelled: () => void }) {
   const wm = useWm();
   const [busy, setBusy] = useState(false);
   const [pallet, setPallet] = useState<Pallet | null>(null);
   const [qtyMode, setQtyMode] = useState(false);
+  const [undoId, setUndoId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [reason, setReason] = useState('');
   const picked = view.lines.filter((l) => l.status === 'PICKED');
   const totalPieces = picked.reduce((a, l) => a + Number(l.picked_qty), 0);
 
@@ -49,6 +52,31 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed }: { view: PickT
       onRefresh(r.data.view);
       setPallet(null);
       setQtyMode(false);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const undo = async (lineId: string) => {
+    setBusy(true);
+    try {
+      const v = await pickingApi.undoLine(view.task.id, lineId, 'quitado desde el handheld');
+      wm.ok('TARIMA DEVUELTA AL INVENTARIO');
+      onRefresh(v);
+      setUndoId(null);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cancelAll = async () => {
+    setBusy(true);
+    try {
+      const r = await pickingApi.cancelFree(view.task.id, reason.trim());
+      wm.ok(`SURTIDO ELIMINADO · ${r.undone} tarima(s) de vuelta · pedido ${r.order_number} ${r.order_status === 'CANCELLED' ? 'cancelado' : 'sin surtir'}`);
+      onCancelled();
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -97,11 +125,22 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed }: { view: PickT
           {picked.length > 0 && (
             <ul className="mt-3 grid gap-1 font-mono text-base" data-testid="free-picked-list">
               {picked.map((l) => (
-                <li key={l.id} className="flex justify-between rounded bg-slate-900 px-3 py-2">
+                <li key={l.id} className="flex items-center justify-between gap-2 rounded bg-slate-900 px-3 py-2">
                   <span>
                     {l.lpn_code} · {l.sku_code}
                   </span>
-                  <span>{fmtQty(l.picked_qty)} pzas</span>
+                  <span className="flex items-center gap-2">
+                    {fmtQty(l.picked_qty)} pzas
+                    {undoId === l.id ? (
+                      <button type="button" className="rounded bg-rose-600 px-2 py-1 text-xs font-bold text-white" onClick={() => void undo(l.id)} disabled={busy} data-testid={`free-undo-confirm-${l.id}`}>
+                        ¿Quitar? Sí
+                      </button>
+                    ) : (
+                      <button type="button" className="rounded bg-slate-700 px-2 py-1 text-xs font-bold text-white" onClick={() => setUndoId(l.id)} disabled={busy} data-testid={`free-undo-${l.id}`}>
+                        Quitar
+                      </button>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -114,7 +153,25 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed }: { view: PickT
               Cerrar surtido
             </BigButton>
           </div>
-          <div className="mt-2 text-center text-xs text-slate-400">Puedes salir y volver otro día: la tarea queda en "Mis tareas" hasta que la cierres.</div>
+          <div className="mt-2 text-center text-xs text-slate-400">Puedes salir y volver otro día: la tarea queda en "Mis tareas" hasta que la cierres. Para cambiar una cantidad, quita la tarima y vuelve a escanearla.</div>
+          {!deleting ? (
+            <button type="button" className="mt-4 w-full rounded-2xl border-2 border-rose-700 py-3 text-sm font-bold text-rose-300" onClick={() => setDeleting(true)} data-testid="free-delete">
+              Eliminar este surtido (todo regresa al inventario)
+            </button>
+          ) : (
+            <div className="mt-4 rounded-2xl border-2 border-rose-700 p-3">
+              <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-rose-300">¿Por qué se elimina?</div>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ej.: el cliente canceló · se capturó el pedido equivocado" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-lg text-white" data-testid="free-delete-reason" />
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <BigButton tone="neutral" onClick={() => setDeleting(false)}>
+                  No, conservar
+                </BigButton>
+                <BigButton tone="danger" onClick={cancelAll} disabled={busy || reason.trim().length < 3} testId="free-delete-confirm">
+                  Sí, eliminar
+                </BigButton>
+              </div>
+            </div>
+          )}
         </>
       )}
 
