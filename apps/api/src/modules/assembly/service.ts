@@ -179,9 +179,9 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
   return { ...full, consumed, produced, warnings };
 }
 
-export async function listAssemblies(tx: Tx, q: { limit: number; sku?: string }) {
+export async function listAssemblies(tx: Tx, q: { limit: number; sku?: string; include_training?: boolean }) {
   return tx.assembly_orders.findMany({
-    where: q.sku ? { output_sku: { code: q.sku } } : {},
+    where: { ...(q.include_training ? {} : { is_training: false }), ...(q.sku ? { output_sku: { code: q.sku } } : {}) },
     orderBy: { created_at: 'desc' },
     take: q.limit,
     include: ORDER_INCLUDE,

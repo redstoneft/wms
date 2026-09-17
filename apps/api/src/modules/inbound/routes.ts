@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReason, zReceiveScan, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { trainingWhere } from '../../lib/training-scope.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
@@ -16,7 +17,7 @@ export async function inboundRoutes(app: FastifyInstance) {
   // ---------------- purchase orders ----------------
   app.get('/purchase-orders', { preHandler: app.requirePermission('containers.read') }, async (req) => {
     const q = z.object({ status: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
-    return db.purchase_orders.findMany({ where: q.status ? { status: q.status } : {}, include: { supplier: true, lines: { include: { sku: true } } }, orderBy: { created_at: 'desc' }, take: q.limit });
+    return db.purchase_orders.findMany({ where: { ...(await trainingWhere(req)), ...(q.status ? { status: q.status } : {}) }, include: { supplier: true, lines: { include: { sku: true } } }, orderBy: { created_at: 'desc' }, take: q.limit });
   });
   app.post('/purchase-orders', { preHandler: app.requirePermission('containers.manage') }, async (req, reply) => {
     const body = z
@@ -54,7 +55,7 @@ export async function inboundRoutes(app: FastifyInstance) {
   // ---------------- containers ----------------
   app.get('/containers', { preHandler: app.requirePermission('containers.read') }, async (req) => {
     const q = z.object({ status: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
-    const where = q.status ? { status: { in: q.status.split(',') } } : {};
+    const where = { ...(await trainingWhere(req)), ...(q.status ? { status: { in: q.status.split(',') } } : {}) };
     const [items, total] = await Promise.all([
       db.containers.findMany({ where, include: { supplier: true, carrier: true, po: true, receipts: { select: { id: true, receipt_number: true, status: true } } }, orderBy: [{ scheduled_at: 'asc' }, { created_at: 'desc' }], take: q.limit, skip: q.offset }),
       db.containers.count({ where }),
@@ -99,7 +100,7 @@ export async function inboundRoutes(app: FastifyInstance) {
   // ---------------- receipts ----------------
   app.get('/receipts', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
     const q = z.object({ status: z.string().optional(), container_id: zUuid.optional(), limit: z.coerce.number().int().min(1).max(500).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
-    const where = { ...(q.status ? { status: { in: q.status.split(',') } } : {}), ...(q.container_id ? { container_id: q.container_id } : {}) };
+    const where = { ...(await trainingWhere(req)), ...(q.status ? { status: { in: q.status.split(',') } } : {}), ...(q.container_id ? { container_id: q.container_id } : {}) };
     const [items, total] = await Promise.all([
       db.receipts.findMany({ where, include: { container: { select: { container_number: true } }, lines: { include: { sku: { select: { code: true, description: true } } } } }, orderBy: { created_at: 'desc' }, take: q.limit, skip: q.offset }),
       db.receipts.count({ where }),

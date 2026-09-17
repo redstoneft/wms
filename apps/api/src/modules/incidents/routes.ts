@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zCreateIncident, zResolveIncident, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { trainingWhere } from '../../lib/training-scope.js';
 import { NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import { createIncident } from './service.js';
@@ -26,6 +27,7 @@ export async function incidentRoutes(app: FastifyInstance) {
       })
       .parse(req.query);
     const where = {
+      ...(await trainingWhere(req)),
       ...(q.status ? { status: { in: q.status.split(',') } } : {}),
       ...(q.severity ? { severity: q.severity } : {}),
       ...(q.type ? { incident_type: q.type } : {}),

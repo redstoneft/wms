@@ -426,6 +426,7 @@ model carriers {
 // ------------------------------------------------------------------
 
 model purchase_orders {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id            String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   po_number     String   @unique @db.VarChar(60)
   supplier_id   String   @db.Uuid
@@ -462,6 +463,7 @@ model purchase_order_lines {
 }
 
 model containers {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id                String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   container_number  String    @unique @db.VarChar(40)
   supplier_id       String?   @db.Uuid
@@ -495,6 +497,7 @@ model containers {
 }
 
 model receipts {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   receipt_number String    @unique @db.VarChar(40)
   container_id   String?   @db.Uuid
@@ -661,6 +664,8 @@ model slotting_rules {
 }
 
 model putaway_tasks {
+  purpose      String?
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id                    String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   lpn_id                String    @db.Uuid
   suggested_location_id String?   @db.Uuid
@@ -682,6 +687,7 @@ model putaway_tasks {
 }
 
 model transfers {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   transfer_type    String    @default("LOCATION") @db.VarChar(20) // LOCATION | REPLENISHMENT | WAREHOUSE
   lpn_id           String    @db.Uuid
@@ -737,6 +743,7 @@ model replenishment_tasks {
 // ------------------------------------------------------------------
 
 model count_tasks {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id           String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   count_type   String    @db.VarChar(20) // LOCATION | SKU | ZONE | ABC | RANDOM | INCIDENT | SCHEDULED
   scope        Json      // { location_ids?: [], sku_ids?: [], zone_id?: string }
@@ -787,6 +794,7 @@ model count_lines {
 // ------------------------------------------------------------------
 
 model orders {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id            String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   order_number  String    @unique @db.VarChar(60)
   customer_id   String    @db.Uuid
@@ -865,6 +873,8 @@ model allocations {
 }
 
 model pick_tasks {
+  purpose      String? // "para qué" when an operator created the task from the handheld
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id           String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   order_id     String    @db.Uuid
   status       String    @default("PENDING") @db.VarChar(20) // PENDING | IN_PROGRESS | COMPLETED | CANCELLED
@@ -949,6 +959,7 @@ model verification_lines {
 }
 
 model shipments {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   shipment_number  String    @unique @db.VarChar(40)
   carrier_id       String?   @db.Uuid
@@ -981,6 +992,7 @@ model shipments {
 // ------------------------------------------------------------------
 
 model incidents {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id            String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   incident_number String  @unique @db.VarChar(40)
   incident_type String    @db.VarChar(30)
@@ -1030,6 +1042,7 @@ model quarantine_reasons {
 }
 
 model returns {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   return_number   String    @unique @db.VarChar(40)
   customer_id     String    @db.Uuid
@@ -1168,6 +1181,7 @@ model integration_runs {
 // (assembled pans in cases of 12) is produced onto NEW pallets. Ledger stays balanced per SKU.
 // ---------------------------------------------------------------------
 model assembly_orders {
+  is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id                  String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   code                String   @unique @db.VarChar(30) // ASM-YYYY-000001
   warehouse_id        String   @db.Uuid

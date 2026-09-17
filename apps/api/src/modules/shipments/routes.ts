@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zCreateShipment, zLoadScan, zReason, zReleaseShipment, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { trainingWhere } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
 
@@ -11,7 +12,7 @@ export async function shipmentRoutes(app: FastifyInstance) {
   app.get('/shipments', { preHandler: app.requirePermission('shipments.read') }, async (req) => {
     const q = z.object({ status: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
     return db.shipments.findMany({
-      where: q.status ? { status: { in: q.status.split(',') } } : {},
+      where: { ...(await trainingWhere(req)), ...(q.status ? { status: { in: q.status.split(',') } } : {}) },
       include: { carrier: true, orders: { select: { id: true, order_number: true, status: true } }, _count: { select: { lpns: true } } },
       orderBy: { created_at: 'desc' },
       take: q.limit,

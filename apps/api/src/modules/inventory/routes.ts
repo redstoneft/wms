@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zAdjustInventory, zStatusChange } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { includeTraining } from '../../lib/training-scope.js';
 import { NotFoundError } from '../../errors.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
@@ -22,7 +23,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
              COALESCE(sum(b.qty) FILTER (WHERE b.status = 'IN_TRANSFER'), 0)::text AS in_transfer,
              COALESCE(sum(b.qty), 0)::text AS total, count(DISTINCT b.lpn_id)::int AS lpn_count
         FROM skus s LEFT JOIN inventory_balances b ON b.sku_id = s.id AND b.qty > 0
-       WHERE s.is_active AND (${q.q ?? null}::text IS NULL OR s.code ILIKE '%' || ${q.q ?? ''} || '%' OR s.description ILIKE '%' || ${q.q ?? ''} || '%'
+             AND (${await includeTraining(req)}::boolean OR NOT EXISTS (SELECT 1 FROM lpns lx WHERE lx.id = b.lpn_id AND lx.warehouse_id = wms_school_warehouse_id()))
+       WHERE s.is_active AND (${await includeTraining(req)}::boolean OR s.code NOT LIKE 'CAP-%') AND (${q.q ?? null}::text IS NULL OR s.code ILIKE '%' || ${q.q ?? ''} || '%' OR s.description ILIKE '%' || ${q.q ?? ''} || '%'
              OR s.gtin = ${q.q ?? ''} OR EXISTS (SELECT 1 FROM sku_barcodes sb WHERE sb.sku_id = s.id AND sb.barcode ILIKE '%' || ${q.q ?? ''} || '%'))
        GROUP BY s.id HAVING (${q.status ?? null}::text IS NULL OR bool_or(b.status = ${q.status ?? null}))
        ORDER BY s.code LIMIT ${q.limit} OFFSET ${q.offset}`;
@@ -42,6 +44,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
         FROM lpns l LEFT JOIN locations loc ON loc.id = l.current_location_id LEFT JOIN zones z ON z.id = loc.zone_id
         LEFT JOIN orders o ON o.id = l.order_id LEFT JOIN shipments sh ON sh.id = l.shipment_id
        WHERE (${q.q ?? null}::text IS NULL OR l.code ILIKE '%' || ${q.q ?? ''} || '%')
+         AND (${await includeTraining(req)}::boolean OR l.warehouse_id IS DISTINCT FROM wms_school_warehouse_id())
          AND (${q.status ?? null}::text IS NULL OR l.status = ANY(string_to_array(${q.status ?? ''}, ',')))
          AND (${q.location_id ?? null}::uuid IS NULL OR l.current_location_id = ${q.location_id ?? null}::uuid)
          AND (${q.zone_id ?? null}::uuid IS NULL OR loc.zone_id = ${q.zone_id ?? null}::uuid)
@@ -69,12 +72,13 @@ export async function inventoryRoutes(app: FastifyInstance) {
   });
 
   /** Inventory by location / zone / warehouse. */
-  app.get('/inventory/by-zone', { preHandler: read }, async () => {
+  app.get('/inventory/by-zone', { preHandler: read }, async (req) => {
     return db.$queryRaw<Record<string, unknown>[]>`
       SELECT z.id AS zone_id, z.code AS zone_code, z.zone_type, count(DISTINCT loc.id)::int AS locations, count(DISTINCT l.id)::int AS lpns,
              COALESCE(sum(b.qty), 0)::text AS qty, COALESCE(sum(b.qty * s.unit_weight_kg), 0)::text AS weight_kg
         FROM zones z JOIN locations loc ON loc.zone_id = z.id AND loc.is_active
         LEFT JOIN lpns l ON l.current_location_id = loc.id LEFT JOIN inventory_balances b ON b.lpn_id = l.id AND b.qty > 0 LEFT JOIN skus s ON s.id = b.sku_id
+       WHERE (${await includeTraining(req)}::boolean OR z.warehouse_id IS DISTINCT FROM wms_school_warehouse_id())
        GROUP BY z.id ORDER BY z.code`;
   });
 

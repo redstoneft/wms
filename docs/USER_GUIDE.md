@@ -36,5 +36,6 @@ Alta (transportista, unidad, placas, chofer, destino, andén, pedidos). Detalle 
 * Devoluciones: alta por cliente (referencia al pedido original), recepción a cuarentena, clasificación (reintegrar / cuarentena / dañado / baja), cierre.
 * Etiquetas (por rack: ubicaciones o tarimas LPN guardadas): previsualizar/imprimir cualquier etiqueta; reimpresión con motivo; historial.
 * Capacitación guiada: cada usuario nuevo practica todas sus operaciones en el almacén escuela antes de operar (ver CAPACITACION.md).
+* Nueva tarea (handheld): el operador crea su propia tarea de surtido, conteo o acomodo indicando obligatoriamente para qué; el armado también exige el motivo.
 * Armado: órdenes de conversión de insumo a producto terminado (o reempaque cuando comparten clave; consume pallets bloqueados) (`/assembly` en oficina, `Almacén → Armado` en handheld): consume pallets de entrada, crea pallets nuevos con su factor de empaque, merma como incidencia, tareas de acomodo, historial.
 * Importaciones: plantillas CSV o Excel (la Excel trae pestañas de consulta: SKUs con claves SAE/GTIN, Ubicaciones, Clientes/Proveedores e Instrucciones), validación con errores por fila, aplicación, historial.

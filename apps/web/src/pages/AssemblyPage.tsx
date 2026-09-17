@@ -95,7 +95,7 @@ export default function AssemblyPage() {
             pallets: pallets.filter((p) => p.cases && p.pieces_per_case).map((p) => ({ cases: Number(p.cases), pieces_per_case: Number(p.pieces_per_case) })),
           },
           scrap: scrap > 0 ? { qty: scrap, reason: scrapReason.trim() } : undefined,
-          notes: notes.trim() || undefined,
+          notes: notes.trim(),
         },
         api.newKey(),
       ),
@@ -117,7 +117,7 @@ export default function AssemblyPage() {
     onError: (e) => toast.error('No se pudo imprimir', e),
   });
 
-  const canSubmit = station.trim() && inputs.some((i) => i.lpn_code && i.sku_code && Number(i.qty) > 0) && (outInfo || outSku.trim()) && pallets.some((p) => Number(p.cases) > 0 && Number(p.pieces_per_case) > 0) && balanced && (scrap === 0 || scrapReason.trim().length >= 3);
+  const canSubmit = station.trim() && inputs.some((i) => i.lpn_code && i.sku_code && Number(i.qty) > 0) && (outInfo || outSku.trim()) && pallets.some((p) => Number(p.cases) > 0 && Number(p.pieces_per_case) > 0) && balanced && notes.trim().length >= 5 && (scrap === 0 || scrapReason.trim().length >= 3);
 
   return (
     <div>
@@ -226,8 +226,8 @@ export default function AssemblyPage() {
                 <Input value={scrapReason} onChange={(e) => setScrapReason(e.target.value)} placeholder="cuerpos golpeados, no se pudieron armar" disabled={scrap === 0} />
               </Field>
             </div>
-            <Field label="Notas">
-              <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <Field label="¿Para qué se hace este armado?" required hint="Obligatorio; queda en la orden y en la auditoría.">
+              <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Ej.: pedido de Walmart 8834970889 sale mañana" data-testid="asm-purpose" />
             </Field>
             <div className={`rounded-lg p-3 text-sm ${balanced ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`} data-testid="asm-balance">
               Consumido <b>{fmtQty(consumed)}</b> pzas · Producido <b>{fmtQty(produced)}</b> pzas · Merma <b>{fmtQty(scrap)}</b>

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zPutawayConfirm, zPutawayScanLpn, zReason, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { includeTraining } from '../../lib/training-scope.js';
 import { NotFoundError } from '../../errors.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import { lockLpnByCode } from '../../inventory/ledger.js';
@@ -19,7 +20,7 @@ export async function putawayRoutes(app: FastifyInstance) {
         FROM putaway_tasks t JOIN lpns l ON l.id = t.lpn_id
         LEFT JOIN locations cur ON cur.id = l.current_location_id LEFT JOIN locations sug ON sug.id = t.suggested_location_id
         LEFT JOIN users u ON u.id = t.assigned_to
-       WHERE t.status = ANY(${q.status.split(',')}::text[]) AND (${q.mine !== 'true'} OR t.assigned_to = ${req.actor!.userId}::uuid OR t.assigned_to IS NULL)
+       WHERE t.status = ANY(${q.status.split(',')}::text[]) AND (${await includeTraining(req)}::boolean OR t.is_training = false) AND (${q.mine !== 'true'} OR t.assigned_to = ${req.actor!.userId}::uuid OR t.assigned_to IS NULL)
        ORDER BY t.created_at LIMIT ${q.limit}`;
     return rows;
   });

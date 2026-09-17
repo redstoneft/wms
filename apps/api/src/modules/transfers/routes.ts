@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zReason, zTransferComplete, zTransferStart, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { includeTraining } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
 
@@ -15,7 +16,7 @@ export async function transferRoutes(app: FastifyInstance) {
       SELECT t.*, l.code AS lpn_code, f.code AS from_code, d.code AS to_code, d.barcode AS to_barcode, u.username AS started_by_username
         FROM transfers t JOIN lpns l ON l.id = t.lpn_id JOIN locations f ON f.id = t.from_location_id JOIN locations d ON d.id = t.to_location_id
         LEFT JOIN users u ON u.id = t.started_by
-       WHERE t.status = ANY(${q.status.split(',')}::text[]) ORDER BY t.started_at DESC LIMIT ${q.limit}`;
+       WHERE t.status = ANY(${q.status.split(',')}::text[]) AND (${await includeTraining(req)}::boolean OR t.is_training = false) ORDER BY t.started_at DESC LIMIT ${q.limit}`;
   });
 
   app.post('/transfers/start', { preHandler: perm }, async (req, reply) => {

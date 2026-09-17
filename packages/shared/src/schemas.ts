@@ -325,8 +325,20 @@ export const zAssemblyComplete = z.object({
   }),
   /** pieces lost during assembly; required to explain any difference between consumed and produced */
   scrap: z.object({ qty: zQty, reason: zReason }).optional(),
-  notes: zNote,
+  /** "para qué": why this assembly is being done (mandatory: every self-started task states its purpose) */
+  notes: z.string().trim().min(5).max(2000),
 });
+
+// ---- tasks an operator creates for themself from the handheld ----
+export const SELF_TASK_KINDS = ['PICK', 'COUNT', 'PUTAWAY'] as const;
+export const zSelfTask = z.object({
+  kind: z.enum(SELF_TASK_KINDS),
+  /** PICK: order number · COUNT: location barcode/code · PUTAWAY: LPN code */
+  reference: z.string().trim().min(1).max(64),
+  /** "para qué": mandatory, audited */
+  purpose: z.string().trim().min(5).max(300),
+});
+export type SelfTaskInput = z.infer<typeof zSelfTask>;
 export type AssemblyCompleteInput = z.infer<typeof zAssemblyComplete>;
 
 // ---- inventory adjustments / quarantine ----

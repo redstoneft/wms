@@ -35,6 +35,7 @@ export const PERMISSIONS = {
   'counts.execute': 'Perform blind counts',
   'counts.approve': 'Approve count adjustments (supervisor)',
   'assembly.execute': 'Assembly orders: convert components into finished product (new pallets)',
+  'tasks.self_create': 'Create own tasks from the handheld (pick, count, put-away) stating the purpose',
   // outbound
   'orders.read': 'View orders',
   'orders.manage': 'Create/import/accept/cancel orders',
@@ -85,6 +86,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'labels.print',
     'returns.manage',
     'assembly.execute',
+    'tasks.self_create',
   ],
   FORKLIFT: [
     ...OPERATOR_COMMON,
@@ -92,8 +94,9 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'transfers.execute',
     'replenishment.execute',
     'receiving.read',
+    'tasks.self_create',
   ],
-  PICKER: [...OPERATOR_COMMON, 'orders.read', 'picking.execute', 'labels.print'],
+  PICKER: [...OPERATOR_COMMON, 'orders.read', 'picking.execute', 'labels.print', 'tasks.self_create'],
   VERIFIER: [...OPERATOR_COMMON, 'orders.read', 'verification.execute', 'shipments.read'],
   LOADER: [...OPERATOR_COMMON, 'orders.read', 'shipments.read', 'loading.execute'],
   INVENTORY_CONTROL: [
@@ -113,6 +116,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'imports.run',
     'masterdata.manage',
     'assembly.execute',
+    'tasks.self_create',
   ],
 };
 

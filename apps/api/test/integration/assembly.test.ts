@@ -68,7 +68,7 @@ describe('assembly orders (armado)', () => {
 
   it('a 1:1 conversion must balance: the difference has to be declared as scrap (which opens an incident)', async () => {
     const body = await storedPallet(f, BODY, f.reserve[1]!.id, 48n);
-    const base = { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }] };
+    const base = { notes: 'prueba de armado', station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }] };
     const bad = await sup.post('/assembly', { ...base, output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 3, pieces_per_case: 12 }] } }, idem());
     expect(bad.status).toBe(422);
     expect(bad.body.error).toBe('ASSEMBLY_UNBALANCED');
@@ -87,7 +87,7 @@ describe('assembly orders (armado)', () => {
 
   it('partial consumption leaves the rest on the source pallet; the same request twice is replayed, not repeated', async () => {
     const body = await storedPallet(f, BODY, f.reserve[2]!.id, 240n);
-    const req = { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 96 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 8, pieces_per_case: 12 }] } };
+    const req = { notes: 'prueba de armado', station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 96 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 8, pieces_per_case: 12 }] } };
     const key = idem();
     const a = await sup.post('/assembly', req, key);
     const b = await sup.post('/assembly', req, key);
@@ -101,13 +101,13 @@ describe('assembly orders (armado)', () => {
 
   it('rejects: more than available, a rack position as station, and roles without the permission', async () => {
     const body = await storedPallet(f, BODY, f.reserve[3]!.id, 24n);
-    const tooMany = await sup.post('/assembly', { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 4, pieces_per_case: 12 }] } }, idem());
+    const tooMany = await sup.post('/assembly', { notes: 'prueba de armado', station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 4, pieces_per_case: 12 }] } }, idem());
     expect(tooMany.status).toBe(422);
     expect(tooMany.body.error).toBe('INSUFFICIENT_INVENTORY');
-    const rack = await sup.post('/assembly', { station_barcode: f.reserve[4]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 2, pieces_per_case: 12 }] } }, idem());
+    const rack = await sup.post('/assembly', { notes: 'prueba de armado', station_barcode: f.reserve[4]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 2, pieces_per_case: 12 }] } }, idem());
     expect(rack.status).toBe(422);
     expect(rack.body.error).toBe('STATION_IS_RACK');
-    const forbidden = await forklift.post('/assembly', { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 2, pieces_per_case: 12 }] } }, idem());
+    const forbidden = await forklift.post('/assembly', { notes: 'prueba de armado', station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output: { sku_code: f.skus[PAN]!.code, pallets: [{ cases: 2, pieces_per_case: 12 }] } }, idem());
     expect(forbidden.status).toBe(403);
     const untouched = await sql<{ t: bigint | null }>(`SELECT COALESCE(sum(qty),0)::bigint AS t FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${body.code}'`);
     expect(untouched[0]!.t).toBe(24n);
@@ -120,7 +120,7 @@ describe('assembly orders (armado)', () => {
     expect(blk.status).toBe(200);
     const r = await sup.post(
       '/assembly',
-      { station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: bodies.code, sku_code: f.skus[2]!.code, qty: 24 }], output: { sku_code: f.skus[2]!.code, pallets: [{ cases: 1, pieces_per_case: 12 }, { cases: 1, pieces_per_case: 12 }] } },
+      { notes: 'prueba de armado', station_barcode: f.staging[0]!.barcode, inputs: [{ lpn_code: bodies.code, sku_code: f.skus[2]!.code, qty: 24 }], output: { sku_code: f.skus[2]!.code, pallets: [{ cases: 1, pieces_per_case: 12 }, { cases: 1, pieces_per_case: 12 }] } },
       idem(),
     );
     expect(r.status).toBe(201);

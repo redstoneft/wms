@@ -125,7 +125,7 @@ describe('guided warehouse-mode training', () => {
     const codes = await prep('assembly');
     const lpn = code(codes, 'Pallet de cuerpos');
     await notYet('assembly');
-    const r = await t.post('/assembly', { station_barcode: code(codes, 'Estación'), inputs: [{ lpn_code: lpn, sku_code: 'CAP-003', qty: 24 }], output: { sku_code: 'CAP-003', pallets: [{ cases: 1, pieces_per_case: 12 }, { cases: 1, pieces_per_case: 12 }] } }, idem());
+    const r = await t.post('/assembly', { notes: 'práctica de armado', station_barcode: code(codes, 'Estación'), inputs: [{ lpn_code: lpn, sku_code: 'CAP-003', qty: 24 }], output: { sku_code: 'CAP-003', pallets: [{ cases: 1, pieces_per_case: 12 }, { cases: 1, pieces_per_case: 12 }] } }, idem());
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     await pass('assembly');
   });

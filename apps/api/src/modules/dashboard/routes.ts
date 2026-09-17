@@ -9,18 +9,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
   /** Real-time operational snapshot: one query per widget, all cheap aggregates. */
   app.get('/dashboard', { preHandler: perm }, async () => {
     const [containers, receipts, lpnsNoLocation, putaway, orders, picking, staging, shipments, incidents, counts, occupancy, transfers, replen] = await Promise.all([
-      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM containers WHERE status NOT IN ('CLOSED') GROUP BY status`,
-      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM receipts WHERE status NOT IN ('CLOSED') GROUP BY status`,
-      db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM lpns l WHERE l.status IN ('OPEN','STORED') AND (l.current_location_id IS NULL OR EXISTS (SELECT 1 FROM locations x WHERE x.id = l.current_location_id AND x.location_type = 'RECEIVING'))`,
-      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM putaway_tasks WHERE status IN ('PENDING','ASSIGNED','IN_PROGRESS') GROUP BY status`,
-      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM orders WHERE status NOT IN ('SHIPPED','CANCELLED') GROUP BY status`,
-      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM pick_tasks WHERE status IN ('PENDING','IN_PROGRESS') GROUP BY status`,
-      db.$queryRaw<{ total: bigint; used: bigint }[]>`SELECT count(*) AS total, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM staging_assignments sa WHERE sa.location_id = l.id AND sa.released_at IS NULL)) AS used FROM locations l WHERE l.location_type = 'STAGING' AND l.is_active`,
-      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM shipments WHERE status NOT IN ('DEPARTED','CANCELLED') GROUP BY status`,
-      db.$queryRaw<{ severity: string; n: bigint }[]>`SELECT severity, count(*) AS n FROM incidents WHERE status IN ('OPEN','IN_REVIEW') GROUP BY severity`,
-      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM count_tasks WHERE status NOT IN ('CLOSED','APPROVED','REJECTED') GROUP BY status`,
+      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM containers WHERE status NOT IN ('CLOSED') AND is_training = false GROUP BY status`,
+      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM receipts WHERE status NOT IN ('CLOSED') AND is_training = false GROUP BY status`,
+      db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM lpns l WHERE l.status IN ('OPEN','STORED') AND l.warehouse_id IS DISTINCT FROM wms_school_warehouse_id() AND (l.current_location_id IS NULL OR EXISTS (SELECT 1 FROM locations x WHERE x.id = l.current_location_id AND x.location_type = 'RECEIVING'))`,
+      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM putaway_tasks WHERE status IN ('PENDING','ASSIGNED','IN_PROGRESS') AND is_training = false GROUP BY status`,
+      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM orders WHERE status NOT IN ('SHIPPED','CANCELLED') AND is_training = false GROUP BY status`,
+      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM pick_tasks WHERE status IN ('PENDING','IN_PROGRESS') AND is_training = false GROUP BY status`,
+      db.$queryRaw<{ total: bigint; used: bigint }[]>`SELECT count(*) AS total, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM staging_assignments sa WHERE sa.location_id = l.id AND sa.released_at IS NULL)) AS used FROM locations l WHERE l.location_type = 'STAGING' AND l.is_active AND l.warehouse_id IS DISTINCT FROM wms_school_warehouse_id()`,
+      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM shipments WHERE status NOT IN ('DEPARTED','CANCELLED') AND is_training = false GROUP BY status`,
+      db.$queryRaw<{ severity: string; n: bigint }[]>`SELECT severity, count(*) AS n FROM incidents WHERE status IN ('OPEN','IN_REVIEW') AND is_training = false GROUP BY severity`,
+      db.$queryRaw<{ status: string; n: bigint }[]>`SELECT status, count(*) AS n FROM count_tasks WHERE status NOT IN ('CLOSED','APPROVED','REJECTED') AND is_training = false GROUP BY status`,
       db.$queryRaw<{ total: bigint; occupied: bigint; partial: bigint; blocked: bigint }[]>`SELECT count(*) AS total, count(*) FILTER (WHERE status='OCCUPIED') AS occupied, count(*) FILTER (WHERE status='PARTIAL') AS partial, count(*) FILTER (WHERE status IN ('BLOCKED','QUARANTINE')) AS blocked FROM v_location_occupancy WHERE location_type IN ('RESERVE','PICKING')`,
-      db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM transfers WHERE status = 'IN_TRANSIT'`,
+      db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM transfers WHERE status = 'IN_TRANSIT' AND is_training = false`,
       db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM replenishment_tasks WHERE status IN ('PENDING','IN_PROGRESS')`,
     ]);
     const toMap = (rows: { status?: string; severity?: string; n: bigint }[]) => Object.fromEntries(rows.map((r) => [(r.status ?? r.severity)!, Number(r.n)]));
@@ -28,7 +28,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     const alerts: { level: 'warn' | 'error'; text: string }[] = [];
     const crit = incidents.find((i) => i.severity === 'CRITICAL');
     if (crit && Number(crit.n) > 0) alerts.push({ level: 'error', text: `${crit.n} incidencia(s) CRÍTICA(S) abiertas` });
-    const stalePut = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM putaway_tasks WHERE status IN ('PENDING','ASSIGNED') AND created_at < now() - interval '4 hours'`;
+    const stalePut = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM putaway_tasks WHERE status IN ('PENDING','ASSIGNED') AND is_training = false AND created_at < now() - interval '4 hours'`;
     if (Number(stalePut[0]?.n ?? 0) > 0) alerts.push({ level: 'warn', text: `${stalePut[0]!.n} pallet(s) llevan más de 4 h sin ubicar` });
     const blockedShip = shipments.find((s) => s.status === 'BLOCKED');
     if (blockedShip) alerts.push({ level: 'error', text: `${blockedShip.n} embarque(s) BLOQUEADOS por validación de liberación` });

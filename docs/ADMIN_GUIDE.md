@@ -48,3 +48,7 @@ Ver WAREHOUSE_SETUP.md. Recomendación: preparar SKUs, barcodes, clientes, prove
 * Backups automáticos (BACKUPS.md) y simulacro de restore mensual.
 * Actualizaciones: respaldo → `docker compose build && up -d` → verificar salud y reconciliación.
 * Revisar `npm audit` y registros (`ERROR_WEBHOOK_URL`).
+
+## Capacitación aislada
+
+Todo lo que se hace en el almacén escuela (`ESCUELA`: recepciones, pedidos, embarques, tareas, traslados, conteos, incidencias, armados) se marca automáticamente `is_training` por triggers de base de datos y **no aparece** en las pantallas ni en el tablero. Solo lo ve quien está en medio de un ejercicio de capacitación (paso preparado y no terminado) y quien lo pide explícitamente con `?include_training=true` en la API. La capacitación es obligatoria u opcional según `Configuración → Capacitación guiada obligatoria`; cuando es opcional, el operador la encuentra en el inicio del modo almacén como "Capacitación guiada (opcional)".

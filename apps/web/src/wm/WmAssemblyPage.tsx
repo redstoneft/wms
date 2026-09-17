@@ -10,7 +10,7 @@ import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
 import { BigButton, BigValue, StepBar, useWm, WmShell } from './WmShell';
 
-type Step = 'STATION' | 'IN_LPN' | 'IN_SKU' | 'IN_QTY' | 'IN_MORE' | 'OUT_SKU' | 'PALLETS' | 'SCRAP' | 'CONFIRM' | 'DONE';
+type Step = 'STATION' | 'IN_LPN' | 'IN_SKU' | 'IN_QTY' | 'IN_MORE' | 'OUT_SKU' | 'PALLETS' | 'SCRAP' | 'PURPOSE' | 'CONFIRM' | 'DONE';
 interface InLine {
   lpn_code: string;
   sku_code: string;
@@ -51,6 +51,7 @@ function Flow() {
   const [expiry, setExpiry] = useState('');
   const [scrap, setScrap] = useState('0');
   const [reason, setReason] = useState('');
+  const [purpose, setPurpose] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AssemblyResult | null>(null);
 
@@ -114,6 +115,7 @@ function Flow() {
           inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })),
           output: { sku_code: out.code, lot: lot || undefined, expiry_date: expiry || undefined, pallets: Array.from({ length: n }, () => ({ cases: Number(cases), pieces_per_case: Number(ppc) })) },
           scrap: scrapN > 0 ? { qty: scrapN, reason } : undefined,
+          notes: purpose.trim(),
         },
         api.newKey(),
       );
@@ -146,6 +148,7 @@ function Flow() {
     setExpiry('');
     setScrap('0');
     setReason('');
+    setPurpose('');
     setResult(null);
   };
 
@@ -329,7 +332,7 @@ function Flow() {
           </label>
         )}
         {!balanced && <div className="mt-3 rounded-lg bg-amber-900/60 p-3 text-amber-200">La cuenta no cuadra: consumido {fmtQty(consumed)} ≠ producido {fmtQty(produced)} + merma {fmtQty(scrapN)}. Ajusta la merma o las tarimas.</div>}
-        <BigButton tone="primary" className="mt-3" disabled={!balanced || (scrapN > 0 && reason.trim().length < 3)} onClick={() => setStep('CONFIRM')} testId="scrap-ok">
+        <BigButton tone="primary" className="mt-3" disabled={!balanced || (scrapN > 0 && reason.trim().length < 3)} onClick={() => setStep('PURPOSE')} testId="scrap-ok">
           Continuar
         </BigButton>
         <BigButton tone="neutral" className="mt-3" onClick={() => setStep('PALLETS')}>
@@ -337,10 +340,27 @@ function Flow() {
         </BigButton>
       </div>
     );
+  if (step === 'PURPOSE')
+    return (
+      <div>
+        <StepBar text="7 · ¿PARA QUÉ SE HACE ESTE ARMADO? (OBLIGATORIO)" />
+        <label className="block">
+          <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-300">Para qué</div>
+          <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={3} placeholder="Ej.: pedido de Walmart sale mañana · reponer picking de sartén 20 cm" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-xl text-white" data-testid="asm-purpose" />
+          <div className="mt-1 text-xs text-slate-400">Mínimo 5 letras. Queda en la orden y en la auditoría.</div>
+        </label>
+        <BigButton tone="primary" className="mt-3" disabled={purpose.trim().length < 5} onClick={() => setStep('CONFIRM')} testId="purpose-ok">
+          Continuar
+        </BigButton>
+        <BigButton tone="neutral" className="mt-3" onClick={() => setStep('SCRAP')}>
+          Regresar
+        </BigButton>
+      </div>
+    );
   if (step === 'CONFIRM' && out)
     return (
       <div>
-        <StepBar text="7 · CONFIRMA EL ARMADO" />
+        <StepBar text="8 · CONFIRMA EL ARMADO" />
         <div className="grid gap-2 font-mono text-lg">
           {lines.map((l, i) => (
             <div key={i} className="rounded bg-slate-800 px-3 py-2">
@@ -351,11 +371,12 @@ function Flow() {
             + {nPallets} tarima(s) × {cases} cajas × {ppc} pzas de {out.code} = {fmtQty(produced)} pzas
           </div>
           {scrapN > 0 && <div className="rounded bg-amber-900/60 px-3 py-2 text-amber-100">Merma {fmtQty(scrapN)} pzas · {reason}</div>}
+          <div className="rounded bg-slate-800 px-3 py-2 text-slate-200">Para qué: {purpose}</div>
         </div>
         <BigButton tone="success" className="mt-3" onClick={submit} disabled={busy} testId="confirm">
           Registrar armado
         </BigButton>
-        <BigButton tone="neutral" className="mt-3" onClick={() => setStep('SCRAP')}>
+        <BigButton tone="neutral" className="mt-3" onClick={() => setStep('PURPOSE')}>
           Regresar
         </BigButton>
       </div>

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zClassifyReturnLine, zCreateReturn, zReceiveReturnLine, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { trainingWhere } from '../../lib/training-scope.js';
 import { NotFoundError } from '../../errors.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
@@ -12,7 +13,7 @@ export async function returnRoutes(app: FastifyInstance) {
 
   app.get('/returns', { preHandler: app.requirePermission('orders.read') }, async (req) => {
     const q = z.object({ status: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
-    return db.returns.findMany({ where: q.status ? { status: { in: q.status.split(',') } } : {}, include: { customer: true, original_order: { select: { order_number: true } }, lines: { include: { sku: true } } }, orderBy: { created_at: 'desc' }, take: q.limit });
+    return db.returns.findMany({ where: { ...(await trainingWhere(req)), ...(q.status ? { status: { in: q.status.split(',') } } : {}) }, include: { customer: true, original_order: { select: { order_number: true } }, lines: { include: { sku: true } } }, orderBy: { created_at: 'desc' }, take: q.limit });
   });
   app.get('/returns/:id', { preHandler: app.requirePermission('orders.read') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

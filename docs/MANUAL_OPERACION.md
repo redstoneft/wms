@@ -78,6 +78,10 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 2. Al llegar, escanee el **LPN** y la **ubicación** → completado. Destino equivocado = rojo. Si no puede completar, pida cancelar (el pallet vuelve a su origen).
 3. Reabasto: `Almacén → Reabasto` muestra las caras de picking bajas; **INICIAR** indica qué pallet de reserva llevar; el resto es igual a una transferencia.
 
+## NUEVA TAREA (el operador crea su propia tarea)
+
+`Almacén → Nueva tarea` permite empezar trabajo sin esperar a que el supervisor lo asigne: **surtir un pedido** (escanee o escriba el número; el sistema asigna inventario y la tarea queda a su nombre), **contar una ubicación** (conteo a ciegas de ese hueco) o **ubicar una tarima** que quedó sin tarea de acomodo. Siempre pide **para qué** se hace (mínimo 5 letras): queda en la tarea y en la auditoría con su usuario. Solo puede crear tareas del tipo que su rol ejecuta.
+
 ## ARMADO (insumo → producto terminado)
 
 Cuando un insumo se transforma en producto terminado (cuerpos de sartén en master de 24 → sartenes armados en cajas de 12) el pallet de insumo **se consume** y **nacen pallets nuevos**, aunque salgan más tarimas de las que entraron. Si el cuerpo y el sartén armado **usan la misma clave** (caso actual), el sistema lo registra como **reempaque**: la existencia no cambia, solo el empaque y el número de tarimas.
@@ -88,6 +92,7 @@ Cuando un insumo se transforma en producto terminado (cuerpos de sartén en mast
 2. `Almacén → Armado`: escanee la **estación**, luego cada **LPN de insumo** y las **piezas consumidas** (puede agregar varios: mangos, tornillería). "Listo, sin más insumos".
 3. Escanee el **producto terminado** (caja, clave SAE o GTIN) y capture **tarimas**, **cajas por tarima** y **piezas por caja** de este armado (el factor de empaque es de la corrida, no del catálogo).
 4. **Merma**: si se consumieron más piezas de las que salieron, capture la diferencia y el motivo; queda como incidencia. Con un solo insumo la cuenta debe cuadrar: consumido = producido + merma.
+4b. **Para qué**: escriba el motivo del armado (obligatorio, mínimo 5 letras); queda en la orden y en la auditoría.
 5. Confirme. El sistema crea los LPN nuevos: **imprima y pegue** cada etiqueta en su tarima. Cada tarima trae ya su **tarea de acomodo**: en `Ubicar`, escanee el LPN y llévelo a donde indique.
 
 El pallet de insumo que quedó en cero aparece como `CONSUMIDO`; si sobraron piezas, sigue disponible en su ubicación.

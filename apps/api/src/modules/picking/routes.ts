@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zPickScan, zPickShort, zStageLpn, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { includeTraining } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
 
@@ -17,7 +18,7 @@ export async function pickingRoutes(app: FastifyInstance) {
              sl.code AS staging_code
         FROM pick_tasks pt JOIN orders o ON o.id = pt.order_id JOIN customers c ON c.id = o.customer_id LEFT JOIN users u ON u.id = pt.assigned_to
         LEFT JOIN staging_assignments sa ON sa.order_id = o.id AND sa.released_at IS NULL LEFT JOIN locations sl ON sl.id = sa.location_id
-       WHERE pt.status = ANY(${q.status.split(',')}::text[]) AND (${q.mine !== 'true'} OR pt.assigned_to = ${req.actor!.userId}::uuid OR pt.assigned_to IS NULL)
+       WHERE pt.status = ANY(${q.status.split(',')}::text[]) AND (${await includeTraining(req)}::boolean OR pt.is_training = false) AND (${q.mine !== 'true'} OR pt.assigned_to = ${req.actor!.userId}::uuid OR pt.assigned_to IS NULL)
        ORDER BY o.priority, pt.created_at`;
   });
 
