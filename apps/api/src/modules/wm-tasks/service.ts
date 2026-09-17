@@ -21,14 +21,30 @@ export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskI
     case 'PICK': {
       const number = input.reference.trim().toUpperCase();
       const order = await tx.orders.findFirst({ where: { order_number: { equals: number, mode: 'insensitive' } } });
-      if (!order) throw new NotFoundError('order', number);
+      if (!order) {
+        if (!input.new_order) throw new NotFoundError('order', number);
+        // a brand-new order built on the floor: free picking (scan pallets whenever, close when done)
+        const customer = await tx.customers.findUnique({ where: { code: input.new_order.customer_code } });
+        if (!customer) throw new NotFoundError('customer', input.new_order.customer_code);
+        const created = await tx.orders.create({ data: { order_number: number, customer_id: customer.id, destination: input.new_order.destination ?? null, order_date: new Date(), status: 'ACCEPTED', source: 'MANUAL', notes: purpose, created_by: ctx.userId } });
+        const task = await tx.pick_tasks.create({ data: { order_id: created.id, assigned_to: ctx.userId, mode: 'FREE', purpose } });
+        await audit(tx, ctx, { action: 'order.create', entity_type: 'order', entity_id: created.id, after: { order_number: number, customer: customer.code, source: 'MANUAL', free_pick: true }, reason: purpose });
+        await audit(tx, ctx, { action: 'task.self_created', entity_type: 'pick_task', entity_id: task.id, after: { kind: 'PICK', mode: 'FREE', order: number }, reason: purpose });
+        return { kind: 'PICK' as const, id: task.id, mode: 'FREE' as const, order_number: number, lines: 0, staging: null, next: '/wm/pick' };
+      }
+      // an open free-pick task of this order that is already mine: just continue it
+      const mine = await tx.pick_tasks.findFirst({ where: { order_id: order.id, mode: 'FREE', status: { in: ['PENDING', 'IN_PROGRESS'] } } });
+      if (mine) {
+        if (mine.assigned_to && mine.assigned_to !== ctx.userId) throw new RuleError('TASK_TAKEN', `Order ${order.order_number} is being picked by someone else`);
+        return { kind: 'PICK' as const, id: mine.id, mode: 'FREE' as const, order_number: order.order_number, lines: 0, staging: null, next: '/wm/pick' };
+      }
       if (order.status === 'IMPORTED') await acceptOrder(tx, ctx, order.id);
       const fresh = await tx.orders.findUniqueOrThrow({ where: { id: order.id } });
       if (['ACCEPTED', 'PARTIALLY_ALLOCATED'].includes(fresh.status)) await allocateOrder(tx, ctx, { order_id: order.id, allow_partial: true });
       const r = await createPickTask(tx, ctx, order.id, ctx.userId);
       await tx.pick_tasks.update({ where: { id: r.task.id }, data: { purpose } });
       await audit(tx, ctx, { action: 'task.self_created', entity_type: 'pick_task', entity_id: r.task.id, after: { kind: 'PICK', order: fresh.order_number, lines: r.lines, staging: r.staging.code }, reason: purpose });
-      return { kind: 'PICK' as const, id: r.task.id, order_number: fresh.order_number, lines: r.lines, staging: r.staging.code, next: '/wm/pick' };
+      return { kind: 'PICK' as const, id: r.task.id, mode: 'ALLOCATED' as const, order_number: fresh.order_number, lines: r.lines, staging: r.staging.code, next: '/wm/pick' };
     }
     case 'COUNT': {
       const task = await createCountTask(tx, ctx, { count_type: 'LOCATION', location_barcodes: [input.reference.trim()], assigned_to: ctx.userId, is_blind: true, notes: purpose });

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zPickScan, zPickShort, zStageLpn, zUuid } from '@wms/shared';
+import { zPickScan, zPickShort, zStageLpn, zUuid, zFreePickScan } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { includeTraining } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
@@ -15,7 +15,7 @@ export async function pickingRoutes(app: FastifyInstance) {
       SELECT pt.id, pt.status, pt.assigned_to, pt.created_at, pt.started_at, o.order_number, o.priority, c.name AS customer, u.username AS assigned_username,
              (SELECT count(*) FROM pick_task_lines l WHERE l.pick_task_id = pt.id) AS lines,
              (SELECT count(*) FROM pick_task_lines l WHERE l.pick_task_id = pt.id AND l.status = 'PICKED') AS picked_lines,
-             sl.code AS staging_code
+             pt.mode, pt.purpose, sl.code AS staging_code
         FROM pick_tasks pt JOIN orders o ON o.id = pt.order_id JOIN customers c ON c.id = o.customer_id LEFT JOIN users u ON u.id = pt.assigned_to
         LEFT JOIN staging_assignments sa ON sa.order_id = o.id AND sa.released_at IS NULL LEFT JOIN locations sl ON sl.id = sa.location_id
        WHERE pt.status = ANY(${q.status.split(',')}::text[]) AND (${await includeTraining(req)}::boolean OR pt.is_training = false) AND (${q.mine !== 'true'} OR pt.assigned_to = ${req.actor!.userId}::uuid OR pt.assigned_to IS NULL)
@@ -39,6 +39,17 @@ export async function pickingRoutes(app: FastifyInstance) {
     return withTx((tx) => svc.startPickTask(tx, req.actor!, id));
   });
 
+  /** Free picking: whole pallet (no qty) or part of a single-SKU pallet. Idempotent per scan. */
+  app.post('/picking/free-scan', { preHandler: app.requirePermission('picking.execute') }, async (req, reply) => {
+    const body = zFreePickScan.parse(req.body);
+    const r = await runIdempotent(req.actor!, fingerprint('POST', '/picking/free-scan', body), async (tx) => ({ status: 200, body: await svc.freePickScan(tx, req.actor!, { ...body, qty: body.qty === undefined ? undefined : BigInt(body.qty) }) }));
+    if (r.replayed) reply.header('Idempotent-Replayed', 'true');
+    return r.body;
+  });
+  app.post('/picking/tasks/:id/close', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    return withTx((tx) => svc.closeFreeTask(tx, req.actor!, id));
+  });
   app.post('/picking/scan', { preHandler: app.requirePermission('picking.execute') }, async (req, reply) => {
     const body = zPickScan.parse(req.body);
     const r = await runIdempotent(req.actor!, fingerprint('POST', '/picking/scan', body), async (tx) => ({ status: 200, body: await svc.pickScan(tx, req.actor!, body) }));

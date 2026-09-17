@@ -80,7 +80,16 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 ## NUEVA TAREA (el operador crea su propia tarea)
 
-`Almacén → Nueva tarea` permite empezar trabajo sin esperar a que el supervisor lo asigne: **surtir un pedido** (escanee o escriba el número; el sistema asigna inventario y la tarea queda a su nombre), **contar una ubicación** (conteo a ciegas de ese hueco) o **ubicar una tarima** que quedó sin tarea de acomodo. Siempre pide **para qué** se hace (mínimo 5 letras): queda en la tarea y en la auditoría con su usuario. Solo puede crear tareas del tipo que su rol ejecuta.
+`Almacén → Nueva tarea` permite empezar trabajo sin esperar a que el supervisor lo asigne: **surtir un pedido** (escanee o escriba el número; si el pedido ya existe el sistema asigna inventario y la tarea queda a su nombre; si **no existe**, elija el cliente y el pedido se crea ahí mismo en **surtido libre**), **contar una ubicación** (conteo a ciegas de ese hueco) o **ubicar una tarima** que quedó sin tarea de acomodo. Siempre pide **para qué** se hace (mínimo 5 letras): queda en la tarea y en la auditoría con su usuario. Solo puede crear tareas del tipo que su rol ejecuta.
+
+## SURTIDO LIBRE (pedido armado con el escáner, en varios momentos)
+
+Para pedidos que no vienen de la plataforma: en `Nueva tarea → Surtir` con un número nuevo, elija el cliente y escriba para qué. La tarea queda en `Surtir` marcada **SURTIDO LIBRE**.
+
+1. Escanee la **tarima** que va al pedido. Si es de un solo producto, elija **Tarima completa** o **Solo una cantidad…** (piezas o cajas); si es mixta, solo completa.
+2. Cada tarima escaneada queda asignada y surtida al pedido en ese momento; las líneas del pedido se construyen con lo que escanea.
+3. Puede **Guardar y seguir después**: la tarea sigue en "Mis tareas" y se puede continuar otro día. Nadie más la ve como pendiente.
+4. Al terminar, **Cerrar surtido**: el pedido queda surtido y sigue el flujo normal (staging, verificación, carga). No se puede cerrar sin al menos una tarima.
 
 ## ARMADO (insumo → producto terminado)
 

@@ -337,8 +337,18 @@ export const zSelfTask = z.object({
   reference: z.string().trim().min(1).max(64),
   /** "para qué": mandatory, audited */
   purpose: z.string().trim().min(5).max(300),
+  /** PICK only: when the order does not exist yet it is created here and picked freely (scan pallets over time) */
+  new_order: z.object({ customer_code: zCode, destination: z.string().trim().max(500).optional() }).optional(),
 });
 export type SelfTaskInput = z.infer<typeof zSelfTask>;
+
+/** Free picking: add a whole pallet (no qty) or part of a single-SKU pallet to the order being built. */
+export const zFreePickScan = z.object({
+  pick_task_id: zUuid,
+  lpn_code: z.string().trim().min(1).max(30),
+  qty: zQty.optional(),
+  uom_code: z.enum(UOM_CODES).optional(),
+});
 export type AssemblyCompleteInput = z.infer<typeof zAssemblyComplete>;
 
 // ---- inventory adjustments / quarantine ----

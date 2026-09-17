@@ -16,6 +16,10 @@ export const pickingApi = {
   task: (id: string) => api.get<PickTaskView>(`/picking/tasks/${id}`),
   createTask: (order_id: string, assigned_to?: string) => api.post<{ task: { id: string }; lines: number; staging: { code: string } }>('/picking/tasks', { order_id, assigned_to }),
   start: (id: string) => api.post<PickTaskView>(`/picking/tasks/${id}/start`),
+  /** free picking: whole pallet (no qty) or a quantity from a single-SKU pallet; idempotent */
+  freeScan: (body: { pick_task_id: string; lpn_code: string; qty?: string; uom_code?: string }, key: string) =>
+    api.postIdem<{ ok: true; lpn: string; whole_pallet: boolean; added: { sku: string; qty: string }[]; outbound_lpn: string | null; view: PickTaskView }>('/picking/free-scan', body, key),
+  close: (id: string) => api.post<PickTaskView>(`/picking/tasks/${id}/close`),
   /** idempotent */
   scan: (body: { pick_task_id: string; line_id: string; step: 'LOCATION' | 'LPN' | 'QTY'; scanned?: string; qty?: string; uom_code?: string }, key: string) =>
     api.postIdem<PickScanResult>('/picking/scan', body, key),

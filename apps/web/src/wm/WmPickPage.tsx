@@ -9,6 +9,7 @@ import type { PickLine, PickTaskView } from '../api/types';
 import { QtyPad } from '../components/QtyPad';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty, fmtUom, toBigInt } from '../lib/format';
+import { WmFreePick } from './WmFreePick';
 import { BigButton, BigValue, StepBar, useWm, WmList, WmShell } from './WmShell';
 
 export default function WmPickPage() {
@@ -90,7 +91,7 @@ function Flow() {
                   {t.order_number} <span className="text-sm font-normal text-slate-300">P{t.priority}</span>
                 </div>
                 <div className="text-sm text-slate-300">
-                  {t.customer} · {t.picked_lines}/{t.lines} líneas · staging {t.staging_code ?? '—'}
+                  {t.customer} · {t.mode === 'FREE' ? <span className="rounded bg-violet-600 px-1.5 text-xs font-bold text-white">SURTIDO LIBRE</span> : null} {t.picked_lines}/{t.lines} líneas · staging {t.staging_code ?? '—'}
                 </div>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-bold ${t.status === 'IN_PROGRESS' ? 'bg-sky-500' : 'bg-amber-400 text-amber-950'}`}>{t.status}</span>
@@ -101,6 +102,15 @@ function Flow() {
     );
 
   const v = completed ?? view.data;
+  if (v.task.mode === 'FREE' && v.task.status !== 'COMPLETED' && !completed)
+    return (
+      <WmFreePick
+        view={v}
+        onRefresh={(nv) => qc.setQueryData(['pick-task', v.task.id], nv)}
+        onPause={() => { setTaskId(null); void qc.invalidateQueries({ queryKey: ['pick-tasks'] }); }}
+        onClosed={(nv) => { qc.setQueryData(['pick-task', v.task.id], nv); setCompleted(nv); void qc.invalidateQueries({ queryKey: ['pick-tasks'] }); }}
+      />
+    );
   const line = nextLine(v);
   const done = v.lines.filter((l) => l.status === 'PICKED' || l.status === 'SHORT').length;
   const head = (

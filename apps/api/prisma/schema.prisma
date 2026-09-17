@@ -874,6 +874,7 @@ model allocations {
 
 model pick_tasks {
   purpose      String? // "para qué" when an operator created the task from the handheld
+  mode         String    @default("ALLOCATED") @db.VarChar(10) // ALLOCATED (directed, from allocations) | FREE (built by scanning pallets, closed explicitly)
   is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id           String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   order_id     String    @db.Uuid

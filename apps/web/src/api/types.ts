@@ -683,6 +683,8 @@ export interface PickTaskRow {
   lines: Qty;
   picked_lines: Qty;
   staging_code: string | null;
+  mode: 'ALLOCATED' | 'FREE';
+  purpose: string | null;
 }
 export interface PickLine {
   id: Uuid;
@@ -700,7 +702,7 @@ export interface PickLine {
   uoms: SkuUom[] | null;
 }
 export interface PickTaskView {
-  task: { id: Uuid; status: string; assigned_to: Uuid | null; started_at: Iso | null; completed_at: Iso | null; outbound_lpn: string | null };
+  task: { id: Uuid; status: string; mode: 'ALLOCATED' | 'FREE'; purpose: string | null; assigned_to: Uuid | null; started_at: Iso | null; completed_at: Iso | null; outbound_lpn: string | null };
   order: { id: Uuid; order_number: string; customer: string; destination: string | null; status: OrderStatus };
   staging: { id: Uuid; code: string; barcode: string } | null;
   lines: PickLine[];

@@ -43,7 +43,7 @@ export async function createPickTask(tx: Tx, ctx: ActorContext, orderId: string,
 }
 
 /** Picks a free STAGING location (no active assignment, no pallets), locking it so two orders never share one. */
-async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string) {
+export async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string) {
   const current = await tx.staging_assignments.findFirst({ where: { order_id: orderId, released_at: null }, include: { location: true } });
   if (current) return current.location;
   // the lane lives in the warehouse where the order's stock is allocated (never a lane of another site)
@@ -85,7 +85,7 @@ export async function pickTaskView(tx: Tx, taskId: string) {
      WHERE ptl.pick_task_id = ${taskId}::uuid ORDER BY ptl.sequence`;
   const outbound = task.outbound_lpn_id ? await tx.lpns.findUnique({ where: { id: task.outbound_lpn_id }, select: { code: true } }) : null;
   return {
-    task: { id: task.id, status: task.status, assigned_to: task.assigned_to, started_at: task.started_at, completed_at: task.completed_at, outbound_lpn: outbound?.code ?? null },
+    task: { id: task.id, status: task.status, mode: task.mode, purpose: task.purpose, assigned_to: task.assigned_to, started_at: task.started_at, completed_at: task.completed_at, outbound_lpn: outbound?.code ?? null },
     order: { id: task.order.id, order_number: task.order.order_number, customer: task.order.customer.name, destination: task.order.destination, status: task.order.status },
     staging: task.order.staging_assignments[0]?.location ?? null,
     lines,
@@ -228,6 +228,9 @@ function blocked(ctx: ActorContext, taskId: string, lineId: string, code: string
 async function maybeCompleteTask(tx: Tx, ctx: ActorContext, taskId: string): Promise<boolean> {
   const open = await tx.pick_task_lines.count({ where: { pick_task_id: taskId, status: { in: ['PENDING', 'IN_PROGRESS'] } } });
   if (open > 0) return false;
+  // a FREE task (order built by scanning pallets over time) is closed explicitly by the picker, never on its own
+  const mode = await tx.pick_tasks.findUnique({ where: { id: taskId }, select: { mode: true } });
+  if (mode?.mode === 'FREE') return false;
   const t = await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'COMPLETED', completed_at: new Date(), version: { increment: 1 } } });
   // allocations added after this task was created still need a pick wave: keep the order pickable
   const remainingAllocs = await tx.allocations.count({ where: { order_line: { order_id: t.order_id }, status: 'ACTIVE' } });
@@ -350,4 +353,78 @@ export async function unpickOrder(tx: Tx, ctx: ActorContext, orderId: string, re
   }
   await tx.allocations.updateMany({ where: { order_line: { order_id: orderId }, status: 'PICKED' }, data: { status: 'RELEASED' } });
   return { lpns: lpns.length };
+}
+
+// ---------------------------------------------------------------------
+// Free picking: the order is built by scanning pallets (whole, or part of a single-SKU pallet), possibly over several
+// days. Each scan allocates and picks in one go through the same ledger path as directed picking; the task stays open
+// until the picker closes it, then the order follows the normal staging → verification → loading flow.
+// ---------------------------------------------------------------------
+export async function freePickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id: string; lpn_code: string; qty?: bigint; uom_code?: UomCode }) {
+  const trows = await tx.$queryRaw<{ id: string; status: string; mode: string; assigned_to: string | null; order_id: string }[]>`SELECT id, status, mode, assigned_to, order_id FROM pick_tasks WHERE id = ${input.pick_task_id}::uuid FOR UPDATE`;
+  const task = trows[0];
+  if (!task) throw new NotFoundError('pick task', input.pick_task_id);
+  if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'This is a directed pick task: follow its lines');
+  if (task.status === 'PENDING') await startPickTask(tx, ctx, task.id);
+  else if (task.status !== 'IN_PROGRESS') throw new RuleError('TASK_STATUS', `Task is ${task.status}`);
+  if (task.assigned_to && task.assigned_to !== ctx.userId) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
+
+  const lpn = await lockLpnByCode(tx, input.lpn_code);
+  if (!['STORED', 'OPEN'].includes(lpn.status) || !lpn.current_location_id) throw new RuleError('LPN_STATUS', `LPN ${lpn.code} is ${lpn.status}; only stored pallets can be picked`);
+  const balances = (await lockBalances(tx, lpn.id)).filter((b) => b.status === 'AVAILABLE' && b.qty > 0n);
+  if (!balances.length) throw new RuleError('NOTHING_AVAILABLE', `LPN ${lpn.code} has no available inventory`);
+  const total = (await tx.inventory_balances.aggregate({ where: { lpn_id: lpn.id, qty: { gt: 0n } }, _sum: { qty: true } }))._sum.qty ?? 0n;
+  let picks: { sku_id: string; qty: bigint }[];
+  if (input.qty !== undefined) {
+    if (balances.length !== 1) throw new RuleError('MIXED_PALLET', `LPN ${lpn.code} holds several products: pick it whole`);
+    const b = balances[0]!;
+    const { base } = await toBaseQty(tx, b.sku_id, input.qty, input.uom_code ?? 'PIECE');
+    if (base <= 0n) throw new RuleError('INVALID_QTY', 'Quantity must be > 0');
+    if (base > b.qty) throw new RuleError('QTY_EXCEEDED', `LPN ${lpn.code} only has ${b.qty} available`, { available: b.qty.toString() });
+    picks = [{ sku_id: b.sku_id, qty: base }];
+  } else {
+    picks = balances.map((b) => ({ sku_id: b.sku_id, qty: b.qty }));
+  }
+  const wholePallet = input.qty === undefined && balances.length === 1 && balances[0]!.qty === total;
+  const added: { sku: string; qty: string }[] = [];
+  let outbound: string | null = null;
+  for (const p of picks) {
+    const sku = await tx.skus.findUniqueOrThrow({ where: { id: p.sku_id } });
+    let line = await tx.order_lines.findFirst({ where: { order_id: task.order_id, sku_id: p.sku_id } });
+    if (line) {
+      line = await tx.order_lines.update({ where: { id: line.id }, data: { required_qty: { increment: p.qty }, uom_qty: { increment: p.qty } } });
+    } else {
+      const max = await tx.order_lines.aggregate({ where: { order_id: task.order_id }, _max: { line_no: true } });
+      line = await tx.order_lines.create({ data: { order_id: task.order_id, line_no: (max._max.line_no ?? 0) + 1, sku_id: p.sku_id, required_qty: p.qty, uom_code: 'PIECE', uom_qty: p.qty } });
+    }
+    await changeStatus(tx, ctx, { movement_type: 'ALLOCATE', lpn, sku_id: p.sku_id, qty: p.qty, from_status: 'AVAILABLE', to_status: 'ALLOCATED', order_id: task.order_id, task_id: task.id, reference_type: 'free_pick', reference_id: line.id });
+    const alloc = await tx.allocations.create({ data: { order_line_id: line.id, lpn_id: lpn.id, sku_id: p.sku_id, qty: p.qty, strategy: 'FREE' } });
+    await tx.order_lines.update({ where: { id: line.id }, data: { allocated_qty: { increment: p.qty } } });
+    const seq = await tx.pick_task_lines.aggregate({ where: { pick_task_id: task.id }, _max: { sequence: true } });
+    const ptl = await tx.pick_task_lines.create({
+      data: { pick_task_id: task.id, order_line_id: line.id, allocation_id: alloc.id, sequence: (seq._max.sequence ?? 0) + 1, location_id: lpn.current_location_id, lpn_id: lpn.id, sku_id: p.sku_id, qty: p.qty, full_pallet: wholePallet, status: 'IN_PROGRESS', scan_step: 2 },
+    });
+    await assignStaging(tx, ctx, task.order_id); // the lane is known once the first pallet says which warehouse we are in
+    const r = await pickScan(tx, ctx, { pick_task_id: task.id, line_id: ptl.id, step: 'QTY', qty: p.qty, uom_code: 'PIECE' });
+    outbound = r.outbound_lpn ?? outbound;
+    added.push({ sku: sku.code, qty: p.qty.toString() });
+  }
+  await audit(tx, ctx, { action: 'pick.free_scan', entity_type: 'pick_task', entity_id: task.id, after: { lpn: lpn.code, whole_pallet: wholePallet, added, outbound } });
+  return { ok: true as const, lpn: lpn.code, whole_pallet: wholePallet, added, outbound_lpn: outbound, view: await pickTaskView(tx, task.id) };
+}
+
+/** The picker declares the free-pick order complete: the task closes and the order goes on to staging. */
+export async function closeFreeTask(tx: Tx, ctx: ActorContext, taskId: string) {
+  const trows = await tx.$queryRaw<{ id: string; status: string; mode: string; assigned_to: string | null; order_id: string }[]>`SELECT id, status, mode, assigned_to, order_id FROM pick_tasks WHERE id = ${taskId}::uuid FOR UPDATE`;
+  const task = trows[0];
+  if (!task) throw new NotFoundError('pick task', taskId);
+  if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'Directed pick tasks complete on their own');
+  if (task.status !== 'IN_PROGRESS' && task.status !== 'PENDING') throw new RuleError('TASK_STATUS', `Task is ${task.status}`);
+  if (task.assigned_to && task.assigned_to !== ctx.userId && !ctx.permissions.has('picking.assign')) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
+  const picked = await tx.pick_task_lines.count({ where: { pick_task_id: taskId, status: 'PICKED' } });
+  if (picked === 0) throw new RuleError('NOTHING_PICKED', 'Scan at least one pallet before closing the pick');
+  await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'COMPLETED', completed_at: new Date(), version: { increment: 1 } } });
+  await tx.orders.update({ where: { id: task.order_id }, data: { status: 'PICKED', version: { increment: 1 } } });
+  await audit(tx, ctx, { action: 'pick.free_closed', entity_type: 'pick_task', entity_id: taskId, after: { lines: picked } });
+  return pickTaskView(tx, taskId);
 }
