@@ -54,7 +54,9 @@ export default function MapPage() {
   const [selectedRackId, setSelectedRackId] = useState<string | null>(null);
   const [searchType, setSearchType] = useState<MapSearchType>('SKU');
   const [searchQ, setSearchQ] = useState('');
-  const [panelOpen, setPanelOpen] = useState(true);
+  // phones: the panel starts closed (it would cover the map); desktops: open
+  const [panelOpen, setPanelOpen] = useState(() => (typeof window === 'undefined' ? true : window.innerWidth >= 1024));
+  const [showFilters, setShowFilters] = useState(false);
 
   const visible = useMemo(() => {
     if (!mapQ.data) return null;
@@ -163,19 +165,19 @@ export default function MapPage() {
   if (mapQ.error || !mapQ.data || !model) return <Alert tone="error">No se pudo cargar el mapa del almacén.</Alert>;
 
   return (
-    <div className="relative -m-4 flex h-[calc(100vh-3.5rem)] flex-col lg:-m-6" data-testid="map-page">
+    <div className="relative -mx-4 -mt-4 -mb-20 flex h-[calc(100dvh-6.75rem)] flex-col lg:-m-6 lg:h-[calc(100vh-3.5rem)]" data-testid="map-page">
       <h1 className="sr-only">Mapa 3D del almacén</h1>
       {/* toolbar */}
       <div className="z-10 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-sm">
-        <form onSubmit={doSearch} className="flex items-center gap-1">
-          <Select value={searchType} data-testid="map-search-type" onChange={(e) => setSearchType(e.target.value as MapSearchType)} className="w-32" aria-label="Tipo de búsqueda">
+        <form onSubmit={doSearch} className="flex w-full items-center gap-1 lg:w-auto">
+          <Select value={searchType} data-testid="map-search-type" onChange={(e) => setSearchType(e.target.value as MapSearchType)} className="w-28 shrink-0 lg:w-32" aria-label="Tipo de búsqueda">
             {SEARCH_TYPES.map((t) => (
               <option key={t.key} value={t.key}>
                 {t.label}
               </option>
             ))}
           </Select>
-          <Input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder={searchType === 'SKU' ? 'SKU-0001 o código de barras' : searchType === 'LPN' ? 'PLT-2026-…' : searchType === 'ORDER' ? 'PED-48571' : 'A-01-R01-N01-P01'} className="w-56 font-mono" data-testid="map-search-input" />
+          <Input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder={searchType === 'SKU' ? 'SKU-0001 o código de barras' : searchType === 'LPN' ? 'PLT-2026-…' : searchType === 'ORDER' ? 'PED-48571' : 'A-01-R01-N01-P01'} className="w-full min-w-0 flex-1 font-mono lg:w-56 lg:flex-none" data-testid="map-search-input" />
           <Button type="submit" size="md" data-testid="map-search-submit">
             Buscar
           </Button>
@@ -200,8 +202,12 @@ export default function MapPage() {
             </>
           )}
         </form>
-        <span className="mx-1 hidden h-6 w-px bg-slate-200 md:inline-block" />
-        <Select value={filters.zoneId} onChange={(e) => setFilters({ ...filters, zoneId: e.target.value })} className="w-40" aria-label="Zona">
+        <button type="button" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold lg:hidden" onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>
+          {showFilters ? 'Ocultar filtros' : 'Filtros'}
+        </button>
+        <span className="mx-1 hidden h-6 w-px bg-slate-200 lg:inline-block" />
+        <div className={cls('grid w-full grid-cols-2 gap-2 lg:contents', showFilters ? '' : 'hidden lg:contents')}>
+        <Select value={filters.zoneId} onChange={(e) => setFilters({ ...filters, zoneId: e.target.value })} className="w-full lg:w-40" aria-label="Zona">
           <option value="">Todas las zonas</option>
           {mapQ.data.zones.map((z) => (
             <option key={z.id} value={z.id}>
@@ -209,7 +215,7 @@ export default function MapPage() {
             </option>
           ))}
         </Select>
-        <Select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })} className="w-36" aria-label="Tipo">
+        <Select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })} className="w-full lg:w-36" aria-label="Tipo">
           <option value="">Todos los tipos</option>
           {['RESERVE', 'PICKING', ...AREA_TYPES].map((t) => (
             <option key={t} value={t}>
@@ -217,7 +223,7 @@ export default function MapPage() {
             </option>
           ))}
         </Select>
-        <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} className="w-36" aria-label="Estado">
+        <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} className="w-full lg:w-36" aria-label="Estado">
           <option value="">Todos los estados</option>
           {Object.entries(STATUS_LABELS).map(([k, v]) => (
             <option key={k} value={k}>
@@ -225,20 +231,21 @@ export default function MapPage() {
             </option>
           ))}
         </Select>
-        <Select value={filters.availability} onChange={(e) => setFilters({ ...filters, availability: e.target.value as MapFilters['availability'] })} className="w-40" aria-label="Disponibilidad">
+        <Select value={filters.availability} onChange={(e) => setFilters({ ...filters, availability: e.target.value as MapFilters['availability'] })} className="w-full lg:w-40" aria-label="Disponibilidad">
           <option value="">Disponibilidad: todas</option>
           <option value="AVAILABLE">Con espacio</option>
           <option value="FULL">Llenas</option>
         </Select>
-        <Select value={warehouseId || mapQ.data.warehouse.id} onChange={(e) => pickWarehouse(e.target.value)} className="w-56" data-testid="map-warehouse" aria-label="Almacén">
+        <Select value={warehouseId || mapQ.data.warehouse.id} onChange={(e) => pickWarehouse(e.target.value)} className="col-span-2 w-full lg:w-56" data-testid="map-warehouse" aria-label="Almacén">
           {(warehousesQ.data ?? [mapQ.data.warehouse]).filter((w) => w.is_active).map((w) => (
             <option key={w.id} value={w.id}>
               {w.code} · {w.name}
             </option>
           ))}
         </Select>
-        <div className="ml-auto flex items-center gap-2 text-xs text-slate-500">
-          <span title={fmtDateTime(mapQ.data.generated_at)}>Actualizado {relTime(new Date(mapQ.dataUpdatedAt))}</span>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <span className="hidden md:inline" title={fmtDateTime(mapQ.data.generated_at)}>Actualizado {relTime(new Date(mapQ.dataUpdatedAt))}</span>
           <Button size="sm" variant="secondary" onClick={() => void mapQ.refetch()} loading={mapQ.isFetching}>
             Actualizar
           </Button>
@@ -256,8 +263,8 @@ export default function MapPage() {
         </div>
       </div>
 
-      <div className="relative flex min-h-0 flex-1">
-        <div className="relative min-w-0 flex-1" onMouseLeave={() => setHover(null)}>
+      <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div className="relative min-h-[40vh] min-w-0 flex-1" onMouseLeave={() => setHover(null)}>
           <MapScene
             model={model}
             warehouse={mapQ.data.warehouse}
@@ -282,7 +289,7 @@ export default function MapPage() {
             onRackMove={(id, x_m, y_m) => moveRack.mutate({ id, x_m, y_m })}
           />
           {/* legend */}
-          <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-white/90 p-2 text-[11px] shadow" data-testid="map-legend">
+          <div className="pointer-events-none absolute bottom-3 left-3 hidden rounded-lg bg-white/90 p-2 text-[11px] shadow sm:block" data-testid="map-legend">
             {mapQ.data.warehouse.features?.source && <div className="mb-1 max-w-xs text-[10px] leading-snug text-slate-500">Geometría: {mapQ.data.warehouse.features.source}</div>}
             {Object.entries(STATUS_COLORS).map(([k, c]) => (
               <div key={k} className="flex items-center gap-1.5">
@@ -294,7 +301,7 @@ export default function MapPage() {
               {model.slots.length} posiciones · {model.pallets.length} pallets · {far ? 'LOD lejano' : 'detalle'}
             </div>
           </div>
-          {editMode && <div className="pointer-events-none absolute left-3 top-3 rounded bg-amber-400 px-2 py-1 text-xs font-bold text-amber-950">MODO EDICIÓN: arrastra un rack por su estructura y suéltalo para guardar · clic para editar números</div>}
+          {editMode && <div className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-1.5rem)] rounded bg-amber-400 px-2 py-1 text-xs font-bold text-amber-950">MODO EDICIÓN<span className="hidden md:inline">: arrastra un rack por su estructura y suéltalo para guardar · clic para editar números</span></div>}
           {/* hover tooltip */}
           {hover && hoverLoc && (
             <div className="pointer-events-none fixed z-50 rounded-md bg-slate-900 px-2 py-1 text-xs text-white shadow-lg" style={{ left: hover.x + 12, top: hover.y + 12 }}>
@@ -308,7 +315,7 @@ export default function MapPage() {
 
         {/* side panel */}
         {panelOpen && (
-          <aside className="thin-scroll flex w-80 shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-white text-sm lg:w-96" data-testid="map-panel">
+          <aside className="thin-scroll flex max-h-[45%] w-full shrink-0 flex-col overflow-y-auto border-t border-slate-200 bg-white text-sm lg:max-h-none lg:w-96 lg:border-l lg:border-t-0" data-testid="map-panel">
             {rack && editMode && (
               <section className="border-b border-slate-200 p-3">
                 <h3 className="font-semibold">
