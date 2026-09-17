@@ -160,4 +160,46 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect(later.body.task_id).toBeNull();
     expect((await sql<{ status: string }>(`SELECT status FROM orders WHERE order_number = '${number}-B'`))[0]!.status).toBe('ACCEPTED');
   });
+
+  it('shared picking: a second picker sees and joins an order another picker started; each works a different line and the free pick accepts pallets from both', async () => {
+    const picker2 = await userWithRoles('stpick2', ['PICKER']);
+    // the fixture has 3 lanes and earlier orders of this file hold them: pretend those shipped
+    await sql(`UPDATE staging_assignments SET released_at = now() WHERE released_at IS NULL AND order_id IN (SELECT id FROM orders WHERE customer_id = '${f.customer.id}')`);
+    // free pick started by picker 1, continued by picker 2
+    const whole = await storedPallet(f, 0, f.reserve[7]!.id, 6n);
+    const number = `PED-SHARED-${f.tag}`;
+    const r = await picker.post('/wm/tasks', { kind: 'PICK', reference: number, purpose: 'entre dos personas', new_order: { customer_code: f.customer.code } });
+    expect(r.status).toBe(201);
+    const list2 = await picker2.get('/picking/tasks?mine=false');
+    expect(list2.body.some((t: { id: string }) => t.id === r.body.id)).toBe(true);
+    const s2 = await picker2.post('/picking/free-scan', { pick_task_id: r.body.id, lpn_code: whole.code }, idem());
+    expect(s2.status, JSON.stringify(s2.body)).toBe(200);
+    expect(s2.body.view.lines[0].picker_username).toBe(picker2.username);
+    expect(s2.body.view.task.assigned_username).toBe(picker.username);
+    const closed = await picker2.post(`/picking/tasks/${r.body.id}/close`);
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+
+    // directed pick with two lines: picker 1 starts, picker 2 joins; the line picker 1 is on is refused to picker 2
+    await storedPallet(f, 0, f.reserve[8]!.id, 10n);
+    await storedPallet(f, 1, f.reserve[9]!.id, 10n);
+    const number2 = `PED-SHARED2-${f.tag}`;
+    const o = await sup.post('/orders', { order_number: number2, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 10 }, { sku_code: f.skus[1]!.code, qty: 10 }] });
+    expect(o.status).toBe(201);
+    const t = await picker.post('/wm/tasks', { kind: 'PICK', reference: number2, purpose: 'pedido grande, entre dos' });
+    expect(t.status, JSON.stringify(t.body)).toBe(201);
+    const v1 = await picker.post(`/picking/tasks/${t.body.id}/start`);
+    expect(v1.status).toBe(200);
+    const [l1, l2] = v1.body.lines;
+    const loc1 = await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: l1.id, step: 'LOCATION', scanned: l1.location_barcode }, idem());
+    expect(loc1.status, JSON.stringify(loc1.body)).toBe(200);
+    const v2 = await picker2.post(`/picking/tasks/${t.body.id}/start`); // joins, does not take over
+    expect(v2.status, JSON.stringify(v2.body)).toBe(200);
+    expect(v2.body.task.assigned_username).toBe(picker.username);
+    expect(v2.body.lines.find((l: { id: string }) => l.id === l1.id).picker_username).toBe(picker.username);
+    const taken = await picker2.post('/picking/scan', { pick_task_id: t.body.id, line_id: l1.id, step: 'LOCATION', scanned: l1.location_barcode }, idem());
+    expect(taken.status).toBe(409);
+    expect(taken.body.error).toBe('LINE_TAKEN');
+    const ok2 = await picker2.post('/picking/scan', { pick_task_id: t.body.id, line_id: l2.id, step: 'LOCATION', scanned: l2.location_barcode }, idem());
+    expect(ok2.status, JSON.stringify(ok2.body)).toBe(200);
+  });
 });

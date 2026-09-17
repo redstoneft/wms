@@ -128,6 +128,7 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed, onCancelled }: 
                 <li key={l.id} className="flex items-center justify-between gap-2 rounded bg-slate-900 px-3 py-2">
                   <span>
                     {l.lpn_code} · {l.sku_code}
+                    {l.picker_username && <span className="ml-2 text-xs text-slate-400">{l.picker_username}</span>}
                   </span>
                   <span className="flex items-center gap-2">
                     {fmtQty(l.picked_qty)} pzas

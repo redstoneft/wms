@@ -694,6 +694,8 @@ export interface PickLine {
   qty: Qty;
   picked_qty: Qty;
   full_pallet: boolean;
+  picker_id: Uuid | null;
+  picker_username: string | null;
   location_code: string;
   location_barcode: string;
   lpn_code: string;
@@ -702,7 +704,7 @@ export interface PickLine {
   uoms: SkuUom[] | null;
 }
 export interface PickTaskView {
-  task: { id: Uuid; status: string; mode: 'ALLOCATED' | 'FREE'; purpose: string | null; assigned_to: Uuid | null; started_at: Iso | null; completed_at: Iso | null; outbound_lpn: string | null };
+  task: { id: Uuid; status: string; mode: 'ALLOCATED' | 'FREE'; purpose: string | null; assigned_to: Uuid | null; assigned_username: string | null; started_at: Iso | null; completed_at: Iso | null; outbound_lpn: string | null };
   order: { id: Uuid; order_number: string; customer: string; destination: string | null; status: OrderStatus };
   staging: { id: Uuid; code: string; barcode: string } | null;
   lines: PickLine[];

@@ -21,18 +21,22 @@ export default function WmPickPage() {
   );
 }
 
-function nextLine(v: PickTaskView): PickLine | null {
-  return v.lines.find((l) => l.status === 'IN_PROGRESS') ?? v.lines.find((l) => l.status === 'PENDING') ?? null;
+/** Shared picking: my own line in progress first, then a free line; lines other pickers are on are skipped. */
+function nextLine(v: PickTaskView, me: string | undefined): PickLine | null {
+  return v.lines.find((l) => l.status === 'IN_PROGRESS' && l.picker_id === me) ?? v.lines.find((l) => l.status === 'PENDING') ?? v.lines.find((l) => l.status === 'IN_PROGRESS' && !l.picker_id) ?? null;
+}
+function othersBusy(v: PickTaskView, me: string | undefined): number {
+  return v.lines.filter((l) => l.status === 'IN_PROGRESS' && l.picker_id && l.picker_id !== me).length;
 }
 
 function Flow() {
   const wm = useWm();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const { can } = useAuth();
-  // supervisors see every open pick (to help, edit or cancel someone else's); pickers see their own
-  const seeAll = can('picking.assign');
-  const tasks = useQuery({ queryKey: ['pick-tasks', seeAll ? 'all' : 'mine'], queryFn: () => pickingApi.tasks({ status: 'PENDING,IN_PROGRESS', mine: seeAll ? 'false' : 'true' }), refetchInterval: 10_000 });
+  const { user } = useAuth();
+  // shared picking: every picker sees every open pick and can join one another picker started
+  const seeAll = true;
+  const tasks = useQuery({ queryKey: ['pick-tasks', 'all'], queryFn: () => pickingApi.tasks({ status: 'PENDING,IN_PROGRESS', mine: 'false' }), refetchInterval: 10_000 });
   const [taskId, setTaskId] = useState<string | null>(null);
   const view = useQuery({ queryKey: ['pick-task', taskId], queryFn: () => pickingApi.task(taskId!), enabled: !!taskId });
   const [busy, setBusy] = useState(false);
@@ -96,7 +100,7 @@ function Flow() {
                 </div>
                 <div className="text-sm text-slate-300">
                   {t.customer} · {t.mode === 'FREE' ? <span className="rounded bg-violet-600 px-1.5 text-xs font-bold text-white">SURTIDO LIBRE</span> : null} {t.picked_lines}/{t.lines} líneas · staging {t.staging_code ?? '—'}
-                  {seeAll && t.assigned_username && <span className="ml-2 text-xs text-amber-300">· {t.assigned_username}</span>}
+                  {seeAll && t.assigned_username && <span className="ml-2 text-xs text-amber-300">· {t.status === 'IN_PROGRESS' ? 'en curso' : 'asignada'}: {t.assigned_username}</span>}
                 </div>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-bold ${t.status === 'IN_PROGRESS' ? 'bg-sky-500' : 'bg-amber-400 text-amber-950'}`}>{t.status}</span>
@@ -117,7 +121,8 @@ function Flow() {
         onCancelled={() => { setTaskId(null); setCompleted(null); void qc.invalidateQueries({ queryKey: ['pick-tasks'] }); }}
       />
     );
-  const line = nextLine(v);
+  const line = nextLine(v, user?.id);
+  const busyByOthers = othersBusy(v, user?.id);
   const done = v.lines.filter((l) => l.status === 'PICKED' || l.status === 'SHORT').length;
   const head = (
     <div className="mb-3 flex items-center justify-between rounded-2xl bg-slate-800 px-4 py-2">
@@ -136,10 +141,32 @@ function Flow() {
       <div className="text-right">
         <div className="text-xs uppercase text-slate-400">Staging</div>
         <div className="font-mono text-xl font-black text-violet-300">{v.staging?.code ?? '—'}</div>
+        {busyByOthers > 0 && <div className="text-xs text-amber-300">{busyByOthers} línea(s) con otro surtidor</div>}
       </div>
     </div>
   );
 
+  if (!line && v.task.status !== 'COMPLETED' && busyByOthers > 0)
+    return (
+      <div>
+        <StepBar text="LAS LÍNEAS QUE FALTAN LAS ESTÁN SURTIENDO OTROS" />
+        {head}
+        <ul className="grid gap-1 text-base">
+          {v.lines.filter((l) => l.status === 'IN_PROGRESS').map((l) => (
+            <li key={l.id} className="flex justify-between rounded bg-slate-900 px-3 py-2">
+              <span className="font-mono">{l.location_code} · {l.sku_code}</span>
+              <span className="text-amber-300">{l.picker_username ?? 'otro surtidor'}</span>
+            </li>
+          ))}
+        </ul>
+        <BigButton tone="neutral" className="mt-3" onClick={() => void qc.invalidateQueries({ queryKey: ['pick-task', taskId] })}>
+          Actualizar
+        </BigButton>
+        <BigButton tone="neutral" className="mt-3" onClick={() => setTaskId(null)}>
+          Volver a tareas
+        </BigButton>
+      </div>
+    );
   if (!line || v.task.status === 'COMPLETED')
     return (
       <div>

@@ -906,6 +906,7 @@ model pick_task_lines {
   qty            BigInt
   picked_qty     BigInt   @default(0)
   full_pallet    Boolean  @default(false)
+  picker_id      String?  @db.Uuid // who is working this line (shared picking: several pickers, one order)
   status         String   @default("PENDING") @db.VarChar(20) // PENDING | IN_PROGRESS | PICKED | SHORT | CANCELLED
   // scan step state machine: 0 none, 1 location ok, 2 lpn ok
   scan_step      Int      @default(0)

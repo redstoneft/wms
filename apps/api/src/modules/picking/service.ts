@@ -66,11 +66,13 @@ export async function startPickTask(tx: Tx, ctx: ActorContext, taskId: string) {
   const t = rows[0];
   if (!t) throw new NotFoundError('pick task', taskId);
   if (t.status === 'COMPLETED' || t.status === 'CANCELLED') throw new RuleError('TASK_STATUS', `Task is ${t.status}`);
-  if (t.status === 'IN_PROGRESS' && t.assigned_to && t.assigned_to !== ctx.userId) throw new ConflictError('TASK_TAKEN', 'Another picker already owns this task');
-  if (t.assigned_to && t.assigned_to !== ctx.userId && !ctx.permissions.has('picking.assign')) throw new ConflictError('TASK_ASSIGNED', 'Task is assigned to someone else');
-  await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'IN_PROGRESS', assigned_to: ctx.userId, started_at: new Date(), version: { increment: 1 } } });
-  await tx.orders.update({ where: { id: t.order_id }, data: { status: 'PICKING', picker_id: ctx.userId, version: { increment: 1 } } });
-  await audit(tx, ctx, { action: 'pick.start', entity_type: 'pick_task', entity_id: taskId });
+  // shared picking: whoever starts first keeps the task's name; everyone else joins it and works other lines
+  const joining = t.status === 'IN_PROGRESS' && !!t.assigned_to && t.assigned_to !== ctx.userId;
+  if (!joining) {
+    await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'IN_PROGRESS', assigned_to: t.assigned_to ?? ctx.userId, started_at: t.status === 'IN_PROGRESS' ? undefined : new Date(), version: { increment: 1 } } });
+    await tx.orders.update({ where: { id: t.order_id }, data: { status: 'PICKING', picker_id: t.assigned_to ?? ctx.userId, version: { increment: 1 } } });
+  }
+  await audit(tx, ctx, { action: joining ? 'pick.join' : 'pick.start', entity_type: 'pick_task', entity_id: taskId });
   return pickTaskView(tx, taskId);
 }
 
@@ -78,14 +80,15 @@ export async function pickTaskView(tx: Tx, taskId: string) {
   const task = await tx.pick_tasks.findUnique({ where: { id: taskId }, include: { order: { include: { customer: true, staging_assignments: { where: { released_at: null }, include: { location: true } } } } } });
   if (!task) throw new NotFoundError('pick task', taskId);
   const lines = await tx.$queryRaw<Record<string, unknown>[]>`
-    SELECT ptl.id, ptl.sequence, ptl.status, ptl.scan_step, ptl.qty::text AS qty, ptl.picked_qty::text AS picked_qty, ptl.full_pallet,
+    SELECT ptl.id, ptl.sequence, ptl.status, ptl.scan_step, ptl.qty::text AS qty, ptl.picked_qty::text AS picked_qty, ptl.full_pallet, ptl.picker_id, pu.username AS picker_username,
            loc.code AS location_code, loc.barcode AS location_barcode, l.code AS lpn_code, s.code AS sku_code, s.description AS sku_description,
            (SELECT json_agg(json_build_object('uom_code', u.uom_code, 'base_qty', u.base_qty::text)) FROM sku_uoms u WHERE u.sku_id = s.id) AS uoms
-      FROM pick_task_lines ptl JOIN locations loc ON loc.id = ptl.location_id JOIN lpns l ON l.id = ptl.lpn_id JOIN skus s ON s.id = ptl.sku_id
+      FROM pick_task_lines ptl JOIN locations loc ON loc.id = ptl.location_id JOIN lpns l ON l.id = ptl.lpn_id JOIN skus s ON s.id = ptl.sku_id LEFT JOIN users pu ON pu.id = ptl.picker_id
      WHERE ptl.pick_task_id = ${taskId}::uuid ORDER BY ptl.sequence`;
   const outbound = task.outbound_lpn_id ? await tx.lpns.findUnique({ where: { id: task.outbound_lpn_id }, select: { code: true } }) : null;
+  const owner = task.assigned_to ? await tx.users.findUnique({ where: { id: task.assigned_to }, select: { username: true } }) : null;
   return {
-    task: { id: task.id, status: task.status, mode: task.mode, purpose: task.purpose, assigned_to: task.assigned_to, started_at: task.started_at, completed_at: task.completed_at, outbound_lpn: outbound?.code ?? null },
+    task: { id: task.id, status: task.status, mode: task.mode, purpose: task.purpose, assigned_to: task.assigned_to, assigned_username: owner?.username ?? null, started_at: task.started_at, completed_at: task.completed_at, outbound_lpn: outbound?.code ?? null },
     order: { id: task.order.id, order_number: task.order.order_number, customer: task.order.customer.name, destination: task.order.destination, status: task.order.status },
     staging: task.order.staging_assignments[0]?.location ?? null,
     lines,
@@ -102,12 +105,16 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
   const task = trows[0];
   if (!task) throw new NotFoundError('pick task', input.pick_task_id);
   if (task.status !== 'IN_PROGRESS') throw new RuleError('TASK_STATUS', `Task is ${task.status}; start it first`);
-  if (task.assigned_to !== ctx.userId) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
-  const lrows = await tx.$queryRaw<{ id: string; status: string; scan_step: number; qty: bigint; picked_qty: bigint; location_id: string; lpn_id: string; sku_id: string; allocation_id: string; order_line_id: string; full_pallet: boolean }[]>`
-    SELECT id, status, scan_step, qty, picked_qty, location_id, lpn_id, sku_id, allocation_id, order_line_id, full_pallet FROM pick_task_lines WHERE id = ${input.line_id}::uuid AND pick_task_id = ${task.id}::uuid FOR UPDATE`;
+  const lrows = await tx.$queryRaw<{ id: string; status: string; scan_step: number; qty: bigint; picked_qty: bigint; location_id: string; lpn_id: string; sku_id: string; allocation_id: string; order_line_id: string; full_pallet: boolean; picker_id: string | null }[]>`
+    SELECT id, status, scan_step, qty, picked_qty, location_id, lpn_id, sku_id, allocation_id, order_line_id, full_pallet, picker_id FROM pick_task_lines WHERE id = ${input.line_id}::uuid AND pick_task_id = ${task.id}::uuid FOR UPDATE`;
   const line = lrows[0];
   if (!line) throw new NotFoundError('pick line', input.line_id);
   if (line.status === 'PICKED') throw new ConflictError('LINE_PICKED', 'Line already picked');
+  // shared picking: a line someone else already started stays theirs
+  if (line.picker_id && line.picker_id !== ctx.userId && line.scan_step > 0) {
+    const other = await tx.users.findUnique({ where: { id: line.picker_id }, select: { username: true } });
+    throw new ConflictError('LINE_TAKEN', `Esta línea la está surtiendo ${other?.username ?? 'otro surtidor'}; toma otra`);
+  }
   if (line.status === 'SHORT' || line.status === 'CANCELLED') throw new RuleError('LINE_STATUS', `Line is ${line.status}`);
   const expectedLoc = await tx.locations.findUniqueOrThrow({ where: { id: line.location_id } });
   const expectedLpn = await lockLpn(tx, line.lpn_id);
@@ -122,7 +129,7 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
       if (expectedLpn.current_location_id !== expectedLoc.id) {
         throw new RuleError('LPN_MOVED', `LPN ${expectedLpn.code} is no longer in ${expectedLoc.code}; ask a supervisor`, { lpn: expectedLpn.code });
       }
-      await tx.pick_task_lines.update({ where: { id: line.id }, data: { scan_step: 1, status: 'IN_PROGRESS' } });
+      await tx.pick_task_lines.update({ where: { id: line.id }, data: { scan_step: 1, status: 'IN_PROGRESS', picker_id: ctx.userId } });
       return { ok: true, next: 'LPN', line_id: line.id, expected_lpn: expectedLpn.code, sku: sku.code };
     }
     case 'LPN': {
@@ -367,7 +374,7 @@ export async function freePickScan(tx: Tx, ctx: ActorContext, input: { pick_task
   if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'This is a directed pick task: follow its lines');
   if (task.status === 'PENDING') await startPickTask(tx, ctx, task.id);
   else if (task.status !== 'IN_PROGRESS') throw new RuleError('TASK_STATUS', `Task is ${task.status}`);
-  if (task.assigned_to && task.assigned_to !== ctx.userId) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
+  // shared picking: any picker can add pallets to an open free pick
 
   const lpn = await lockLpnByCode(tx, input.lpn_code);
   if (!['STORED', 'OPEN'].includes(lpn.status) || !lpn.current_location_id) throw new RuleError('LPN_STATUS', `LPN ${lpn.code} is ${lpn.status}; only stored pallets can be picked`);
@@ -402,7 +409,7 @@ export async function freePickScan(tx: Tx, ctx: ActorContext, input: { pick_task
     await tx.order_lines.update({ where: { id: line.id }, data: { allocated_qty: { increment: p.qty } } });
     const seq = await tx.pick_task_lines.aggregate({ where: { pick_task_id: task.id }, _max: { sequence: true } });
     const ptl = await tx.pick_task_lines.create({
-      data: { pick_task_id: task.id, order_line_id: line.id, allocation_id: alloc.id, sequence: (seq._max.sequence ?? 0) + 1, location_id: lpn.current_location_id, lpn_id: lpn.id, sku_id: p.sku_id, qty: p.qty, full_pallet: wholePallet, status: 'IN_PROGRESS', scan_step: 2 },
+      data: { pick_task_id: task.id, order_line_id: line.id, allocation_id: alloc.id, sequence: (seq._max.sequence ?? 0) + 1, location_id: lpn.current_location_id, lpn_id: lpn.id, sku_id: p.sku_id, qty: p.qty, full_pallet: wholePallet, status: 'IN_PROGRESS', scan_step: 2, picker_id: ctx.userId },
     });
     await assignStaging(tx, ctx, task.order_id); // the lane is known once the first pallet says which warehouse we are in
     const r = await pickScan(tx, ctx, { pick_task_id: task.id, line_id: ptl.id, step: 'QTY', qty: p.qty, uom_code: 'PIECE' });
@@ -420,7 +427,6 @@ export async function closeFreeTask(tx: Tx, ctx: ActorContext, taskId: string) {
   if (!task) throw new NotFoundError('pick task', taskId);
   if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'Directed pick tasks complete on their own');
   if (task.status !== 'IN_PROGRESS' && task.status !== 'PENDING') throw new RuleError('TASK_STATUS', `Task is ${task.status}`);
-  if (task.assigned_to && task.assigned_to !== ctx.userId && !ctx.permissions.has('picking.assign')) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
   const picked = await tx.pick_task_lines.count({ where: { pick_task_id: taskId, status: 'PICKED' } });
   if (picked === 0) throw new RuleError('NOTHING_PICKED', 'Scan at least one pallet before closing the pick');
   await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'COMPLETED', completed_at: new Date(), version: { increment: 1 } } });
@@ -436,7 +442,6 @@ export async function undoFreeLine(tx: Tx, ctx: ActorContext, taskId: string, li
   if (!task) throw new NotFoundError('pick task', taskId);
   if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'Only free-pick lines can be undone here; directed picks are corrected by a supervisor');
   if (!['PENDING', 'IN_PROGRESS'].includes(task.status)) throw new RuleError('TASK_STATUS', `Task is ${task.status}; a closed pick is undone by cancelling the order`);
-  if (task.assigned_to && task.assigned_to !== ctx.userId && !ctx.permissions.has('picking.assign')) throw new ConflictError('NOT_YOUR_TASK', 'This task belongs to another picker');
   const line = await tx.pick_task_lines.findFirst({ where: { id: lineId, pick_task_id: taskId } });
   if (!line) throw new NotFoundError('pick line', lineId);
   if (line.status !== 'PICKED' || line.picked_qty <= 0n) throw new RuleError('LINE_STATUS', `Line is ${line.status}`);

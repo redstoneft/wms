@@ -18,7 +18,7 @@ export async function pickingRoutes(app: FastifyInstance) {
              pt.mode, pt.purpose, sl.code AS staging_code
         FROM pick_tasks pt JOIN orders o ON o.id = pt.order_id JOIN customers c ON c.id = o.customer_id LEFT JOIN users u ON u.id = pt.assigned_to
         LEFT JOIN staging_assignments sa ON sa.order_id = o.id AND sa.released_at IS NULL LEFT JOIN locations sl ON sl.id = sa.location_id
-       WHERE pt.status = ANY(${q.status.split(',')}::text[]) AND (${await includeTraining(req)}::boolean OR pt.is_training = false) AND (${q.mine !== 'true'} OR pt.assigned_to = ${req.actor!.userId}::uuid OR pt.assigned_to IS NULL)
+       WHERE pt.status = ANY(${q.status.split(',')}::text[]) AND (${await includeTraining(req)}::boolean OR pt.is_training = false) AND (${q.mine !== 'true'} OR pt.assigned_to = ${req.actor!.userId}::uuid OR pt.assigned_to IS NULL OR pt.status = 'IN_PROGRESS')
        ORDER BY o.priority, pt.created_at`;
   });
 
