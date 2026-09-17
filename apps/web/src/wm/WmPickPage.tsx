@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 import type { UomCode } from '@wms/shared';
 import { api } from '../api/client';
 import { pickingApi } from '../api/orders';
@@ -28,7 +29,10 @@ function Flow() {
   const wm = useWm();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const tasks = useQuery({ queryKey: ['pick-tasks', 'mine'], queryFn: () => pickingApi.tasks({ status: 'PENDING,IN_PROGRESS', mine: 'true' }), refetchInterval: 10_000 });
+  const { can } = useAuth();
+  // supervisors see every open pick (to help, edit or cancel someone else's); pickers see their own
+  const seeAll = can('picking.assign');
+  const tasks = useQuery({ queryKey: ['pick-tasks', seeAll ? 'all' : 'mine'], queryFn: () => pickingApi.tasks({ status: 'PENDING,IN_PROGRESS', mine: seeAll ? 'false' : 'true' }), refetchInterval: 10_000 });
   const [taskId, setTaskId] = useState<string | null>(null);
   const view = useQuery({ queryKey: ['pick-task', taskId], queryFn: () => pickingApi.task(taskId!), enabled: !!taskId });
   const [busy, setBusy] = useState(false);
@@ -76,7 +80,7 @@ function Flow() {
   if (!taskId || !view.data)
     return (
       <div>
-        <StepBar text="MIS TAREAS DE SURTIDO · ELIGE UNA" />
+        <StepBar text={seeAll ? 'TAREAS DE SURTIDO ABIERTAS · ELIGE UNA' : 'MIS TAREAS DE SURTIDO · ELIGE UNA'} />
         {busy && <div className="text-center text-slate-300">Iniciando…</div>}
         <WmList
           items={tasks.data}
@@ -92,6 +96,7 @@ function Flow() {
                 </div>
                 <div className="text-sm text-slate-300">
                   {t.customer} · {t.mode === 'FREE' ? <span className="rounded bg-violet-600 px-1.5 text-xs font-bold text-white">SURTIDO LIBRE</span> : null} {t.picked_lines}/{t.lines} líneas · staging {t.staging_code ?? '—'}
+                  {seeAll && t.assigned_username && <span className="ml-2 text-xs text-amber-300">· {t.assigned_username}</span>}
                 </div>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-bold ${t.status === 'IN_PROGRESS' ? 'bg-sky-500' : 'bg-amber-400 text-amber-950'}`}>{t.status}</span>
