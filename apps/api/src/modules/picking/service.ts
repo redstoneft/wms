@@ -38,12 +38,12 @@ export async function createPickTask(tx: Tx, ctx: ActorContext, orderId: string,
     });
   }
   const staging = await assignStaging(tx, ctx, orderId);
-  await audit(tx, ctx, { action: 'pick.task_created', entity_type: 'pick_task', entity_id: task.id, after: { order: order.order_number, lines: allocs.length, staging: staging.code } });
+  await audit(tx, ctx, { action: 'pick.task_created', entity_type: 'pick_task', entity_id: task.id, after: { order: order.order_number, lines: allocs.length, staging: staging?.code ?? null } });
   return { task, lines: allocs.length, staging };
 }
 
 /** Picks a free STAGING location (no active assignment, no pallets), locking it so two orders never share one. */
-export async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string) {
+export async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string): Promise<{ id: string; code: string; barcode: string } | null> {
   const current = await tx.staging_assignments.findFirst({ where: { order_id: orderId, released_at: null }, include: { location: true } });
   if (current) return current.location;
   // the lane lives in the warehouse where the order's stock is allocated (never a lane of another site)
@@ -55,7 +55,8 @@ export async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string) 
        AND NOT EXISTS (SELECT 1 FROM lpns l WHERE l.current_location_id = loc.id)
      ORDER BY loc.code FOR UPDATE SKIP LOCKED LIMIT 1`;
   const loc = rows[0];
-  if (!loc) throw new RuleError('NO_STAGING_AVAILABLE', 'No free staging location available');
+  // no free lane is not a reason to stop picking: the lane is assigned later (next pick, or when the pallet reaches staging)
+  if (!loc) return null;
   await tx.staging_assignments.create({ data: { order_id: orderId, location_id: loc.id } });
   await audit(tx, ctx, { action: 'staging.assign', entity_type: 'order', entity_id: orderId, after: { location: loc.code } });
   return loc;
@@ -298,8 +299,16 @@ export async function stageLpn(tx: Tx, ctx: ActorContext, input: { lpn_code: str
   if (!lpn.order_id) throw new RuleError('LPN_NO_ORDER', 'Outbound LPN has no order');
   const loc = await lockLocationByBarcode(tx, input.staging_location_barcode);
   if (loc.location_type !== 'STAGING') throw new RuleError('NOT_STAGING', `${loc.code} is not a staging location`);
-  const assignment = await tx.staging_assignments.findFirst({ where: { order_id: lpn.order_id, released_at: null } });
-  if (!assignment) throw new RuleError('NO_STAGING_ASSIGNED', 'Order has no staging lane assigned');
+  let assignment = await tx.staging_assignments.findFirst({ where: { order_id: lpn.order_id, released_at: null } });
+  if (!assignment) {
+    // the order was picked while every lane was busy: the lane it arrives at becomes its lane, if that lane is free
+    const busyBy = await tx.staging_assignments.findFirst({ where: { location_id: loc.id, released_at: null }, include: { order: { select: { order_number: true } } } });
+    if (busyBy) throw new RuleError('LANE_BUSY', `CARRIL OCUPADO — ${loc.code} es del pedido ${busyBy.order.order_number}; usa otro carril libre`, { lane: loc.code, order: busyBy.order.order_number });
+    const foreign = await tx.lpns.count({ where: { current_location_id: loc.id, order_id: { not: lpn.order_id } } });
+    if (foreign > 0) throw new RuleError('LANE_BUSY', `CARRIL OCUPADO — ${loc.code} tiene tarimas de otro pedido`, { lane: loc.code });
+    assignment = await tx.staging_assignments.create({ data: { order_id: lpn.order_id, location_id: loc.id } });
+    await audit(tx, ctx, { action: 'staging.assign', entity_type: 'order', entity_id: lpn.order_id, after: { location: loc.code, on_arrival: true } });
+  }
   if (assignment.location_id !== loc.id) {
     const expected = await tx.locations.findUnique({ where: { id: assignment.location_id } });
     throw new RuleError('WRONG_LOCATION', `STAGING INCORRECTO — este pedido va en ${expected?.code}`, { expected: expected?.code, scanned: loc.code });

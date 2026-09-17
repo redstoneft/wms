@@ -92,7 +92,7 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 ## SURTIDO COMPARTIDO (varias personas en el mismo pedido)
 
-En `Surtir` todos los surtidores ven todos los pedidos abiertos, con el nombre de quien lo empezó. Cualquiera puede entrar al mismo pedido: cada línea (o tarima, en surtido libre) queda a nombre de quien la escanea y el sistema no deja que dos personas trabajen la misma línea; el handheld le propone a cada uno la siguiente línea libre. El pedido se cierra cuando todas las líneas están surtidas (o, en surtido libre, cuando alguien lo cierra).
+En `Surtir` todos los surtidores ven todos los pedidos abiertos, con el nombre de quien lo empezó. Cualquiera puede entrar al mismo pedido: cada línea (o tarima, en surtido libre) queda a nombre de quien la escanea y el sistema no deja que dos personas trabajen la misma línea; el handheld le propone a cada uno la siguiente línea libre. El pedido se cierra cuando todas las líneas están surtidas (o, en surtido libre, cuando alguien lo cierra). Si no hay carril de staging libre, el surtido sigue igual: el carril se asigna cuando se libera uno o, si no, el carril donde llegue la primera tarima queda como carril del pedido (un carril ocupado por otro pedido se rechaza).
 
 ## SURTIDO LIBRE (pedido armado con el escáner, en varios momentos)
 

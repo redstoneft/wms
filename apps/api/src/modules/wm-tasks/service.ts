@@ -44,8 +44,8 @@ export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskI
       if (['ACCEPTED', 'PARTIALLY_ALLOCATED'].includes(fresh.status)) await allocateOrder(tx, ctx, { order_id: order.id, allow_partial: true });
       const r = await createPickTask(tx, ctx, order.id, ctx.userId);
       await tx.pick_tasks.update({ where: { id: r.task.id }, data: { purpose } });
-      await audit(tx, ctx, { action: 'task.self_created', entity_type: 'pick_task', entity_id: r.task.id, after: { kind: 'PICK', order: fresh.order_number, lines: r.lines, staging: r.staging.code }, reason: purpose });
-      return { kind: 'PICK' as const, id: r.task.id, mode: 'ALLOCATED' as const, order_number: fresh.order_number, lines: r.lines, staging: r.staging.code, next: '/wm/pick' };
+      await audit(tx, ctx, { action: 'task.self_created', entity_type: 'pick_task', entity_id: r.task.id, after: { kind: 'PICK', order: fresh.order_number, lines: r.lines, staging: r.staging?.code ?? null }, reason: purpose });
+      return { kind: 'PICK' as const, id: r.task.id, mode: 'ALLOCATED' as const, order_number: fresh.order_number, lines: r.lines, staging: r.staging?.code ?? null, next: '/wm/pick' };
     }
     case 'COUNT': {
       const task = await createCountTask(tx, ctx, { count_type: 'LOCATION', location_barcodes: [input.reference.trim()], assigned_to: ctx.userId, is_blind: true, notes: purpose });
@@ -84,6 +84,6 @@ export async function createHandheldOrder(tx: Tx, ctx: ActorContext, input: Hand
   const alloc = await allocateOrder(tx, ctx, { order_id: order.id, allow_partial: true });
   const r = await createPickTask(tx, ctx, order.id, ctx.userId);
   await tx.pick_tasks.update({ where: { id: r.task.id }, data: { purpose: input.purpose } });
-  await audit(tx, ctx, { action: 'task.self_created', entity_type: 'pick_task', entity_id: r.task.id, after: { kind: 'PICK', order: number, lines: r.lines, staging: r.staging.code, allocation: alloc }, reason: input.purpose });
-  return { order_id: order.id, order_number: number, lines: merged.size, task_id: r.task.id, staging: r.staging.code, next: '/wm/pick' };
+  await audit(tx, ctx, { action: 'task.self_created', entity_type: 'pick_task', entity_id: r.task.id, after: { kind: 'PICK', order: number, lines: r.lines, staging: r.staging?.code ?? null, allocation: alloc }, reason: input.purpose });
+  return { order_id: order.id, order_number: number, lines: merged.size, task_id: r.task.id, staging: r.staging?.code ?? null, next: '/wm/pick' };
 }

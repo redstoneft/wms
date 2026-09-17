@@ -202,4 +202,35 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const ok2 = await picker2.post('/picking/scan', { pick_task_id: t.body.id, line_id: l2.id, step: 'LOCATION', scanned: l2.location_barcode }, idem());
     expect(ok2.status, JSON.stringify(ok2.body)).toBe(200);
   });
+
+  it('no free staging lane never blocks picking: the task is created without a lane and the lane is taken when the pallet arrives', async () => {
+    // occupy every lane of the fixture with other orders
+    const lanes = await sql<{ id: string; code: string; barcode: string }>(`SELECT id, code, barcode FROM locations WHERE warehouse_id = '${f.warehouse_id}' AND location_type = 'STAGING' AND is_active ORDER BY code`);
+    const blockers: string[] = [];
+    for (const lane of lanes) {
+      const o = await sup.post('/orders', { order_number: `BLK-${lane.code}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 1 }] });
+      await sql(`UPDATE staging_assignments SET released_at = now() WHERE released_at IS NULL AND location_id = '${lane.id}'`);
+      await sql(`INSERT INTO staging_assignments (order_id, location_id) VALUES ('${o.body.id}', '${lane.id}')`);
+      blockers.push(o.body.id);
+    }
+    const pallet = await storedPallet(f, 0, f.reserve[10]!.id, 6n);
+    const number = `PED-NOLANE-${f.tag}`;
+    const r = await picker.post('/wm/tasks', { kind: 'PICK', reference: number, purpose: 'sin carril libre', new_order: { customer_code: f.customer.code } });
+    expect(r.status).toBe(201);
+    const s1 = await picker.post('/picking/free-scan', { pick_task_id: r.body.id, lpn_code: pallet.code }, idem());
+    expect(s1.status, JSON.stringify(s1.body)).toBe(200);
+    expect(s1.body.view.staging).toBeNull(); // picked anyway, no lane yet
+    const c = await picker.post(`/picking/tasks/${r.body.id}/close`);
+    expect(c.status).toBe(200);
+    // arriving at a busy lane is refused with the owner's order; a freed lane is taken on arrival
+    const busy = await picker.post('/staging/scan', { lpn_code: pallet.code, staging_location_barcode: lanes[0]!.barcode }, idem());
+    expect(busy.status).toBe(422);
+    expect(busy.body.error).toBe('LANE_BUSY');
+    await sql(`UPDATE staging_assignments SET released_at = now() WHERE order_id = '${blockers[1]}'`);
+    const ok = await picker.post('/staging/scan', { lpn_code: pallet.code, staging_location_barcode: lanes[1]!.barcode }, idem());
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.location).toBe(lanes[1]!.code);
+    const view = await picker.get(`/picking/tasks/${r.body.id}`);
+    expect(view.body.staging.code).toBe(lanes[1]!.code);
+  });
 });
