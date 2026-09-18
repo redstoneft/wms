@@ -66,6 +66,8 @@ export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as Permission[];
 const OPERATOR_COMMON: Permission[] = [
   'layout.read',
   'masterdata.read',
+  'printers.manage', // every operator may set up the printer they print on
+  'labels.print',
   'inventory.read',
   'lpn.read',
   'incidents.read',
