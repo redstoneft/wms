@@ -252,9 +252,33 @@ function Printers() {
   return (
     <div>
       {can('printers.manage') && <div className="mb-3"><Button onClick={() => setEdit({ isNew: true, code: '', name: '', host: '', mode: 'NETWORK', port: 9100, dpi: 203, label_width_mm: 101, label_height_mm: 84, is_default: false })}>Nueva impresora</Button></div>}
-      <Modal open={!!token} onClose={() => setToken(null)} title={`Token de la estación · ${token?.printer ?? ''}`}>
-        <p className="text-sm text-slate-600">Pégalo en <code>wms_print_agent.py</code> (o en la variable <code>WMS_PRINT_TOKEN</code>) en la PC que tiene la Zebra por USB. Se muestra una sola vez; si se pierde, genera otro.</p>
-        <pre className="mt-3 select-all break-all rounded bg-slate-900 p-3 font-mono text-sm text-emerald-300" data-testid="agent-token">{token?.token}</pre>
+      <Modal open={!!token} onClose={() => setToken(null)} title={`Estación de impresión · ${token?.printer ?? ''}`}>
+        <p className="text-sm text-slate-700">
+          Una página web no puede ver las impresoras de la computadora. Por eso la Zebra en USB se conecta con la <b>estación de impresión</b>: un programa pequeño que corre en la PC donde está la impresora y le pide al WMS las etiquetas. El <b>token</b> es la contraseña de esa PC ante el WMS.
+        </p>
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+          <li>
+            En la PC de la Zebra, instala Python desde <span className="font-mono">python.org</span> marcando "Add to PATH" y en una consola ejecuta <span className="font-mono">pip install pywin32 requests</span>.
+          </li>
+          <li>Descarga los dos archivos de abajo en una carpeta, por ejemplo <span className="font-mono">C:\wms-print</span>. El <span className="font-mono">.bat</span> ya trae este token.</li>
+          <li>
+            Doble clic en <span className="font-mono">run_agent.bat</span>. Debe decir "Impresora WMS: {token?.printer}". Desde ese momento todo lo que imprimas aquí sale en la Zebra, y esta pantalla marca la estación como conectada.
+          </li>
+          <li>Para que arranque sola: acceso directo del .bat en la carpeta Inicio de Windows (Win+R → shell:startup).</li>
+        </ol>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Estacion de impresion WMS - ${token?.printer ?? ''}\r\ncd /d %~dp0\r\nset WMS_URL=${window.location.origin}\r\nset WMS_PRINT_TOKEN=${token?.token ?? ''}\r\n:loop\r\npython wms_print_agent.py\r\necho.\r\necho La estacion se detuvo. Reiniciando en 5 segundos... (cierra esta ventana para salir)\r\ntimeout /t 5 >nul\r\ngoto loop\r\n`], { type: 'application/octet-stream' }))} download="run_agent.bat">
+            Descargar run_agent.bat (con el token)
+          </a>
+          <a className="rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white" href="/print-agent/wms_print_agent.py" download="wms_print_agent.py">
+            Descargar wms_print_agent.py
+          </a>
+        </div>
+        <details className="mt-3 text-xs text-slate-500">
+          <summary>Ver el token</summary>
+          <pre className="mt-2 select-all break-all rounded bg-slate-900 p-3 font-mono text-sm text-emerald-300" data-testid="agent-token">{token?.token}</pre>
+          <p className="mt-1">Se muestra una sola vez. Si lo pierdes, genera otro (el anterior deja de servir).</p>
+        </details>
       </Modal>
       <Table
         rows={list.data}
