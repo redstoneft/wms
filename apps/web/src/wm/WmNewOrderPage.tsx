@@ -79,7 +79,8 @@ function Flow() {
     return (
       <div>
         <StepBar text="1 · NÚMERO DEL PEDIDO (ORDEN DE COMPRA DEL CLIENTE)" />
-        <ScanInput label="Número de pedido" autoUpper onScan={(v) => { setNumber(v); wm.ok(); setStep('CUSTOMER'); }} testId="new-order-number" placeholder="Escanea o escribe y Enter" />
+        <ScanInput label="Número de pedido" autoUpper onScan={(v) => { setNumber(v.replace(/\s+/g, ' ').trim()); wm.ok(); setStep('CUSTOMER'); }} testId="new-order-number" placeholder="Escanea o escribe y Enter" />
+        <div className="mt-1 text-xs text-slate-400">Letras, números, espacios y . _ - / #</div>
         <div className="mt-2 text-xs text-slate-400">Usa el número de orden de compra del cliente. El cliente se elige en el siguiente paso.</div>
       </div>
     );

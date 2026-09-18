@@ -342,9 +342,17 @@ export const zSelfTask = z.object({
 });
 export type SelfTaskInput = z.infer<typeof zSelfTask>;
 
+/** Order numbers as customers write them: letters, digits, spaces and . _ - / # (e.g. "OC 8834970889", "CASA LEY-12"). */
+export const zOrderNumber = z
+  .string()
+  .trim()
+  .min(1)
+  .max(60)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9 ._\-/#]*$/, 'número de pedido: solo letras, números, espacios y . _ - / #');
+
 /** Manual order captured on the handheld: customer, scanned products with quantities, mandatory purpose. */
 export const zHandheldOrder = z.object({
-  order_number: zCode.max(60),
+  order_number: zOrderNumber,
   customer_code: zCode,
   destination: z.string().trim().max(500).optional(),
   purpose: z.string().trim().min(5).max(300),

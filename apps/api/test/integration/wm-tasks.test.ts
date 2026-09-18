@@ -131,6 +131,12 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const number = `PED-CAP-${f.tag}`;
     const bad = await picker.post('/wm/orders', { order_number: number, customer_code: f.customer.code, purpose: 'mostrador', lines: [] });
     expect(bad.status).toBe(400); // no lines
+    // order numbers as customers write them (spaces, #) are accepted; the failing field is named in the details
+    const spaced = await picker.post('/wm/orders', { order_number: `OC ${f.tag} #1`, customer_code: f.customer.code, purpose: 'pedido con espacios', lines: [{ sku_code: f.skus[0]!.code, qty: 1 }] });
+    expect(spaced.status, JSON.stringify(spaced.body)).toBe(201);
+    const badChars = await picker.post('/wm/orders', { order_number: 'PED|MAL', customer_code: f.customer.code, purpose: 'mostrador', lines: [{ sku_code: f.skus[0]!.code, qty: 1 }] });
+    expect(badChars.status).toBe(400);
+    expect(badChars.body.details[0].path).toBe('order_number');
     const r = await picker.post('/wm/orders', {
       order_number: number.toLowerCase(),
       customer_code: f.customer.code,

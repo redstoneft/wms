@@ -44,6 +44,11 @@ function describe(e: unknown): WmError {
       else if (Array.isArray(d.blocking_reasons)) details = (d.blocking_reasons as string[]).join('\n');
       else if (Array.isArray(d.reasons)) details = (d.reasons as string[]).join('\n');
     }
+    if (e.status === 400 && Array.isArray(e.details)) {
+      const FIELD: Record<string, string> = { order_number: 'Número de pedido', customer_code: 'Cliente', purpose: 'Para qué', lines: 'Productos', reference: 'Referencia', qty: 'Cantidad', lpn_code: 'LPN', notes: 'Para qué' };
+      details = (e.details as { path: string; message: string }[]).map((x) => `${FIELD[x.path.split('.')[0] ?? ''] ?? x.path ?? 'campo'}: ${x.message}`).join('\n');
+      return { title: 'DATO INVÁLIDO', message: 'Revisa el dato marcado y vuelve a intentar', details, code: e.code, requestId: e.requestId };
+    }
     const title = e.status === 422 ? 'OPERACIÓN RECHAZADA' : e.status === 409 ? 'CONFLICTO' : e.status === 403 ? 'SIN PERMISO' : e.status === 404 ? 'NO ENCONTRADO' : 'ERROR';
     return { title, message: e.message, details, code: e.code, requestId: e.requestId };
   }
