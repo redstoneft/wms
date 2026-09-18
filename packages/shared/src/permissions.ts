@@ -122,6 +122,11 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ],
 };
 
+// A role never lists the same permission twice (OPERATOR_COMMON overlaps explicit lists): dedupe once, at load time.
+for (const r of Object.keys(ROLE_PERMISSIONS) as Role[]) {
+  (ROLE_PERMISSIONS as Record<Role, readonly Permission[]>)[r] = [...new Set(ROLE_PERMISSIONS[r])];
+}
+
 export function permissionsForRoles(roles: readonly Role[]): Set<Permission> {
   const out = new Set<Permission>();
   for (const r of roles) for (const p of ROLE_PERMISSIONS[r] ?? []) out.add(p);

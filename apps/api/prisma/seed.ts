@@ -32,7 +32,7 @@ async function seedBase() {
   for (const role of ROLES) {
     const r = await db.roles.upsert({ where: { code: role }, create: { code: role, name: names[role], is_system: true }, update: { name: names[role] } });
     await db.role_permissions.deleteMany({ where: { role_id: r.id } });
-    await db.role_permissions.createMany({ data: ROLE_PERMISSIONS[role].map((p) => ({ role_id: r.id, permission_id: permId.get(p)! })) });
+    await db.role_permissions.createMany({ data: [...new Set(ROLE_PERMISSIONS[role])].map((p) => ({ role_id: r.id, permission_id: permId.get(p)! })), skipDuplicates: true });
   }
   const adminRole = await db.roles.findUniqueOrThrow({ where: { code: 'ADMIN' } });
   const existing = await db.users.findUnique({ where: { username: 'admin' } });

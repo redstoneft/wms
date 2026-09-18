@@ -30,4 +30,7 @@ describe('RBAC matrix', () => {
     expect(p.has('verification.execute')).toBe(true);
     expect(p.has('shipments.release')).toBe(false);
   });
+  it('no role lists a permission twice (the startup seed inserts them with createMany)', () => {
+    for (const r of ROLES) expect(new Set(ROLE_PERMISSIONS[r]).size).toBe(ROLE_PERMISSIONS[r].length);
+  });
 });
