@@ -53,6 +53,7 @@ export const NAV: NavGroup[] = [
       { to: '/masterdata', label: 'Datos maestros', icon: '▤', perms: ['masterdata.read'] },
       { to: '/layout', label: 'Layout', icon: '⊞', perms: ['layout.read'] },
       { to: '/labels', label: 'Etiquetas', icon: '⌸', perms: ['labels.print'] },
+      { to: '/masterdata?tab=printers', label: 'Impresoras', icon: '⎙', perms: ['printers.manage'] },
       { to: '/imports', label: 'Importaciones', icon: '⇪', perms: ['imports.run'] },
     ],
   },

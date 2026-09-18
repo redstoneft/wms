@@ -156,7 +156,7 @@ export default function LabelsPage() {
               ))}
             </Select>
           </Field>
-          <Field label="Impresora Zebra">
+          <Field label="Impresora Zebra" hint={<a className="text-sky-700 underline" href="/masterdata?tab=printers">Configurar impresoras</a>}>
             <Select value={batch.printer_id} onChange={(e) => setBatch({ ...batch, printer_id: e.target.value })}>
               <option value="">Predeterminada</option>
               {printers.data?.map((p) => (
