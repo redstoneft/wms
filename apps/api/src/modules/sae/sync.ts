@@ -376,7 +376,9 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
           let sku: { id: string; code: string };
           if (existing) {
             if (existing.gtin && p.gtin && existing.gtin !== p.gtin) c.errors.push({ ref: p.model, message: `el WMS tiene GTIN ${existing.gtin} y SAE/plataforma ${p.gtin}; se actualizó al de la plataforma` });
-            await tx.skus.update({ where: { id: existing.id }, data });
+            // a name fixed by hand in the WMS wins over SAE's description
+            const { description: _saeDescription, ...rest } = data;
+            await tx.skus.update({ where: { id: existing.id }, data: existing.description_locked ? rest : data });
             sku = { id: existing.id, code: existing.code };
             c.updated++;
           } else {

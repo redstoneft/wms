@@ -58,6 +58,8 @@ export interface Sku {
   code: string;
   gtin: string | null;
   description: string;
+  description_locked?: boolean;
+  external_source?: string | null;
   family: string | null;
   compatibility_group: string | null;
   abc_class: string;

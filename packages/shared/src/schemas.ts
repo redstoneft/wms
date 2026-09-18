@@ -96,7 +96,7 @@ export const zCreateSku = z.object({
   uoms: z.array(zSkuUom).default([]),
   barcodes: z.array(z.object({ barcode: zBarcode, uom_code: zUom.default('PIECE') })).default([]),
 });
-export const zUpdateSku = zCreateSku.partial().extend({ is_active: z.boolean().optional() });
+export const zUpdateSku = zCreateSku.partial().extend({ is_active: z.boolean().optional(), /** keep the WMS name even when SAE sends another */ description_locked: z.boolean().optional() });
 
 export const zCreateParty = z.object({
   code: zCode,

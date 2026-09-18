@@ -96,6 +96,8 @@ export async function masterDataRoutes(app: FastifyInstance) {
       const { uoms, barcodes, ...rest } = body;
       const data: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) data[k] = v;
+      // a name typed here is a decision: from now on the SAE sync leaves it alone (unless explicitly unlocked)
+      if (body.description !== undefined && body.description !== before.description && body.description_locked === undefined) data.description_locked = true;
       await tx.skus.update({ where: { id }, data });
       if (uoms) {
         const norm = normalizeUoms(uoms);

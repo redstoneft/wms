@@ -92,6 +92,7 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
       const body: Record<string, unknown> = {
         code: f.code,
         description: f.description,
+        ...(f.isNew ? {} : { description_locked: f.description_locked ?? undefined }),
         family: f.family || undefined,
         compatibility_group: f.compatibility_group || undefined,
         abc_class: f.abc_class,
@@ -125,7 +126,12 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
     <Drawer open={!!sku} onClose={onClose} title={f.isNew ? 'Nuevo SKU' : `SKU ${f.code}`} width="max-w-2xl" footer={<div className="flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={() => save.mutate()} loading={save.isPending} disabled={!f.code || !f.description}>Guardar</Button></div>}>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Código" required><Input value={f.code ?? ''} onChange={(e) => setF({ ...f, code: e.target.value })} disabled={!f.isNew} className="font-mono" /></Field>
-        <Field label="Descripción" required><Input value={f.description ?? ''} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
+        <Field label="Descripción" required hint={f.isNew ? undefined : f.external_source === 'SAE' ? (f.description_locked ? 'Nombre fijado en el WMS: la sincronización con SAE no lo cambia.' : 'Este nombre viene de SAE. Si lo cambias aquí queda fijado y SAE ya no lo sobrescribe.') : undefined}>
+          <Input value={f.description ?? ''} onChange={(e) => setF({ ...f, description: e.target.value })} />
+        </Field>
+        {!f.isNew && f.external_source === 'SAE' && (
+          <Checkbox label="Conservar este nombre aunque SAE mande otro" checked={!!f.description_locked} onChange={(e) => setF({ ...f, description_locked: e.target.checked })} />
+        )}
         <Field label="Familia"><Input value={f.family ?? ''} onChange={(e) => setF({ ...f, family: e.target.value })} /></Field>
         <Field label="Grupo de compatibilidad"><Input value={f.compatibility_group ?? ''} onChange={(e) => setF({ ...f, compatibility_group: e.target.value })} /></Field>
         <Field label="Clase ABC"><Select value={f.abc_class ?? 'C'} onChange={(e) => setF({ ...f, abc_class: e.target.value })}><option>A</option><option>B</option><option>C</option></Select></Field>

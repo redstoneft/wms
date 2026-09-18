@@ -324,4 +324,19 @@ describe('SAE → WMS synchronisation', () => {
     process.env.SAE_RAW_SUPABASE_URL = `http://127.0.0.1:${port}`;
     expect(requests).toBeGreaterThan(10);
   });
+
+  it('a SKU name edited by hand in the WMS is kept by the next SAE sync; unlocking it lets SAE win again', async () => {
+    const before = await sql<{ id: string; description: string }>(`SELECT id, description FROM skus WHERE code = 'SIC20G'`);
+    expect(before[0]).toBeTruthy();
+    const adm = await userWithRoles('saeadm', ['SUPERVISOR']);
+    const r = await adm.patch(`/skus/${before[0]!.id}`, { description: 'SARTÉN IMPERIAL 20 CM GRIS (nombre bodega)' });
+    expect(r.status).toBe(200);
+    expect((await sql<{ l: boolean }>(`SELECT description_locked AS l FROM skus WHERE id = '${before[0]!.id}'`))[0]!.l).toBe(true);
+    await sup.post('/sae/sync', { entities: ['skus'] });
+    expect((await sql<{ d: string }>(`SELECT description AS d FROM skus WHERE id = '${before[0]!.id}'`))[0]!.d).toBe('SARTÉN IMPERIAL 20 CM GRIS (nombre bodega)');
+    const unlock = await adm.patch(`/skus/${before[0]!.id}`, { description_locked: false });
+    expect(unlock.status).toBe(200);
+    await sup.post('/sae/sync', { entities: ['skus'] });
+    expect((await sql<{ d: string }>(`SELECT description AS d FROM skus WHERE id = '${before[0]!.id}'`))[0]!.d).toBe(before[0]!.description);
+  });
 });

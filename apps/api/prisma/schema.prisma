@@ -319,6 +319,7 @@ model skus {
   id                 String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   code               String   @unique @db.VarChar(64)
   description        String   @db.VarChar(300)
+  description_locked Boolean  @default(false) // edited by hand in the WMS: the SAE sync must not overwrite it
   family             String?  @db.VarChar(60)
   compatibility_group String? @db.VarChar(60) // SKUs in different incompatible groups never share a location
   abc_class          String   @default("C") @db.VarChar(1)
