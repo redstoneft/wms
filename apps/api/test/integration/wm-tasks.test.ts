@@ -249,6 +249,14 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect((await sql<{ notes: string; status: string }>(`SELECT notes, status FROM receipts WHERE id = '${r.body.id}'`))[0]).toMatchObject({ notes: 'llegó camión sin cita', status: 'OPEN' });
     const notDock = await rc.post('/wm/tasks', { kind: 'RECEIPT', reference: f.reserve[0]!.barcode, purpose: 'andén equivocado' });
     expect(notDock.status).toBe(422);
+    // no dock scanned: the warehouse's receiving dock is used
+    await sql(`UPDATE warehouses SET is_default = false`);
+    await sql(`UPDATE warehouses SET is_default = true WHERE id = '${f.warehouse_id}'`);
+    const auto = await rc.post('/wm/tasks', { kind: 'RECEIPT', purpose: 'sin escanear andén' });
+    expect(auto.status, JSON.stringify(auto.body)).toBe(201);
+    expect(auto.body.dock).toBe(f.dock.code);
+    const noRef = await rc.post('/wm/tasks', { kind: 'COUNT', purpose: 'sin referencia' });
+    expect(noRef.status).toBe(422);
 
     // supervisor: the pallet really holds 50 of sku0 (system 60) and 5 of sku1 (system 0)
     const mixed = await storedPallet(f, 0, f.reserve[11]!.id, 60n);

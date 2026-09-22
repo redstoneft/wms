@@ -13,7 +13,7 @@ const KINDS: { kind: SelfTaskKind; label: string; icon: string; ask: string; hin
   { kind: 'PICK', label: 'Surtir un pedido', icon: '☑', ask: 'ESCANEA O ESCRIBE EL NÚMERO DE PEDIDO', hint: 'Se asigna inventario y la tarea queda a tu nombre' },
   { kind: 'COUNT', label: 'Contar una ubicación', icon: '#', ask: 'ESCANEA LA ETIQUETA DE LA UBICACIÓN', hint: 'Conteo a ciegas de ese hueco' },
   { kind: 'PUTAWAY', label: 'Ubicar una tarima', icon: '⇲', ask: 'ESCANEA EL LPN DE LA TARIMA', hint: 'Para una tarima que quedó sin tarea de acomodo' },
-  { kind: 'RECEIPT', label: 'Recibir mercancía (nueva recepción)', icon: '⇩', ask: 'ESCANEA EL ANDÉN DE RECIBO', hint: 'Abre una recepción a tu nombre y te lleva a Recibir' },
+  { kind: 'RECEIPT', label: 'Recibir mercancía (nueva recepción)', icon: '⇩', ask: '', hint: 'Abre una recepción en el andén del almacén y te lleva a Recibir' },
 ];
 
 export default function WmNewTaskPage() {
@@ -93,13 +93,13 @@ function Flow() {
         ))}
       </div>
     );
-  if (!reference)
+  if (!reference && kind !== 'RECEIPT')
     return (
       <div>
         <StepBar text={`2 · ${def!.ask}`} />
         <BigValue label="Tarea" value={def!.label} tone="accent" />
         <div className="mt-3">
-          <ScanInput label={kind === 'PICK' ? 'Número de pedido (existente o nuevo)' : kind === 'COUNT' ? 'Ubicación' : kind === 'RECEIPT' ? 'Andén (LOC-HID-DOCK-…)' : 'LPN'} autoUpper onScan={(v) => (kind === 'PICK' ? void onReference(v) : (setReference(v), wm.ok()))} disabled={busy} testId="new-task-ref" />
+          <ScanInput label={kind === 'PICK' ? 'Número de pedido (existente o nuevo)' : kind === 'COUNT' ? 'Ubicación' : 'LPN'} autoUpper onScan={(v) => (kind === 'PICK' ? void onReference(v) : (setReference(v), wm.ok()))} disabled={busy} testId="new-task-ref" />
         </div>
         <BigButton tone="neutral" className="mt-3" onClick={() => setKind(null)}>
           Regresar
@@ -132,10 +132,10 @@ function Flow() {
     );
   return (
     <div>
-      <StepBar text={kind === 'PICK' && orderExists === false ? '4 · ¿PARA QUÉ? (OBLIGATORIO)' : '3 · ¿PARA QUÉ? (OBLIGATORIO)'} />
+      <StepBar text={kind === 'PICK' && orderExists === false ? '4 · ¿PARA QUÉ? (OBLIGATORIO)' : kind === 'RECEIPT' ? '2 · ¿PARA QUÉ? (OBLIGATORIO)' : '3 · ¿PARA QUÉ? (OBLIGATORIO)'} />
       <div className="grid gap-2 sm:grid-cols-2">
         <BigValue label="Tarea" value={def!.label} tone="accent" />
-        <BigValue label={kind === 'PICK' ? 'Pedido' : kind === 'COUNT' ? 'Ubicación' : kind === 'RECEIPT' ? 'Andén' : 'LPN'} value={reference} />
+        {kind !== 'RECEIPT' && <BigValue label={kind === 'PICK' ? 'Pedido' : kind === 'COUNT' ? 'Ubicación' : 'LPN'} value={reference} />}
       </div>
       {kind === 'PICK' && orderExists === false && (
         <div className="mt-2 grid gap-2">
@@ -152,7 +152,7 @@ function Flow() {
       <BigButton tone="success" className="mt-3" disabled={busy || purpose.trim().length < 5} onClick={create} testId="new-task-create">
         Crear tarea y empezar
       </BigButton>
-      <BigButton tone="neutral" className="mt-3" onClick={() => (kind === 'PICK' && orderExists === false ? setCustomerCode('') : (setReference(''), setOrderExists(null)))}>
+      <BigButton tone="neutral" className="mt-3" onClick={() => (kind === 'RECEIPT' ? setKind(null) : kind === 'PICK' && orderExists === false ? setCustomerCode('') : (setReference(''), setOrderExists(null)))}>
         Regresar
       </BigButton>
     </div>

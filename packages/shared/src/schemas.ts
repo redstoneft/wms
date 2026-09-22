@@ -333,8 +333,8 @@ export const zAssemblyComplete = z.object({
 export const SELF_TASK_KINDS = ['PICK', 'COUNT', 'PUTAWAY', 'RECEIPT'] as const;
 export const zSelfTask = z.object({
   kind: z.enum(SELF_TASK_KINDS),
-  /** PICK: order number · COUNT: location barcode/code · PUTAWAY: LPN code · RECEIPT: dock (receiving location) barcode/code */
-  reference: z.string().trim().min(1).max(64),
+  /** PICK: order number · COUNT: location barcode/code · PUTAWAY: LPN code · RECEIPT: optional dock; empty = the warehouse's receiving dock */
+  reference: z.string().trim().max(64).default(''),
   /** "para qué": mandatory, audited */
   purpose: z.string().trim().min(5).max(300),
   /** PICK only: when the order does not exist yet it is created here and picked freely (scan pallets over time) */

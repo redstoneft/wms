@@ -19,6 +19,7 @@ import { createPutawayTask } from '../putaway/service.js';
 
 export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskInput) {
   const purpose = input.purpose.trim();
+  if (input.kind !== 'RECEIPT' && !input.reference.trim()) throw new RuleError('REFERENCE_REQUIRED', 'Escanea la referencia de la tarea');
   // the kind must match what the operator is allowed to execute
   const needs: Record<SelfTaskInput['kind'], 'picking.execute' | 'counts.execute' | 'putaway.execute' | 'receiving.scan'> = { PICK: 'picking.execute', COUNT: 'counts.execute', PUTAWAY: 'putaway.execute', RECEIPT: 'receiving.scan' };
   if (!ctx.permissions.has(needs[input.kind])) throw new ForbiddenError(`Your role cannot execute ${input.kind} tasks`);
@@ -57,9 +58,21 @@ export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskI
       return { kind: 'COUNT' as const, id: task.id, next: '/wm/count' };
     }
     case 'RECEIPT': {
-      // a new receipt opened on the floor at the dock the operator scans; the receive screen picks it up
-      const dock = await lockLocationByBarcode(tx, input.reference.trim());
-      if (dock.location_type !== 'RECEIVING') throw new RuleError('NOT_RECEIVING_LOCATION', `${dock.code} no es un andén de recibo`);
+      // a new receipt opened on the floor; the dock is the warehouse's receiving dock unless the operator scanned one
+      let dock: { id: string; code: string; location_type: string };
+      if (input.reference.trim()) {
+        dock = await lockLocationByBarcode(tx, input.reference.trim());
+        if (dock.location_type !== 'RECEIVING') throw new RuleError('NOT_RECEIVING_LOCATION', `${dock.code} no es un andén de recibo`);
+      } else {
+        const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true, NOT: { code: 'ESCUELA' } }, orderBy: { created_at: 'asc' } }));
+        if (!wh) throw new RuleError('NO_WAREHOUSE', 'No hay almacén configurado');
+        // prefer a dock without an open receipt, then the first dock by code
+        const docks = await tx.locations.findMany({ where: { warehouse_id: wh.id, location_type: 'RECEIVING', is_active: true, admin_status: 'ACTIVE' }, orderBy: { code: 'asc' } });
+        if (!docks.length) throw new RuleError('NO_DOCK', `El almacén ${wh.code} no tiene andén de recibo`);
+        const open = await tx.receipts.groupBy({ by: ['receiving_location_id'], where: { status: { in: ['OPEN', 'IN_PROGRESS'] }, receiving_location_id: { in: docks.map((d) => d.id) } } });
+        const busy = new Set(open.map((o) => o.receiving_location_id));
+        dock = docks.find((d) => !busy.has(d.id)) ?? docks[0]!;
+      }
       const receipt = await createReceipt(tx, ctx, { receiving_location_id: dock.id, notes: purpose });
       await audit(tx, ctx, { action: 'task.self_created', entity_type: 'receipt', entity_id: receipt.id, after: { kind: 'RECEIPT', receipt: receipt.receipt_number, dock: dock.code }, reason: purpose });
       return { kind: 'RECEIPT' as const, id: receipt.id, receipt_number: receipt.receipt_number, dock: dock.code, next: `/wm/receive?receipt=${receipt.id}` };

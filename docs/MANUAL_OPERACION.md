@@ -90,7 +90,7 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 `Almacén → Re-recibir tarima` (también desde Nueva tarea): escanee el **LPN**, luego escanee **cada producto que trae de verdad** y teclee su cantidad (lo que no escanee se toma como que no está), escriba el motivo y registre. Si su rol aprueba ajustes (supervisor, control de inventarios), el sistema corrige la tarima al momento, con incidencia y auditoría. Si no, queda como **conteo terminado** en esa ubicación: otra persona lo recuenta en `Conteo` y el supervisor lo aprueba; el inventario cambia hasta entonces.
 
-**Nueva recepción desde el handheld**: `Nueva tarea → Recibir mercancía`, escanee el andén y el motivo; se abre la recepción y pasa directo a `Recibir`.
+**Nueva recepción desde el handheld**: `Nueva tarea → Recibir mercancía`, escriba el motivo y listo: la recepción se abre en el andén de recibo del almacén (el que esté libre) y pasa directo a `Recibir`. No hay que escanear el andén.
 
 ## NUEVA TAREA (el operador crea su propia tarea)
 
