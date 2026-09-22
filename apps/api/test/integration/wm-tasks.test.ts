@@ -239,4 +239,35 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const view = await picker.get(`/picking/tasks/${r.body.id}`);
     expect(view.body.staging.code).toBe(lanes[1]!.code);
   });
+
+  it('RECEIPT kind opens a receipt at the scanned dock; re-receiving a pallet applies the real contents for a supervisor and leaves a finished count for a picker', async () => {
+    const rc = await userWithRoles('strecv', ['RECEIVING']);
+    const r = await rc.post('/wm/tasks', { kind: 'RECEIPT', reference: f.dock.barcode, purpose: 'llegó camión sin cita' });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.kind).toBe('RECEIPT');
+    expect(r.body.next).toBe(`/wm/receive?receipt=${r.body.id}`);
+    expect((await sql<{ notes: string; status: string }>(`SELECT notes, status FROM receipts WHERE id = '${r.body.id}'`))[0]).toMatchObject({ notes: 'llegó camión sin cita', status: 'OPEN' });
+    const notDock = await rc.post('/wm/tasks', { kind: 'RECEIPT', reference: f.reserve[0]!.barcode, purpose: 'andén equivocado' });
+    expect(notDock.status).toBe(422);
+
+    // supervisor: the pallet really holds 50 of sku0 (system 60) and 5 of sku1 (system 0)
+    const mixed = await storedPallet(f, 0, f.reserve[11]!.id, 60n);
+    const sup2 = await userWithRoles('strsup', ['SUPERVISOR']);
+    const a = await sup2.post('/wm/lpn-recount', { lpn_code: mixed.code, purpose: 'tarima revuelta al abrirla', lines: [{ sku_code: f.skus[0]!.piece_barcode, qty: 50 }, { sku_code: f.skus[1]!.code, qty: 5 }] });
+    expect(a.status, JSON.stringify(a.body)).toBe(201);
+    expect(a.body.mode).toBe('APPLIED');
+    const bal = await sql<{ code: string; qty: bigint }>(`SELECT s.code, b.qty FROM inventory_balances b JOIN skus s ON s.id = b.sku_id JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${mixed.code}' AND b.qty > 0 ORDER BY s.code`);
+    expect(bal.map((b) => `${b.code}=${b.qty}`)).toEqual([`${f.skus[0]!.code}=50`, `${f.skus[1]!.code}=5`]);
+    await expectReconciled();
+
+    // picker: no adjustment rights → a finished count on the location awaiting recount/approval, inventory untouched
+    const other = await storedPallet(f, 1, f.reserve[12]!.id, 30n);
+    const c = await picker.post('/wm/lpn-recount', { lpn_code: other.code, purpose: 'faltan piezas al abrir', lines: [{ sku_code: f.skus[1]!.code, qty: 28 }] });
+    expect(c.status, JSON.stringify(c.body)).toBe(201);
+    expect(c.body.mode).toBe('COUNT');
+    expect(c.body.status).toBe('RECOUNT');
+    expect((await sql<{ q: bigint }>(`SELECT qty AS q FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${other.code}'`))[0]!.q).toBe(30n);
+    const line = await sql<{ counted_qty: bigint; variance: bigint; status: string }>(`SELECT counted_qty, variance, status FROM count_lines WHERE count_task_id = '${c.body.task_id}'`);
+    expect(line[0]).toMatchObject({ counted_qty: 28n, variance: -2n, status: 'RECOUNT' });
+  });
 });

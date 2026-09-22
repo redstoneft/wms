@@ -13,6 +13,7 @@ const KINDS: { kind: SelfTaskKind; label: string; icon: string; ask: string; hin
   { kind: 'PICK', label: 'Surtir un pedido', icon: '☑', ask: 'ESCANEA O ESCRIBE EL NÚMERO DE PEDIDO', hint: 'Se asigna inventario y la tarea queda a tu nombre' },
   { kind: 'COUNT', label: 'Contar una ubicación', icon: '#', ask: 'ESCANEA LA ETIQUETA DE LA UBICACIÓN', hint: 'Conteo a ciegas de ese hueco' },
   { kind: 'PUTAWAY', label: 'Ubicar una tarima', icon: '⇲', ask: 'ESCANEA EL LPN DE LA TARIMA', hint: 'Para una tarima que quedó sin tarea de acomodo' },
+  { kind: 'RECEIPT', label: 'Recibir mercancía (nueva recepción)', icon: '⇩', ask: 'ESCANEA EL ANDÉN DE RECIBO', hint: 'Abre una recepción a tu nombre y te lleva a Recibir' },
 ];
 
 export default function WmNewTaskPage() {
@@ -65,7 +66,7 @@ function Flow() {
     setBusy(true);
     try {
       const r = await wmTasksApi.create({ kind, reference, purpose: purpose.trim(), ...(kind === 'PICK' && orderExists === false ? { new_order: { customer_code: customerCode, destination: destination.trim() || undefined } } : {}) });
-      wm.ok(kind === 'PICK' ? (r.mode === 'FREE' ? `PEDIDO ${r.order_number ?? ''} CREADO · SURTIDO LIBRE: ESCANEA TARIMAS` : `TAREA DE SURTIDO CREADA · ${r.order_number ?? ''} · CARRIL ${r.staging ?? ''}`) : kind === 'COUNT' ? 'CONTEO CREADO' : `TAREA DE ACOMODO CREADA · ${r.lpn ?? ''}`);
+      wm.ok(kind === 'RECEIPT' ? `RECEPCIÓN ${r.receipt_number ?? ''} ABIERTA EN ${r.dock ?? ''}` : kind === 'PICK' ? (r.mode === 'FREE' ? `PEDIDO ${r.order_number ?? ''} CREADO · SURTIDO LIBRE: ESCANEA TARIMAS` : `TAREA DE SURTIDO CREADA · ${r.order_number ?? ''} · CARRIL ${r.staging ?? ''}`) : kind === 'COUNT' ? 'CONTEO CREADO' : `TAREA DE ACOMODO CREADA · ${r.lpn ?? ''}`);
       nav(r.next);
     } catch (e) {
       wm.fail(e);
@@ -78,6 +79,11 @@ function Flow() {
     return (
       <div className="grid gap-3">
         <StepBar text="1 · ¿QUÉ TAREA VAS A HACER?" />
+        <BigButton tone="neutral" onClick={() => nav('/wm/recount')} testId="new-task-recount">
+          <span className="mr-2 text-2xl">⟲</span>
+          Re-recibir una tarima (recontar su contenido)
+          <span className="block text-sm font-normal normal-case text-slate-300">Para tarimas revueltas o mal capturadas: escaneas lo que trae de verdad</span>
+        </BigButton>
         {KINDS.map((k) => (
           <BigButton key={k.kind} tone="neutral" onClick={() => setKind(k.kind)} testId={`new-task-${k.kind.toLowerCase()}`}>
             <span className="mr-2 text-2xl">{k.icon}</span>
@@ -93,7 +99,7 @@ function Flow() {
         <StepBar text={`2 · ${def!.ask}`} />
         <BigValue label="Tarea" value={def!.label} tone="accent" />
         <div className="mt-3">
-          <ScanInput label={kind === 'PICK' ? 'Número de pedido (existente o nuevo)' : kind === 'COUNT' ? 'Ubicación' : 'LPN'} autoUpper onScan={(v) => (kind === 'PICK' ? void onReference(v) : (setReference(v), wm.ok()))} disabled={busy} testId="new-task-ref" />
+          <ScanInput label={kind === 'PICK' ? 'Número de pedido (existente o nuevo)' : kind === 'COUNT' ? 'Ubicación' : kind === 'RECEIPT' ? 'Andén (LOC-HID-DOCK-…)' : 'LPN'} autoUpper onScan={(v) => (kind === 'PICK' ? void onReference(v) : (setReference(v), wm.ok()))} disabled={busy} testId="new-task-ref" />
         </div>
         <BigButton tone="neutral" className="mt-3" onClick={() => setKind(null)}>
           Regresar
@@ -129,7 +135,7 @@ function Flow() {
       <StepBar text={kind === 'PICK' && orderExists === false ? '4 · ¿PARA QUÉ? (OBLIGATORIO)' : '3 · ¿PARA QUÉ? (OBLIGATORIO)'} />
       <div className="grid gap-2 sm:grid-cols-2">
         <BigValue label="Tarea" value={def!.label} tone="accent" />
-        <BigValue label={kind === 'PICK' ? 'Pedido' : kind === 'COUNT' ? 'Ubicación' : 'LPN'} value={reference} />
+        <BigValue label={kind === 'PICK' ? 'Pedido' : kind === 'COUNT' ? 'Ubicación' : kind === 'RECEIPT' ? 'Andén' : 'LPN'} value={reference} />
       </div>
       {kind === 'PICK' && orderExists === false && (
         <div className="mt-2 grid gap-2">

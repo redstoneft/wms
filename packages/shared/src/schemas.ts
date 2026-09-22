@@ -330,10 +330,10 @@ export const zAssemblyComplete = z.object({
 });
 
 // ---- tasks an operator creates for themself from the handheld ----
-export const SELF_TASK_KINDS = ['PICK', 'COUNT', 'PUTAWAY'] as const;
+export const SELF_TASK_KINDS = ['PICK', 'COUNT', 'PUTAWAY', 'RECEIPT'] as const;
 export const zSelfTask = z.object({
   kind: z.enum(SELF_TASK_KINDS),
-  /** PICK: order number · COUNT: location barcode/code · PUTAWAY: LPN code */
+  /** PICK: order number · COUNT: location barcode/code · PUTAWAY: LPN code · RECEIPT: dock (receiving location) barcode/code */
   reference: z.string().trim().min(1).max(64),
   /** "para qué": mandatory, audited */
   purpose: z.string().trim().min(5).max(300),
@@ -362,6 +362,14 @@ export const zHandheldOrder = z.object({
   start_now: z.boolean().default(false),
 });
 export type HandheldOrderInput = z.infer<typeof zHandheldOrder>;
+
+/** Re-receive a pallet: what it REALLY holds, product by product (mixed pallets, wrong initial capture). */
+export const zLpnRecount = z.object({
+  lpn_code: z.string().trim().min(1).max(30),
+  purpose: z.string().trim().min(5).max(300),
+  lines: z.array(z.object({ sku_code: z.string().trim().min(1).max(64), qty: zQtyOrZero, uom_code: zUom.default('PIECE') })).max(200),
+});
+export type LpnRecountInput = z.infer<typeof zLpnRecount>;
 
 /** Free picking: add a whole pallet (no qty) or part of a single-SKU pallet to the order being built. */
 export const zFreePickScan = z.object({

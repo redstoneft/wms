@@ -46,6 +46,7 @@ const WmAssemblyPage = lazy(() => import('./wm/WmAssemblyPage'));
 const WmNewTaskPage = lazy(() => import('./wm/WmNewTaskPage'));
 const WmLookupPage = lazy(() => import('./wm/WmLookupPage'));
 const WmNewOrderPage = lazy(() => import('./wm/WmNewOrderPage'));
+const WmRecountPage = lazy(() => import('./wm/WmRecountPage'));
 const WmTrainingPage = lazy(() => import('./wm/WmTrainingPage'));
 const WmReplenishPage = lazy(() => import('./wm/WmReplenishPage'));
 const WmCountPage = lazy(() => import('./wm/WmCountPage'));
@@ -169,6 +170,7 @@ export default function App() {
         <Route path="/wm/new-task" element={<Wm perms={['tasks.self_create']}><WmNewTaskPage /></Wm>} />
         <Route path="/wm/lookup" element={<Wm perms={['inventory.read']}><WmLookupPage /></Wm>} />
         <Route path="/wm/new-order" element={<Wm perms={['tasks.self_create']}><WmNewOrderPage /></Wm>} />
+        <Route path="/wm/recount" element={<Wm perms={['tasks.self_create']}><WmRecountPage /></Wm>} />
         <Route path="/wm/training" element={<Wm perms={[]}><WmTrainingPage /></Wm>} />
         <Route path="/wm/replenish" element={<Wm perms={['replenishment.execute']}><WmReplenishPage /></Wm>} />
         <Route path="/wm/count" element={<Wm perms={['counts.execute']}><WmCountPage /></Wm>} />
