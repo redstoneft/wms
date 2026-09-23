@@ -57,6 +57,16 @@ export async function pickingRoutes(app: FastifyInstance) {
     const body = z.object({ reason: zReason }).parse(req.body);
     return withTx((tx) => svc.cancelFreeTask(tx, req.actor!, id, body.reason));
   });
+  /** Choosing the pallet: other pallets holding the line's product, and moving the line to one of them. */
+  app.get('/picking/tasks/:id/lines/:lineId/candidates', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const { id, lineId } = req.params as { id: string; lineId: string };
+    return withTx((tx) => svc.pickLineCandidates(tx, zUuid.parse(id), zUuid.parse(lineId)));
+  });
+  app.post('/picking/tasks/:id/lines/:lineId/relocate', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const { id, lineId } = req.params as { id: string; lineId: string };
+    const body = z.object({ lpn_code: z.string().trim().min(1).max(30) }).parse(req.body);
+    return withTx((tx) => svc.relocatePickLine(tx, req.actor!, { pick_task_id: zUuid.parse(id), line_id: zUuid.parse(lineId), lpn_code: body.lpn_code }));
+  });
   app.post('/picking/tasks/:id/close', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
     return withTx((tx) => svc.closeFreeTask(tx, req.actor!, id));

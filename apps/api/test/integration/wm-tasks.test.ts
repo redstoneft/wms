@@ -278,4 +278,36 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const line = await sql<{ counted_qty: bigint; variance: bigint; status: string }>(`SELECT counted_qty, variance, status FROM count_lines WHERE count_task_id = '${c.body.task_id}'`);
     expect(line[0]).toMatchObject({ counted_qty: 28n, variance: -2n, status: 'RECOUNT' });
   });
+
+  it('choosing the pallet: the picker sees the other pallets holding the product and moves the line to one of them', async () => {
+    const p1 = await storedPallet(f, 0, f.reserve[13]!.id, 10n);
+    const p2 = await storedPallet(f, 0, f.reserve[14]!.id, 40n);
+    const number = `PED-CHOOSE-${f.tag}`;
+    const o = await sup.post('/orders', { order_number: number, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 10 }] });
+    expect(o.status).toBe(201);
+    const t = await picker.post('/wm/tasks', { kind: 'PICK', reference: number, purpose: 'elegir tarima' });
+    expect(t.status, JSON.stringify(t.body)).toBe(201);
+    const v = await picker.post(`/picking/tasks/${t.body.id}/start`);
+    const line = v.body.lines[0];
+    const allocated: string = line.lpn_code; // whichever pallet of the product the strategy chose (other tests left stock too)
+    const other = allocated === p1.code ? p2 : p1;
+    const cand = await picker.get(`/picking/tasks/${t.body.id}/lines/${line.id}/candidates`);
+    expect(cand.status).toBe(200);
+    expect(cand.body.candidates.map((c: { lpn_code: string }) => c.lpn_code)).toContain(other.code);
+    expect(cand.body.candidates.map((c: { lpn_code: string }) => c.lpn_code)).not.toContain(allocated);
+    const beforeAlloc = (await sql<{ q: bigint | null }>(`SELECT COALESCE(sum(b.qty),0)::bigint AS q FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${allocated}' AND b.status = 'ALLOCATED'`))[0]!.q ?? 0n;
+    const r = await picker.post(`/picking/tasks/${t.body.id}/lines/${line.id}/relocate`, { lpn_code: other.code });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const moved = r.body.lines.find((l: { id: string }) => l.id === line.id);
+    expect(moved.lpn_code).toBe(other.code);
+    expect(moved.scan_step).toBe(0);
+    const bal = await sql<{ code: string; status: string; qty: bigint }>(`SELECT l.code, b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code IN ('${allocated}','${other.code}') AND b.qty > 0 ORDER BY l.code, b.status`);
+    const byLpn = Object.fromEntries(bal.map((b) => [`${b.code}:${b.status}`, b.qty]));
+    expect((byLpn[`${allocated}:ALLOCATED`] ?? 0n) as bigint).toBe(beforeAlloc - 10n); // released on the original pallet
+    expect(byLpn[`${other.code}:ALLOCATED`]).toBe(10n);
+    // the pick continues at the new pallet's location
+    const loc = await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: line.id, step: 'LOCATION', scanned: moved.location_barcode }, idem());
+    expect(loc.status, JSON.stringify(loc.body)).toBe(200);
+    await expectReconciled();
+  });
 });

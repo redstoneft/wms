@@ -41,6 +41,38 @@ function Flow() {
   const view = useQuery({ queryKey: ['pick-task', taskId], queryFn: () => pickingApi.task(taskId!), enabled: !!taskId });
   const [busy, setBusy] = useState(false);
   const [completed, setCompleted] = useState<PickTaskView | null>(null);
+  // choosing the pallet: other pallets that hold the line's product
+  const [chooser, setChooser] = useState<{ lineId: string; remaining: string; candidates: { lpn_code: string; location: string; available: string; enough: boolean; mixed: boolean }[]; selected: string } | null>(null);
+  const openChooser = async (line: PickLine) => {
+    if (!taskId) return;
+    setBusy(true);
+    try {
+      const r = await pickingApi.candidates(taskId, line.id);
+      if (!r.candidates.length) {
+        wm.warn('NO HAY OTRA TARIMA CON ESTE PRODUCTO');
+        return;
+      }
+      setChooser({ lineId: line.id, remaining: r.remaining, candidates: r.candidates, selected: r.candidates.find((c) => c.enough)?.lpn_code ?? r.candidates[0]!.lpn_code });
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const relocate = async () => {
+    if (!taskId || !chooser) return;
+    setBusy(true);
+    try {
+      const v = await pickingApi.relocate(taskId, chooser.lineId, chooser.selected);
+      qc.setQueryData(['pick-task', taskId], v);
+      wm.ok(`LÍNEA CAMBIADA A ${chooser.selected}`);
+      setChooser(null);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const start = async (id: string) => {
     setBusy(true);
@@ -201,8 +233,33 @@ function Flow() {
           Necesario {fmtUom(line.qty, line.uoms)} · surtido {fmtQty(line.picked_qty)} {line.full_pallet && <span className="ml-2 rounded bg-violet-600 px-2 text-xs font-bold text-white">PALLET COMPLETO</span>}
         </div>
       </div>
+      {chooser && chooser.lineId === line.id && (
+        <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="pallet-chooser">
+          <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Elige la tarima para {fmtQty(chooser.remaining)} pzas de {line.sku_code}</div>
+          <select value={chooser.selected} onChange={(e) => setChooser({ ...chooser, selected: e.target.value })} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="pallet-select">
+            {chooser.candidates.map((c) => (
+              <option key={c.lpn_code} value={c.lpn_code}>
+                {c.lpn_code} · {c.location} · {fmtQty(c.available)} pzas{c.enough ? '' : ' (no alcanza)'}{c.mixed ? ' · mixta' : ''}
+              </option>
+            ))}
+          </select>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <BigButton tone="neutral" onClick={() => setChooser(null)}>
+              Cancelar
+            </BigButton>
+            <BigButton tone="success" onClick={relocate} disabled={busy || !chooser.candidates.find((c) => c.lpn_code === chooser.selected)?.enough} testId="pallet-relocate">
+              Usar esta tarima
+            </BigButton>
+          </div>
+        </div>
+      )}
       <div className="mt-3">
-        {stepNo === 0 && <ScanInput label="Escanea la ubicación" onScan={(s) => scan(line, 'LOCATION', s)} disabled={busy} testId="scan-location" />}
+        {stepNo === 0 && !chooser && <ScanInput label="Escanea la ubicación" onScan={(s) => scan(line, 'LOCATION', s)} disabled={busy} testId="scan-location" />}
+        {stepNo === 0 && !chooser && toBigInt(line.picked_qty) === 0n && (
+          <button type="button" className="mt-2 w-full rounded-2xl border-2 border-violet-500 py-3 text-sm font-bold text-violet-300" onClick={() => void openChooser(line)} disabled={busy} data-testid="pallet-change">
+            Tomar de otra tarima (elegir de la lista)
+          </button>
+        )}
         {stepNo === 1 && <ScanInput label="Escanea el LPN o el código del producto" onScan={(s) => scan(line, 'LPN', s)} disabled={busy} testId="scan-lpn" />}
         {stepNo === 2 && (
           <QtyPad

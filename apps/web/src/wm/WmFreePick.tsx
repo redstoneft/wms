@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { UomCode } from '@wms/shared';
 import { api } from '../api/client';
 import { inventoryApi } from '../api/inventory';
+import { masterdataApi } from '../api/masterdata';
 import { pickingApi } from '../api/orders';
 import type { PickTaskView } from '../api/types';
 import { QtyPad } from '../components/QtyPad';
@@ -25,6 +26,7 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed, onCancelled }: 
   const [undoId, setUndoId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [reason, setReason] = useState('');
+  const [bySku, setBySku] = useState<{ sku: string; description: string; options: { code: string; location: string; available: string }[]; selected: string } | null>(null);
   const picked = view.lines.filter((l) => l.status === 'PICKED');
   const totalPieces = picked.reduce((a, l) => a + Number(l.picked_qty), 0);
 
@@ -37,6 +39,25 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed, onCancelled }: 
       setPallet({ code: d.code, location: d.current_location?.code ?? '', contents });
       setQtyMode(false);
       wm.ok(`${d.code} · ${contents.length === 1 ? `${fmtQty(contents[0]!.qty)} pzas de ${contents[0]!.sku_code}` : `${contents.length} productos`}`);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  /** type or scan a product: list the stored pallets that hold it and let the picker choose one */
+  const onProduct = async (code: string) => {
+    setBusy(true);
+    try {
+      const r = await masterdataApi.skuByBarcode(code);
+      const rows = await inventoryApi.lpns({ sku: r.sku.code, status: 'STORED', limit: 100 });
+      const options = rows
+        .map((l) => ({ code: l.code, location: l.location_code ?? '', available: String((l.contents ?? []).filter((c) => c.sku_code === r.sku.code && c.status === 'AVAILABLE').reduce((a, c) => a + Number(c.qty), 0)) }))
+        .filter((o) => Number(o.available) > 0)
+        .sort((a, b) => a.location.localeCompare(b.location));
+      if (!options.length) throw new Error(`No hay tarimas disponibles con ${r.sku.code}`);
+      setBySku({ sku: r.sku.code, description: r.sku.description, options, selected: options[0]!.code });
+      wm.ok(`${options.length} TARIMA(S) CON ${r.sku.code}`);
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -122,6 +143,30 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed, onCancelled }: 
       {!pallet && (
         <>
           <ScanInput label="LPN de la tarima" autoUpper onScan={onScan} disabled={busy} testId="free-scan-lpn" />
+          {bySku ? (
+            <div className="mt-2 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="free-pallet-chooser">
+              <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Tarimas con {bySku.sku} · {bySku.description}</div>
+              <select value={bySku.selected} onChange={(e) => setBySku({ ...bySku, selected: e.target.value })} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="free-pallet-select">
+                {bySku.options.map((o) => (
+                  <option key={o.code} value={o.code}>
+                    {o.code} · {o.location} · {fmtQty(o.available)} pzas
+                  </option>
+                ))}
+              </select>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <BigButton tone="neutral" onClick={() => setBySku(null)}>
+                  Cancelar
+                </BigButton>
+                <BigButton tone="success" onClick={() => { const c = bySku.selected; setBySku(null); void onScan(c); }} disabled={busy} testId="free-pallet-use">
+                  Usar esta tarima
+                </BigButton>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2">
+              <ScanInput label="…o busca tarimas por producto (escanea la caja o escribe la clave)" onScan={onProduct} disabled={busy} testId="free-scan-sku" />
+            </div>
+          )}
           {picked.length > 0 && (
             <ul className="mt-3 grid gap-1 font-mono text-base" data-testid="free-picked-list">
               {picked.map((l) => (

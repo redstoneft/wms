@@ -96,6 +96,12 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 `Almacén → Nueva tarea` permite empezar trabajo sin esperar a que el supervisor lo asigne: **recibir mercancía** (abre una recepción en el andén que escanee), **surtir un pedido** (escanee o escriba el número; si el pedido ya existe el sistema asigna inventario y la tarea queda a su nombre; si **no existe**, elija el cliente y el pedido se crea ahí mismo en **surtido libre**), **contar una ubicación** (conteo a ciegas de ese hueco) o **ubicar una tarima** que quedó sin tarea de acomodo. Siempre pide **para qué** se hace (mínimo 5 letras): queda en la tarea y en la auditoría con su usuario. Solo puede crear tareas del tipo que su rol ejecuta.
 
+## ELEGIR LA TARIMA AL SURTIR
+
+En una línea de surtido, antes de escanear la ubicación, el botón **Tomar de otra tarima** muestra una lista con las demás tarimas que tienen ese producto (LPN, ubicación, piezas disponibles). Al elegir una, la línea se reasigna a esa tarima y el surtido sigue en su ubicación; la tarima original vuelve a quedar disponible. Solo aplica a líneas que aún no tienen piezas surtidas.
+
+En **surtido libre**, además de escanear un LPN, se puede escanear o escribir el **producto**: aparece la lista de tarimas que lo tienen para elegir una.
+
 ## SURTIDO COMPARTIDO (varias personas en el mismo pedido)
 
 En `Surtir` todos los surtidores ven todos los pedidos abiertos, con el nombre de quien lo empezó. Cualquiera puede entrar al mismo pedido: cada línea (o tarima, en surtido libre) queda a nombre de quien la escanea y el sistema no deja que dos personas trabajen la misma línea; el handheld le propone a cada uno la siguiente línea libre. El pedido se cierra cuando todas las líneas están surtidas (o, en surtido libre, cuando alguien lo cierra). Si no hay carril de staging libre, el surtido sigue igual: el carril se asigna cuando se libera uno o, si no, el carril donde llegue la primera tarima queda como carril del pedido (un carril ocupado por otro pedido se rechaza).
