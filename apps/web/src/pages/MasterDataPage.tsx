@@ -268,7 +268,7 @@ function Printers() {
           </li>
           <li>Descarga los dos archivos de abajo en una carpeta, por ejemplo <span className="font-mono">C:\wms-print</span>. El <span className="font-mono">.bat</span> ya trae este token.</li>
           <li>
-            Doble clic en <span className="font-mono">run_agent.bat</span>. Debe decir "Impresora WMS: {token?.printer}" y la impresora de Windows con su puerto USB. Desde ese momento todo lo que imprimas aquí sale en la Zebra, y esta pantalla marca la estación como conectada. Si dice "impresa" pero no sale nada: usa <span className="font-mono">prueba_impresora.bat</span>, revisa que la cola de Windows no esté en pausa ni "sin conexión", y que sea la Zebra correcta (si hay varias, fija el nombre en run_agent.bat).
+            Doble clic en <span className="font-mono">run_agent.bat</span>. Debe decir "Impresora WMS: {token?.printer}" y la impresora de Windows con su puerto USB. Desde ese momento todo lo que imprimas aquí sale en la Zebra, y esta pantalla marca la estación como conectada. Si dice "impresa" pero no sale nada: usa <span className="font-mono">prueba_impresora.bat</span>, revisa que la cola de Windows no esté en pausa ni "sin conexión", y que sea la Zebra correcta (si hay varias, fija el nombre en run_agent.bat). Si Windows marca la impresora en "Error", guarda <span className="font-mono">reparar_impresora.bat</span> en la misma carpeta y ejecútalo: pide permisos de administrador, revisa el USB, limpia la cola, crea la impresora "ZEBRA" con driver genérico, imprime una prueba y deja run_agent.bat listo.
           </li>
           <li>Para que arranque sola: acceso directo del .bat en la carpeta Inicio de Windows (Win+R → shell:startup).</li>
         </ol>
@@ -278,6 +278,9 @@ function Printers() {
           </a>
           <a className="rounded-md bg-slate-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ncd /d %~dp0\r\ncall run_agent.bat prueba\r\n`], { type: 'application/octet-stream' }))} download="prueba_impresora.bat">
             Descargar prueba_impresora.bat (imprime una etiqueta de prueba)
+          </a>
+          <a className="rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Reparar impresora Zebra - WMS\r\ncd /d %~dp0\r\nnet session >nul 2>nul || (echo Pidiendo permisos de administrador... & powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" & exit /b)\r\necho Descargando la herramienta de reparacion...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing '${window.location.origin}/print-agent/reparar_impresora.ps1' -OutFile '%~dp0reparar_impresora.ps1'"\r\nif not exist "%~dp0reparar_impresora.ps1" (echo No se pudo descargar. Revisa el internet de esta PC. & pause & exit /b 1)\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0reparar_impresora.ps1"\r\necho.\r\npause\r\n`], { type: 'application/octet-stream' }))} download="reparar_impresora.bat">
+            Descargar reparar_impresora.bat (si Windows marca la Zebra en "Error")
           </a>
           <a className="rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white" href="/print-agent/wms_print_agent.py" download="wms_print_agent.py">
             Descargar wms_print_agent.py

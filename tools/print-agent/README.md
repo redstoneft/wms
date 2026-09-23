@@ -15,3 +15,14 @@ El WMS muestra en Impresoras la última vez que la estación se conectó y desde
 2. En la ventana de la estación revisa la línea "Impresora Windows: … (puerto USBxxx)". Si hay varias Zebra instaladas, fija la correcta en `run_agent.bat` (`set WMS_WINDOWS_PRINTER=...`).
 3. En Windows abre la impresora → "Ver lo que se está imprimiendo" → menú Impresora: deben estar desmarcados "Pausar impresión" y "Usar impresora sin conexión". La estación avisa si detecta cualquiera de los dos.
 4. La estación manda al arrancar el comando que deja la Zebra en modo ZPL; si estaba en modo EPL, ignoraba las etiquetas sin marcar error.
+
+## Si Windows marca la impresora en "Error" (trabajos atorados, ni la página de prueba sale)
+
+Descarga `reparar_impresora.bat` desde Datos maestros → Impresoras → Generar token, guárdalo en la carpeta `wms-print` junto a `run_agent.bat` y ejecútalo (pide permisos de administrador). Descarga `reparar_impresora.ps1` del WMS y:
+
+1. Lista los dispositivos USB de la Zebra y reinicia los que tengan error.
+2. Detecta el puerto USB00x real de la Zebra (registro USBPRINT).
+3. Reinicia la cola de impresión y borra los trabajos atorados.
+4. Crea la impresora `ZEBRA` con el driver "Generic / Text Only" en ese puerto (manda el ZPL tal cual).
+5. Imprime una etiqueta de prueba y avisa si se queda atorada (entonces es cable o puerto USB).
+6. Deja `run_agent.bat` con `set WMS_WINDOWS_PRINTER=ZEBRA`.
