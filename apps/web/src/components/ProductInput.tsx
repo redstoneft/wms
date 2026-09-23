@@ -21,7 +21,7 @@ export function ProductInput({ label, onPick, disabled, testId = 'product-input'
   useEffect(() => {
     if (timer.current) window.clearTimeout(timer.current);
     const term = q.trim();
-    if (term.length < 2) {
+    if (term.length < 1) {
       setHits([]);
       setSearching(false);
       return;
@@ -53,10 +53,11 @@ export function ProductInput({ label, onPick, disabled, testId = 'product-input'
   return (
     <div>
       <ScanInput label={label} placeholder="Escanea o escribe…" onScan={pick} onType={setQ} disabled={disabled} testId={testId} />
-      {q.trim().length >= 2 && (
+      {q.trim().length === 0 && <div className="mt-1 px-2 text-xs text-slate-400">Al escribir aparece la lista de productos; toca uno para elegirlo.</div>}
+      {q.trim().length >= 1 && (
         <div className="mt-1 grid gap-1" data-testid={`${testId}-hits`}>
           {searching && hits.length === 0 && <div className="px-2 text-sm text-slate-400">Buscando…</div>}
-          {!searching && hits.length === 0 && <div className="px-2 text-sm text-slate-400">Sin coincidencias · escanea la caja o escribe más letras</div>}
+          {!searching && hits.length === 0 && <div className="px-2 text-sm text-slate-400">Sin coincidencias · escribe otra letra o escanea la caja</div>}
           {hits.map((s) => (
             <button key={s.id} type="button" className="rounded-xl bg-slate-800 px-3 py-3 text-left active:bg-slate-700" onClick={() => void pick(s.code)} disabled={disabled} data-testid={`${testId}-hit-${s.code}`}>
               <span className="font-mono text-lg font-bold text-white">{s.code}</span>
