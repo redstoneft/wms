@@ -145,3 +145,7 @@ Cualquier operador puede **reportar** (`Incidencias → Nueva`): tipo (faltante,
 * Tapar o despegar etiquetas de LPN; si se daña, pida **reimpresión** (queda registrada).
 * Usar la cuenta de otro compañero: cada movimiento queda a nombre de quien está conectado.
 * Teclear códigos a mano cuando se puede escanear.
+
+### Impresora Zebra por USB desde el navegador
+
+Si la PC de la Zebra usa otra app de etiquetas por WebUSB (driver WinUSB), la estación del WMS se abre en Chrome/Edge en esa PC: menú Catálogos → **Estación USB** → Elegir la Zebra → Iniciar estación, y se deja la pestaña abierta. Detalle en `docs/ZEBRA_SETUP.md`.

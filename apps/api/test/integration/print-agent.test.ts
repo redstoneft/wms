@@ -77,4 +77,26 @@ describe('USB print station (print agent)', () => {
     const row = await sql<{ status: string; error: string | null }>(`SELECT status, error FROM label_prints WHERE id = '${id}'`);
     expect(row[0]).toEqual({ status: 'FAILED', error: 'Zebra sin papel' });
   });
+
+  it('WebUSB station: a logged-in browser tab claims the queued labels of the printer with its session and reports them', async () => {
+    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'estación webusb' });
+    expect(p.status).toBe(200);
+    const ping = await sup.get(`/printers/${printerId}/station/ping`);
+    expect(ping.status, JSON.stringify(ping.body)).toBe(200);
+    expect(ping.body.queued).toBeGreaterThanOrEqual(1);
+    const jobs = await sup.get(`/printers/${printerId}/station/jobs?limit=5`);
+    expect(jobs.status).toBe(200);
+    const job = jobs.body.jobs.find((j: { is_reprint: boolean }) => j.is_reprint);
+    expect(job.zpl).toContain('^XA');
+    expect((await sup.get(`/printers/${printerId}/station/jobs`)).body.jobs).toHaveLength(0); // claimed
+    const res = await sup.post(`/printers/${printerId}/station/jobs/${job.id}/result`, { ok: true });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('SENT');
+    const pr = await sup.get('/printers');
+    const mine = pr.body.find((x: { id: string }) => x.id === printerId);
+    expect(mine.agent_host).toMatch(/^WebUSB · agentsup/);
+    // a user without labels.print cannot act as a station
+    const nobody = await userWithRoles('agentviewer', ['VIEWER']);
+    expect((await nobody.get(`/printers/${printerId}/station/jobs`)).status).toBe(403);
+  });
 });

@@ -14,41 +14,66 @@ async function printerFor(req: FastifyRequest) {
   if (typeof token !== 'string' || token.length < 20) throw new UnauthorizedError('Missing X-Agent-Token');
   const p = await getDb().printers.findFirst({ where: { agent_token_hash: sha256(token), mode: 'AGENT', is_active: true } });
   if (!p) throw new UnauthorizedError('Invalid agent token');
-  const host = typeof req.headers['x-agent-host'] === 'string' ? req.headers['x-agent-host'].slice(0, 120) : null;
-  await getDb().printers.update({ where: { id: p.id }, data: { agent_last_seen_at: new Date(), ...(host ? { agent_host: host } : {}) } });
+  await touch(p.id, typeof req.headers['x-agent-host'] === 'string' ? req.headers['x-agent-host'] : null);
   return p;
 }
 
+/** Marks the printer as seen by a station (python agent or WebUSB browser station). */
+async function touch(printerId: string, host: string | null) {
+  await getDb().printers.update({ where: { id: printerId }, data: { agent_last_seen_at: new Date(), ...(host ? { agent_host: host.slice(0, 120) } : {}) } });
+}
+
+async function pingInfo(p: { id: string; code: string; name: string; dpi: number; label_width_mm: number; label_height_mm: number }) {
+  const queued = await getDb().label_prints.count({ where: { printer_id: p.id, status: 'QUEUED' } });
+  return { printer: p.code, name: p.name, dpi: p.dpi, label_width_mm: p.label_width_mm, label_height_mm: p.label_height_mm, queued };
+}
+
+/** Claims up to `limit` queued labels (oldest first). Claimed = PRINTING; unreported claims expire back to QUEUED. */
+async function claimJobs(p: { id: string; code: string }, limit: number) {
+  return withTx(async (tx) => {
+    await tx.label_prints.updateMany({ where: { printer_id: p.id, status: 'PRINTING', claimed_at: { lt: new Date(Date.now() - STALE_CLAIM_MS) } }, data: { status: 'QUEUED', claimed_at: null } });
+    const rows = await tx.$queryRaw<{ id: string; label_type: string; entity_id: string; zpl: string; is_reprint: boolean; created_at: Date }[]>`
+      SELECT id, label_type, entity_id, zpl, is_reprint, created_at FROM label_prints
+       WHERE printer_id = ${p.id}::uuid AND status = 'QUEUED' ORDER BY created_at LIMIT ${limit} FOR UPDATE SKIP LOCKED`;
+    if (rows.length) await tx.label_prints.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { status: 'PRINTING', claimed_at: new Date() } });
+    return { printer: p.code, jobs: rows.map((r) => ({ id: r.id, label_type: r.label_type, entity: r.entity_id, zpl: r.zpl, is_reprint: r.is_reprint, created_at: r.created_at })) };
+  });
+}
+
+async function reportJob(printerId: string, id: string, body: { ok: boolean; error?: string }) {
+  const job = await getDb().label_prints.findFirst({ where: { id, printer_id: printerId } });
+  if (!job) throw new NotFoundError('print job', id);
+  if (job.status === 'SENT') return { id, status: 'SENT' };
+  const status = body.ok ? 'SENT' : 'FAILED';
+  await getDb().label_prints.update({ where: { id }, data: { status, error: body.ok ? null : (body.error ?? 'agent error').slice(0, 500), sent_at: body.ok ? new Date() : null } });
+  return { id, status };
+}
+
+const zLimit = z.object({ limit: z.coerce.number().int().min(1).max(20).default(5) });
+const zResult = z.object({ ok: z.boolean(), error: z.string().trim().max(500).optional() });
+
 export async function printAgentRoutes(app: FastifyInstance) {
-  app.get('/print-agent/ping', async (req) => {
-    const p = await printerFor(req);
-    const queued = await getDb().label_prints.count({ where: { printer_id: p.id, status: 'QUEUED' } });
-    return { printer: p.code, name: p.name, dpi: p.dpi, label_width_mm: p.label_width_mm, label_height_mm: p.label_height_mm, queued };
-  });
-
-  /** Claims up to `limit` queued labels (oldest first). Claimed = PRINTING; unreported claims expire back to QUEUED. */
-  app.get('/print-agent/jobs', async (req) => {
-    const p = await printerFor(req);
-    const q = z.object({ limit: z.coerce.number().int().min(1).max(20).default(5) }).parse(req.query);
-    return withTx(async (tx) => {
-      await tx.label_prints.updateMany({ where: { printer_id: p.id, status: 'PRINTING', claimed_at: { lt: new Date(Date.now() - STALE_CLAIM_MS) } }, data: { status: 'QUEUED', claimed_at: null } });
-      const rows = await tx.$queryRaw<{ id: string; label_type: string; entity_id: string; zpl: string; is_reprint: boolean; created_at: Date }[]>`
-        SELECT id, label_type, entity_id, zpl, is_reprint, created_at FROM label_prints
-         WHERE printer_id = ${p.id}::uuid AND status = 'QUEUED' ORDER BY created_at LIMIT ${q.limit} FOR UPDATE SKIP LOCKED`;
-      if (rows.length) await tx.label_prints.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { status: 'PRINTING', claimed_at: new Date() } });
-      return { printer: p.code, jobs: rows.map((r) => ({ id: r.id, label_type: r.label_type, entity: r.entity_id, zpl: r.zpl, is_reprint: r.is_reprint, created_at: r.created_at })) };
-    });
-  });
-
+  // ---- token-authenticated (python station on the printer PC)
+  app.get('/print-agent/ping', async (req) => pingInfo(await printerFor(req)));
+  app.get('/print-agent/jobs', async (req) => claimJobs(await printerFor(req), zLimit.parse(req.query).limit));
   app.post('/print-agent/jobs/:id/result', async (req) => {
     const p = await printerFor(req);
+    return reportJob(p.id, z.string().uuid().parse((req.params as { id: string }).id), zResult.parse(req.body));
+  });
+
+  // ---- session-authenticated (WebUSB station: a browser tab on the printer PC talks to the Zebra directly)
+  const stationPrinter = async (req: FastifyRequest) => {
     const id = z.string().uuid().parse((req.params as { id: string }).id);
-    const body = z.object({ ok: z.boolean(), error: z.string().trim().max(500).optional() }).parse(req.body);
-    const job = await getDb().label_prints.findFirst({ where: { id, printer_id: p.id } });
-    if (!job) throw new NotFoundError('print job', id);
-    if (job.status === 'SENT') return { id, status: 'SENT' };
-    const status = body.ok ? 'SENT' : 'FAILED';
-    await getDb().label_prints.update({ where: { id }, data: { status, error: body.ok ? null : (body.error ?? 'agent error').slice(0, 500), sent_at: body.ok ? new Date() : null } });
-    return { id, status };
+    const p = await getDb().printers.findFirst({ where: { id, mode: 'AGENT', is_active: true } });
+    if (!p) throw new NotFoundError('printer', id);
+    const host = typeof req.headers['x-agent-host'] === 'string' ? req.headers['x-agent-host'] : `WebUSB · ${req.actor?.username ?? ''}`;
+    await touch(p.id, host);
+    return p;
+  };
+  app.get('/printers/:id/station/ping', { preHandler: app.requirePermission('labels.print') }, async (req) => pingInfo(await stationPrinter(req)));
+  app.get('/printers/:id/station/jobs', { preHandler: app.requirePermission('labels.print') }, async (req) => claimJobs(await stationPrinter(req), zLimit.parse(req.query).limit));
+  app.post('/printers/:id/station/jobs/:jobId/result', { preHandler: app.requirePermission('labels.print') }, async (req) => {
+    const p = await stationPrinter(req);
+    return reportJob(p.id, z.string().uuid().parse((req.params as { jobId: string }).jobId), zResult.parse(req.body));
   });
 }

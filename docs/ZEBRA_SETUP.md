@@ -43,3 +43,13 @@ ZPL con `^CI28` (UTF-8). Caracteres especiales se escapan en hexadecimal (`^FH`)
 
 ## Escáneres
 Los lectores (USB HID o terminales Zebra TC/MC en modo teclado) deben enviar `Enter` tras el código. El campo de escaneo del modo almacén conserva el foco y descarta escaneos idénticos en menos de 400 ms (doble disparo).
+
+## Estación USB en el navegador (WebUSB), sin instalar nada
+
+Cuando la Zebra está conectada por USB a una PC y **otra aplicación de etiquetas usa WebUSB** (driver WinUSB), la cola de impresión de Windows deja de poder imprimirle: los trabajos se quedan en "Error" aunque la impresora esté bien. En ese caso no se usa la estación Python; se usa la estación del navegador:
+
+1. En esa PC, abrir el WMS en **Chrome o Edge** → menú Catálogos → **Estación USB** (o desde Impresoras → Generar token → botón verde).
+2. Elegir la impresora del WMS (modo estación) y presionar **Elegir la Zebra (USB)**; en la ventanita del navegador seleccionar la Zebra y "Conectar". Solo se pide la primera vez.
+3. **Imprimir etiqueta de prueba** para confirmar. Luego **Iniciar estación** y dejar la pestaña abierta (se puede fijar y poner el navegador en "Abrir al iniciar").
+
+La pestaña consulta cada 3 segundos las etiquetas en cola de esa impresora, las escribe directo a la Zebra por USB y las marca como enviadas. En Impresoras la estación aparece como "WebUSB · usuario". La app de etiquetas SAE y esta estación pueden convivir: cada una toma la impresora solo mientras manda una etiqueta.

@@ -29,6 +29,7 @@ const ShipmentDetailPage = lazy(() => import('./pages/shipments/ShipmentDetailPa
 const IncidentsPage = lazy(() => import('./pages/IncidentsPage'));
 const ReturnsPage = lazy(() => import('./pages/ReturnsPage'));
 const LabelsPage = lazy(() => import('./pages/LabelsPage'));
+const PrintStationPage = lazy(() => import('./pages/PrintStationPage'));
 const TimelinePage = lazy(() => import('./pages/TimelinePage'));
 const AccountPage = lazy(() => import('./pages/AccountPage'));
 const UsersPage = lazy(() => import('./pages/admin/UsersPage'));
@@ -152,6 +153,7 @@ export default function App() {
         <Route path="/returns" element={<Office perms={['returns.manage', 'orders.read']}><ReturnsPage /></Office>} />
         <Route path="/returns/:id" element={<Office perms={['returns.manage', 'orders.read']}><ReturnsPage /></Office>} />
         <Route path="/labels" element={<Office perms={['labels.print']}><LabelsPage /></Office>} />
+        <Route path="/print-station" element={<Office perms={['labels.print']}><PrintStationPage /></Office>} />
         <Route path="/timeline" element={<Office perms={['inventory.read', 'lpn.read']}><TimelinePage /></Office>} />
         <Route path="/timeline/:lpn" element={<Office perms={['inventory.read', 'lpn.read']}><TimelinePage /></Office>} />
         <Route path="/account" element={<Office perms={[]}><AccountPage /></Office>} />
