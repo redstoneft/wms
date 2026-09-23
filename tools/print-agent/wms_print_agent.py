@@ -15,8 +15,11 @@ INSTALACION (en la PC con la Zebra):
   4. Para que arranque solo al prender la PC: acceso directo de run_agent.bat en
      la carpeta Inicio (Win+R -> shell:startup).
 
-PRUEBA: en el WMS imprime cualquier etiqueta eligiendo esa impresora; aqui debe salir
-"IMPRESA" y la Zebra debe imprimir en menos de 5 segundos.
+PRUEBA: doble clic en prueba_impresora.bat (o: python wms_print_agent.py --test) imprime una
+etiqueta de prueba sin pasar por el WMS. Luego, en el WMS imprime cualquier etiqueta eligiendo
+esa impresora; aqui debe salir "IMPRESA" y la Zebra debe imprimir en menos de 5 segundos.
+Si Windows dice que imprimio pero no sale nada: la cola esta "sin conexion"/en pausa, es otra
+cola Zebra (mira el puerto USB), o la impresora estaba en modo EPL (la estacion la pone en ZPL).
 """
 import os
 import socket
@@ -78,9 +81,36 @@ def autodetect_zebra():
     return ""
 
 
+def printer_info(printer_name: str):
+    """Puerto y estado de la cola de Windows: detecta 'Usar impresora sin conexion' y colas en pausa."""
+    if os.name != "nt":
+        return {"port": "", "offline": False, "paused": False}
+    import win32print
+    h = win32print.OpenPrinter(printer_name)
+    try:
+        d = win32print.GetPrinter(h, 2)
+    finally:
+        win32print.ClosePrinter(h)
+    status = int(d.get("Status", 0) or 0)
+    attrs = int(d.get("Attributes", 0) or 0)
+    offline = bool(status & 0x80) or bool(attrs & 0x400)   # PRINTER_STATUS_OFFLINE / PRINTER_ATTRIBUTE_WORK_OFFLINE
+    paused = bool(status & 0x1) or bool(status & 0x400)    # PRINTER_STATUS_PAUSED / PRINTER_STATUS_NOT_AVAILABLE
+    return {"port": str(d.get("pPortName", "") or ""), "offline": offline, "paused": paused}
+
+
+def looks_like_zebra(name: str) -> bool:
+    n = name.lower()
+    return any(k in n for k in ("zebra", "zdesigner", "gk420", "zd4", "zt2", "zt4", "gx4", "lp28", "tlp28"))
+
+
+# Comando SGD: lo entiende la Zebra en cualquier modo (EPL o ZPL) y la deja en ZPL, que es lo que manda el WMS.
+FORCE_ZPL = b'! U1 setvar "device.languages" "zpl"\r\n'
+TEST_LABEL = "^XA^CI28^PW812^LL400^LH0,0^FO30,30^A0N,50,50^FDPRUEBA WMS^FS^FO30,100^A0N,32,32^FDSi lees esto, la Zebra imprime ZPL^FS^FO30,160^BY3,3,90^BCN,90,Y,N,N^FDWMS-PRUEBA^FS^XZ"
+
+
 def print_raw(zpl: str, printer_name: str):
     """Manda ZPL crudo a la Zebra. En Windows usa win32print (RAW); en otros sistemas, lp -o raw."""
-    data = zpl.encode("utf-8")
+    data = zpl if isinstance(zpl, bytes) else zpl.encode("utf-8")
     if os.name == "nt":
         import win32print
         h = win32print.OpenPrinter(printer_name, {"DesiredAccess": win32print.PRINTER_ACCESS_USE})
@@ -98,8 +128,11 @@ def print_raw(zpl: str, printer_name: str):
 
 
 # ====== Conversacion con el WMS ======
+AGENT_HOST = socket.gethostname()
+
+
 def headers():
-    return {"X-Agent-Token": TOKEN, "X-Agent-Host": socket.gethostname()[:120], "X-Requested-With": "wms-agent"}
+    return {"X-Agent-Token": TOKEN, "X-Agent-Host": AGENT_HOST[:120], "X-Requested-With": "wms-agent"}
 
 
 def ping():
@@ -135,14 +168,36 @@ def main():
         sys.exit(1)
     if not PRINTER_NAME:
         PRINTER_NAME = autodetect_zebra()
-    if PRINTER_NAME:
-        print(f"  Impresora Windows: {PRINTER_NAME}")
-    else:
+    global AGENT_HOST
+    if not PRINTER_NAME:
         print("  >> No encontre una Zebra instalada. Impresoras disponibles:")
         for p in list_printers():
             print("     -", p)
-        print("  Edita PRINTER_NAME con el nombre exacto y vuelve a ejecutar.")
+        print("  Pon el nombre exacto en run_agent.bat (set WMS_WINDOWS_PRINTER=...) y vuelve a ejecutar.")
         sys.exit(1)
+    others = [p for p in list_printers() if p != PRINTER_NAME and looks_like_zebra(p)]
+    try:
+        info = printer_info(PRINTER_NAME)
+    except Exception as e:  # noqa: BLE001
+        print(f"  >> La impresora '{PRINTER_NAME}' no existe en Windows ({e}). Impresoras: {', '.join(list_printers())}")
+        sys.exit(1)
+    print(f"  Impresora Windows: {PRINTER_NAME}  (puerto {info['port'] or '?'})")
+    if others:
+        print(f"  [aviso] hay otras Zebra instaladas: {', '.join(others)}. Si no imprime, prueba con una de ellas (set WMS_WINDOWS_PRINTER=... en run_agent.bat).")
+    if info["offline"]:
+        print("  >> LA COLA ESTA 'SIN CONEXION': en Windows abre la impresora (Ver lo que se esta imprimiendo) -> menu Impresora -> desmarca 'Usar impresora sin conexion'.")
+    if info["paused"]:
+        print("  >> LA COLA ESTA EN PAUSA: en Windows abre la impresora -> menu Impresora -> desmarca 'Pausar impresion'.")
+    AGENT_HOST = f"{socket.gethostname()} · {PRINTER_NAME} ({info['port'] or '?'})"
+    if looks_like_zebra(PRINTER_NAME):
+        try:
+            print_raw(FORCE_ZPL, PRINTER_NAME)   # deja la Zebra en modo ZPL (si estaba en EPL ignoraba las etiquetas)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [aviso] no se pudo mandar el comando de modo ZPL: {e}")
+    if "--test" in sys.argv:
+        print_raw(TEST_LABEL, PRINTER_NAME)
+        print("  Etiqueta de PRUEBA enviada a la cola de Windows. Si no sale: revisa puerto, cola en pausa/sin conexion, y que sea la Zebra correcta.")
+        sys.exit(0)
     try:
         info = ping()
         print(f"  Impresora WMS: {info['printer']} ({info['name']}) · {info['queued']} en cola")

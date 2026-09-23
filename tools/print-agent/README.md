@@ -8,3 +8,10 @@ Para impresoras Zebra conectadas por USB a una PC (sin red). La PC corre este ag
 4. Arranque automático: acceso directo de `run_agent.bat` en `shell:startup`.
 
 El WMS muestra en Impresoras la última vez que la estación se conectó y desde qué PC. Una etiqueta que la estación no confirma en 2 minutos vuelve a la cola.
+
+## Si dice "impresa" pero no sale nada
+
+1. Doble clic en `prueba_impresora.bat` (se descarga junto con `run_agent.bat`): manda una etiqueta de prueba directo a la cola de Windows.
+2. En la ventana de la estación revisa la línea "Impresora Windows: … (puerto USBxxx)". Si hay varias Zebra instaladas, fija la correcta en `run_agent.bat` (`set WMS_WINDOWS_PRINTER=...`).
+3. En Windows abre la impresora → "Ver lo que se está imprimiendo" → menú Impresora: deben estar desmarcados "Pausar impresión" y "Usar impresora sin conexión". La estación avisa si detecta cualquiera de los dos.
+4. La estación manda al arrancar el comando que deja la Zebra en modo ZPL; si estaba en modo EPL, ignoraba las etiquetas sin marcar error.

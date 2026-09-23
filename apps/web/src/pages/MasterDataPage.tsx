@@ -268,13 +268,16 @@ function Printers() {
           </li>
           <li>Descarga los dos archivos de abajo en una carpeta, por ejemplo <span className="font-mono">C:\wms-print</span>. El <span className="font-mono">.bat</span> ya trae este token.</li>
           <li>
-            Doble clic en <span className="font-mono">run_agent.bat</span>. Debe decir "Impresora WMS: {token?.printer}". Desde ese momento todo lo que imprimas aquí sale en la Zebra, y esta pantalla marca la estación como conectada.
+            Doble clic en <span className="font-mono">run_agent.bat</span>. Debe decir "Impresora WMS: {token?.printer}" y la impresora de Windows con su puerto USB. Desde ese momento todo lo que imprimas aquí sale en la Zebra, y esta pantalla marca la estación como conectada. Si dice "impresa" pero no sale nada: usa <span className="font-mono">prueba_impresora.bat</span>, revisa que la cola de Windows no esté en pausa ni "sin conexión", y que sea la Zebra correcta (si hay varias, fija el nombre en run_agent.bat).
           </li>
           <li>Para que arranque sola: acceso directo del .bat en la carpeta Inicio de Windows (Win+R → shell:startup).</li>
         </ol>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Estacion de impresion WMS - ${token?.printer ?? ''}\r\ncd /d %~dp0\r\nset WMS_URL=${window.location.origin}\r\nset WMS_PRINT_TOKEN=${token?.token ?? ''}\r\npython --version >nul 2>nul || (echo No se encontro Python. Instalalo desde python.org marcando "Add Python to PATH" y vuelve a abrir este archivo. & pause & exit /b 1)\r\npython -m pip install --quiet pywin32 requests\r\n:loop\r\npython wms_print_agent.py\r\necho.\r\necho La estacion se detuvo. Reiniciando en 5 segundos... (cierra esta ventana para salir)\r\ntimeout /t 5 >nul\r\ngoto loop\r\n`], { type: 'application/octet-stream' }))} download="run_agent.bat">
+          <a className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Estacion de impresion WMS - ${token?.printer ?? ''}\r\ncd /d %~dp0\r\nset WMS_URL=${window.location.origin}\r\nset WMS_PRINT_TOKEN=${token?.token ?? ''}\r\nrem Si hay varias Zebra o no imprime, pon aqui el nombre exacto de la impresora de Windows (quita el 'rem'):\r\nrem set WMS_WINDOWS_PRINTER=ZDesigner GK420t\r\nif "%1"=="prueba" (python -m pip install --quiet pywin32 requests & python wms_print_agent.py --test & pause & exit /b 0)\r\npython --version >nul 2>nul || (echo No se encontro Python. Instalalo desde python.org marcando "Add Python to PATH" y vuelve a abrir este archivo. & pause & exit /b 1)\r\npython -m pip install --quiet pywin32 requests\r\n:loop\r\npython wms_print_agent.py\r\necho.\r\necho La estacion se detuvo. Reiniciando en 5 segundos... (cierra esta ventana para salir)\r\ntimeout /t 5 >nul\r\ngoto loop\r\n`], { type: 'application/octet-stream' }))} download="run_agent.bat">
             Descargar run_agent.bat (con el token)
+          </a>
+          <a className="rounded-md bg-slate-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ncd /d %~dp0\r\ncall run_agent.bat prueba\r\n`], { type: 'application/octet-stream' }))} download="prueba_impresora.bat">
+            Descargar prueba_impresora.bat (imprime una etiqueta de prueba)
           </a>
           <a className="rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white" href="/print-agent/wms_print_agent.py" download="wms_print_agent.py">
             Descargar wms_print_agent.py
