@@ -6,6 +6,7 @@ import type { UomCode } from '@wms/shared';
 import { inventoryApi } from '../api/inventory';
 import { masterdataApi } from '../api/masterdata';
 import { wmTasksApi, type LpnRecountResult } from '../api/wmTasks';
+import { ProductInput } from '../components/ProductInput';
 import { QtyPad } from '../components/QtyPad';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
@@ -133,7 +134,7 @@ function Flow() {
           </div>
         ) : (
           <>
-            <ScanInput label="Código de barras / clave del producto" onScan={onProduct} disabled={busy} testId="recount-product" />
+            <ProductInput label="Escanea la caja o escribe clave o nombre del producto" onPick={onProduct} disabled={busy} testId="recount-product" />
             <ul className="mt-3 grid gap-1 font-mono text-base" data-testid="recount-lines">
               {lines.map((l, i) => (
                 <li key={i} className="flex items-center justify-between gap-2 rounded bg-slate-900 px-3 py-2">

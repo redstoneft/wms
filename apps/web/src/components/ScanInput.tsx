@@ -7,6 +7,8 @@ import { useLocation } from 'react-router-dom';
 import { cls } from '../lib/format';
 
 export interface ScanInputProps {
+  /** called on every keystroke (live search); Enter/scan still goes through onScan */
+  onType?: (value: string) => void;
   onScan: (value: string) => void | Promise<void>;
   label?: string;
   placeholder?: string;
@@ -22,7 +24,7 @@ export interface ScanInputProps {
   testId?: string;
 }
 
-export function ScanInput({ onScan, label, placeholder = 'Escanea…', disabled, active = true, autoUpper = false, size = 'xl', className, inputMode = 'text', clearOnScan = true, testId = 'scan-input' }: ScanInputProps) {
+export function ScanInput({ onScan, onType, label, placeholder = 'Escanea…', disabled, active = true, autoUpper = false, size = 'xl', className, inputMode = 'text', clearOnScan = true, testId = 'scan-input' }: ScanInputProps) {
   const ref = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
@@ -61,7 +63,7 @@ export function ScanInput({ onScan, label, placeholder = 'Escanea…', disabled,
       await onScan(v);
     } finally {
       setBusy(false);
-      if (clearOnScan) setValue('');
+      if (clearOnScan) { setValue(''); onType?.(''); }
       requestAnimationFrame(focus);
     }
   }, [value, busy, autoUpper, onScan, clearOnScan, focus]);
@@ -82,7 +84,7 @@ export function ScanInput({ onScan, label, placeholder = 'Escanea…', disabled,
           ref={ref}
           data-testid={testId}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => { setValue(e.target.value); onType?.(e.target.value); }}
           onKeyDown={onKey}
           onBlur={() => setTimeout(focus, 50)}
           disabled={disabled || busy}

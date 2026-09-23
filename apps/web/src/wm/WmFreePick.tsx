@@ -8,6 +8,7 @@ import { masterdataApi } from '../api/masterdata';
 import { pickingApi } from '../api/orders';
 import type { PickTaskView } from '../api/types';
 import { QtyPad } from '../components/QtyPad';
+import { ProductInput } from '../components/ProductInput';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
 import { BigButton, BigValue, StepBar, useWm } from './WmShell';
@@ -164,7 +165,7 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed, onCancelled }: 
             </div>
           ) : (
             <div className="mt-2">
-              <ScanInput label="…o busca tarimas por producto (escanea la caja o escribe la clave)" onScan={onProduct} disabled={busy} testId="free-scan-sku" />
+              <ProductInput label="…o busca tarimas por producto (escanea la caja o escribe clave o nombre)" onPick={onProduct} disabled={busy} testId="free-scan-sku" />
             </div>
           )}
           {picked.length > 0 && (
