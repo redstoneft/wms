@@ -264,7 +264,7 @@ function Printers() {
         </p>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>
-            En la PC de la Zebra, instala Python desde <span className="font-mono">python.org</span> marcando "Add to PATH" y en una consola ejecuta <span className="font-mono">pip install pywin32 requests</span>.
+            En la PC de la Zebra, instala Python desde <span className="font-mono">python.org</span> marcando "Add Python to PATH". Las librerías necesarias se instalan solas al ejecutar el archivo.
           </li>
           <li>Descarga los dos archivos de abajo en una carpeta, por ejemplo <span className="font-mono">C:\wms-print</span>. El <span className="font-mono">.bat</span> ya trae este token.</li>
           <li>
@@ -273,7 +273,7 @@ function Printers() {
           <li>Para que arranque sola: acceso directo del .bat en la carpeta Inicio de Windows (Win+R → shell:startup).</li>
         </ol>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Estacion de impresion WMS - ${token?.printer ?? ''}\r\ncd /d %~dp0\r\nset WMS_URL=${window.location.origin}\r\nset WMS_PRINT_TOKEN=${token?.token ?? ''}\r\n:loop\r\npython wms_print_agent.py\r\necho.\r\necho La estacion se detuvo. Reiniciando en 5 segundos... (cierra esta ventana para salir)\r\ntimeout /t 5 >nul\r\ngoto loop\r\n`], { type: 'application/octet-stream' }))} download="run_agent.bat">
+          <a className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Estacion de impresion WMS - ${token?.printer ?? ''}\r\ncd /d %~dp0\r\nset WMS_URL=${window.location.origin}\r\nset WMS_PRINT_TOKEN=${token?.token ?? ''}\r\npython --version >nul 2>nul || (echo No se encontro Python. Instalalo desde python.org marcando "Add Python to PATH" y vuelve a abrir este archivo. & pause & exit /b 1)\r\npython -m pip install --quiet pywin32 requests\r\n:loop\r\npython wms_print_agent.py\r\necho.\r\necho La estacion se detuvo. Reiniciando en 5 segundos... (cierra esta ventana para salir)\r\ntimeout /t 5 >nul\r\ngoto loop\r\n`], { type: 'application/octet-stream' }))} download="run_agent.bat">
             Descargar run_agent.bat (con el token)
           </a>
           <a className="rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white" href="/print-agent/wms_print_agent.py" download="wms_print_agent.py">

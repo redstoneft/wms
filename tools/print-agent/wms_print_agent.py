@@ -1,4 +1,4 @@
-"""
+r"""
 ESTACION DE IMPRESION DEL WMS  (impresora Zebra conectada por USB a esta PC)
 ============================================================================
 No abre puertos ni recibe conexiones: cada pocos segundos le PREGUNTA al WMS si hay
@@ -8,11 +8,11 @@ instalada como impresora.
 
 INSTALACION (en la PC con la Zebra):
   1. Instalar Python 3.10 o mas nuevo (python.org, marcar "Add to PATH").
-  2. En una consola:  pip install pywin32 requests
-  3. Copiar este archivo a C:\wms-print\ y editar CONFIG (WMS_URL, TOKEN).
+  2. Copiar este archivo y run_agent.bat (descargado del WMS, ya trae el token) a C:\wms-print\.
+     Las librerias (requests, pywin32) se instalan solas la primera vez que se ejecuta.
      El TOKEN se genera en el WMS: Datos maestros -> Impresoras -> la impresora -> "Generar token".
-  4. Doble clic en run_agent.bat (o: python wms_print_agent.py).
-  5. Para que arranque solo al prender la PC: acceso directo de run_agent.bat en
+  3. Doble clic en run_agent.bat (o: python wms_print_agent.py).
+  4. Para que arranque solo al prender la PC: acceso directo de run_agent.bat en
      la carpeta Inicio (Win+R -> shell:startup).
 
 PRUEBA: en el WMS imprime cualquier etiqueta eligiendo esa impresora; aqui debe salir
@@ -30,11 +30,31 @@ PRINTER_NAME = os.environ.get("WMS_WINDOWS_PRINTER", "")           # vacio = aut
 POLL_SECONDS = float(os.environ.get("WMS_POLL_SECONDS", "3"))
 MAX_RETRIES = 3
 
-try:
-    import requests
-except ImportError:
-    print("Falta 'requests'. Ejecuta:  pip install requests")
-    sys.exit(1)
+def _ensure_libraries():
+    """Instala requests/pywin32 con el mismo Python que ejecuta este archivo (evita el error
+    'Falta requests' cuando pip instalo en otro Python)."""
+    missing = []
+    for mod, pkg in (("requests", "requests"), ("win32print", "pywin32")):
+        if pkg == "pywin32" and os.name != "nt":
+            continue
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(pkg)
+    if not missing:
+        return
+    import subprocess
+    print(f"Instalando librerias que faltan: {' '.join(missing)} ...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", *missing])
+    except Exception as e:  # noqa: BLE001
+        print(f">> No se pudieron instalar ({e}). Ejecuta a mano:  {sys.executable} -m pip install {' '.join(missing)}")
+        sys.exit(1)
+    print("Librerias instaladas.")
+
+
+_ensure_libraries()
+import requests  # noqa: E402
 
 
 # ====== Impresion por USB (cola RAW de Windows) ======
