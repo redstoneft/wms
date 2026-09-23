@@ -91,16 +91,17 @@ describe('concurrency', () => {
     await expectReconciled();
   });
 
-  it('three pickers scanning the same task concurrently: only the owner can pick', async () => {
+  it('three pickers on the same task concurrently: all join (shared picking), but a line started by one picker is theirs', async () => {
     const lpn = await storedPallet(f, 0, f.reserve[8]!.id, 240n);
     const oid = await order([{ sku: 0, cases: 6 }]);
     await sup.post('/orders/allocate', { order_id: oid, allow_partial: false });
     const task = await sup.post('/picking/tasks', { order_id: oid });
     const starts = await Promise.all(pickers.map((p) => p.post(`/picking/tasks/${task.body.task.id}/start`)));
-    const winners = starts.filter((s) => s.status === 200);
-    expect(winners.length).toBe(1);
-    expect(starts.filter((s) => s.status === 409).length).toBe(2);
-    const owner = pickers[starts.findIndex((s) => s.status === 200)]!;
+    expect(starts.map((s) => s.status)).toEqual([200, 200, 200]);
+    // exactly one name on the task, whoever started first
+    const owners = new Set(starts.map((s) => s.body.task.assigned_to));
+    expect(owners.size).toBe(1);
+    const owner = pickers[0]!;
     const view = await owner.get(`/picking/tasks/${task.body.task.id}`);
     const line = view.body.lines[0];
     expect(line.lpn_code).toBe(lpn.code);
@@ -109,7 +110,7 @@ describe('concurrency', () => {
     // all three try to enter the quantity at once
     const qtys = await Promise.all(pickers.map((p) => p.post('/picking/scan', { pick_task_id: task.body.task.id, line_id: line.id, step: 'QTY', qty: 6, uom_code: 'CASE' }, idem())));
     expect(qtys.filter((q) => q.status === 200).length).toBe(1);
-    // the losers are rejected either as NOT_YOUR_TASK (409) or, if the owner's scan already completed the task, TASK_STATUS (422)
+    // the others are rejected as LINE_TAKEN (409) or, if the first scan already completed the task, TASK_STATUS (422)
     expect(qtys.filter((q) => q.status === 409 || q.status === 422).length).toBe(2);
     const ol = await sql<{ picked_qty: bigint }>(`SELECT picked_qty FROM order_lines WHERE order_id = '${oid}'`);
     expect(ol[0]!.picked_qty).toBe(36n);

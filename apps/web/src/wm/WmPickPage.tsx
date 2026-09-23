@@ -65,7 +65,9 @@ function Flow() {
     try {
       const v = await pickingApi.relocate(taskId, chooser.lineId, chooser.selected);
       qc.setQueryData(['pick-task', taskId], v);
-      wm.ok(`LÍNEA CAMBIADA A ${chooser.selected}`);
+      const r = v.relocated;
+      if (r?.split) wm.ok(`${fmtQty(r.qty)} PZAS PASAN A ${r.to_lpn}${toBigInt(r.leftover) > 0n ? ` · QUEDAN ${fmtQty(r.leftover)} EN ESTA TARIMA` : ''}`);
+      else wm.ok(`LÍNEA CAMBIADA A ${chooser.selected}`);
       setChooser(null);
     } catch (e) {
       wm.fail(e);
@@ -235,11 +237,12 @@ function Flow() {
       </div>
       {chooser && chooser.lineId === line.id && (
         <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="pallet-chooser">
-          <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Elige la tarima para {fmtQty(chooser.remaining)} pzas de {line.sku_code}</div>
+          <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Elige la tarima para las {fmtQty(chooser.remaining)} pzas que faltan de {line.sku_code}</div>
+          {toBigInt(line.picked_qty) > 0n && <div className="mb-2 text-xs text-slate-300">Lo ya surtido ({fmtQty(line.picked_qty)}) se queda registrado de esta tarima; el resto se surte de la que elijas.</div>}
           <select value={chooser.selected} onChange={(e) => setChooser({ ...chooser, selected: e.target.value })} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="pallet-select">
             {chooser.candidates.map((c) => (
               <option key={c.lpn_code} value={c.lpn_code}>
-                {c.lpn_code} · {c.location} · {fmtQty(c.available)} pzas{c.enough ? '' : ' (no alcanza)'}{c.mixed ? ' · mixta' : ''}
+                {c.lpn_code} · {c.location} · {fmtQty(c.available)} pzas{c.enough ? '' : ' (no alcanza: el resto queda pendiente)'}{c.mixed ? ' · mixta' : ''}
               </option>
             ))}
           </select>
@@ -247,29 +250,29 @@ function Flow() {
             <BigButton tone="neutral" onClick={() => setChooser(null)}>
               Cancelar
             </BigButton>
-            <BigButton tone="success" onClick={relocate} disabled={busy || !chooser.candidates.find((c) => c.lpn_code === chooser.selected)?.enough} testId="pallet-relocate">
-              Usar esta tarima
+            <BigButton tone="success" onClick={relocate} disabled={busy} testId="pallet-relocate">
+              {chooser.candidates.find((c) => c.lpn_code === chooser.selected)?.enough ? 'Usar esta tarima' : 'Tomar lo que tenga'}
             </BigButton>
           </div>
         </div>
       )}
       <div className="mt-3">
         {stepNo === 0 && !chooser && <ScanInput label="Escanea la ubicación" onScan={(s) => scan(line, 'LOCATION', s)} disabled={busy} testId="scan-location" />}
-        {stepNo === 0 && !chooser && toBigInt(line.picked_qty) === 0n && (
-          <button type="button" className="mt-2 w-full rounded-2xl border-2 border-violet-500 py-3 text-sm font-bold text-violet-300" onClick={() => void openChooser(line)} disabled={busy} data-testid="pallet-change">
-            Tomar de otra tarima (elegir de la lista)
-          </button>
-        )}
         {stepNo === 1 && <ScanInput label="Escanea el LPN o el código del producto" onScan={(s) => scan(line, 'LPN', s)} disabled={busy} testId="scan-lpn" />}
-        {stepNo === 2 && (
+        {stepNo === 2 && !chooser && (
           <QtyPad
             uoms={line.uoms}
-            hint={`FALTAN ${fmtUom(remaining, line.uoms)}`}
+            hint={toBigInt(line.picked_qty) > 0n ? `FALTAN ${fmtUom(remaining, line.uoms)} · SI YA NO HAY, TOMA EL RESTO DE OTRA TARIMA` : `FALTAN ${fmtUom(remaining, line.uoms)} · SI NO ALCANZA, SURTE LO QUE HAYA`}
             initial={line.full_pallet ? remaining.toString() : ''}
             onConfirm={(q, u) => scan(line, 'QTY', undefined, q, u)}
             busy={busy}
             confirmLabel="SURTIR"
           />
+        )}
+        {!chooser && (
+          <button type="button" className="mt-2 w-full rounded-2xl border-2 border-violet-500 py-3 text-sm font-bold text-violet-300" onClick={() => void openChooser(line)} disabled={busy} data-testid="pallet-change">
+            {toBigInt(line.picked_qty) > 0n ? `Tomar el resto (${fmtQty(remaining)}) de otra tarima` : 'Tomar de otra tarima (elegir de la lista)'}
+          </button>
         )}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">

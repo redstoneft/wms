@@ -530,6 +530,12 @@ export async function pickLineCandidates(tx: Tx, taskId: string, lineId: string)
   return { line_id: line.id, remaining: remaining.toString(), candidates: rows.map((r) => ({ lpn_id: r.id, lpn_code: r.code, location: r.location, available: r.available.toString(), enough: r.available >= remaining, mixed: r.other_skus > 0n })) };
 }
 
+/**
+ * Moves what is still to pick on a line to another pallet. Before any piece is picked and when the new pallet holds it
+ * all, the line simply changes pallet. Otherwise the line is SPLIT: what was already taken stays on the original line
+ * (closed as picked) and the rest becomes a new line on the chosen pallet; if that pallet holds less than the rest,
+ * the difference stays on the original pallet/line so the picker can split again to a third pallet.
+ */
 export async function relocatePickLine(tx: Tx, ctx: ActorContext, input: { pick_task_id: string; line_id: string; lpn_code: string }) {
   const trows = await tx.$queryRaw<{ id: string; status: string; order_id: string }[]>`SELECT id, status, order_id FROM pick_tasks WHERE id = ${input.pick_task_id}::uuid FOR UPDATE`;
   const task = trows[0];
@@ -540,24 +546,46 @@ export async function relocatePickLine(tx: Tx, ctx: ActorContext, input: { pick_
   const line = lrows[0];
   if (!line) throw new NotFoundError('pick line', input.line_id);
   if (line.status === 'PICKED' || line.status === 'SHORT' || line.status === 'CANCELLED') throw new RuleError('LINE_STATUS', `Line is ${line.status}`);
-  if (line.picked_qty > 0n) throw new RuleError('LINE_PARTIAL', 'Esta línea ya tiene piezas surtidas de su tarima: termínala o pide un faltante al supervisor');
   if (line.picker_id && line.picker_id !== ctx.userId) throw new ConflictError('LINE_TAKEN', 'Otro surtidor está en esta línea');
   const oldLpn = await lockLpn(tx, line.lpn_id);
   const newLpn = await lockLpnByCode(tx, input.lpn_code.trim().toUpperCase());
   if (newLpn.id === oldLpn.id) throw new RuleError('SAME_LPN', 'Es la misma tarima');
   if (newLpn.status !== 'STORED' || !newLpn.current_location_id) throw new RuleError('LPN_STATUS', `LPN ${newLpn.code} is ${newLpn.status}`);
   if (newLpn.warehouse_id !== oldLpn.warehouse_id) throw new RuleError('WRONG_WAREHOUSE', `LPN ${newLpn.code} belongs to another warehouse`);
-  const qty = line.qty;
+  const remaining = line.qty - line.picked_qty;
   const avail = await getBalance(tx, newLpn.id, line.sku_id, 'AVAILABLE');
-  if (avail < qty) throw new RuleError('INSUFFICIENT_INVENTORY', `LPN ${newLpn.code} only has ${avail} available; the line needs ${qty}`, { available: avail.toString(), needed: qty.toString() });
-  // release the old pallet, reserve the new one
+  if (avail <= 0n) throw new RuleError('INSUFFICIENT_INVENTORY', `LPN ${newLpn.code} has nothing available of this product`, { available: '0', needed: remaining.toString() });
+  const qty = avail < remaining ? avail : remaining; // what moves to the new pallet
+  const leftover = remaining - qty; // stays on the original pallet (split again later if needed)
+  const sku = await tx.skus.findUniqueOrThrow({ where: { id: line.sku_id }, select: { code: true } });
+  // release on the old pallet, reserve on the new one
   await changeStatus(tx, ctx, { movement_type: 'DEALLOCATE', lpn: oldLpn, sku_id: line.sku_id, qty, from_status: 'ALLOCATED', to_status: 'AVAILABLE', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line_relocate', reference_id: line.id, reason: `Cambio de tarima → ${newLpn.code}` });
-  await tx.allocations.update({ where: { id: line.allocation_id }, data: { status: 'RELEASED' } });
   await changeStatus(tx, ctx, { movement_type: 'ALLOCATE', lpn: newLpn, sku_id: line.sku_id, qty, from_status: 'AVAILABLE', to_status: 'ALLOCATED', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line_relocate', reference_id: line.id, reason: `Cambio de tarima desde ${oldLpn.code}` });
   const alloc = await tx.allocations.create({ data: { order_line_id: line.order_line_id, lpn_id: newLpn.id, sku_id: line.sku_id, qty, strategy: 'MANUAL' } });
   const state = await tx.$queryRaw<{ total: bigint; skus: bigint }[]>`SELECT COALESCE(sum(qty),0)::bigint AS total, count(DISTINCT sku_id)::bigint AS skus FROM inventory_balances WHERE lpn_id = ${newLpn.id}::uuid AND qty > 0`;
   const fullPallet = state[0]!.skus === 1n && state[0]!.total === qty;
-  await tx.pick_task_lines.update({ where: { id: line.id }, data: { lpn_id: newLpn.id, location_id: newLpn.current_location_id, allocation_id: alloc.id, full_pallet: fullPallet, scan_step: 0, status: 'PENDING', picker_id: null } });
-  await audit(tx, ctx, { action: 'pick.line_relocated', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, from_lpn: oldLpn.code, to_lpn: newLpn.code, qty: qty.toString() } });
-  return pickTaskView(tx, task.id);
+  const split = line.picked_qty > 0n || leftover > 0n;
+  let newLineId = line.id;
+  if (!split) {
+    await tx.allocations.update({ where: { id: line.allocation_id }, data: { status: 'RELEASED' } });
+    await tx.pick_task_lines.update({ where: { id: line.id }, data: { lpn_id: newLpn.id, location_id: newLpn.current_location_id, allocation_id: alloc.id, full_pallet: fullPallet, scan_step: 0, status: 'PENDING', picker_id: null } });
+  } else {
+    // the original line keeps what was picked (+ any leftover still on its pallet); the moved part is a new line
+    const oldQty = line.picked_qty + leftover;
+    const oldDone = leftover === 0n;
+    await tx.allocations.update({ where: { id: line.allocation_id }, data: { qty: oldQty, status: oldDone ? 'PICKED' : 'ACTIVE' } });
+    await tx.pick_task_lines.update({ where: { id: line.id }, data: { qty: oldQty, full_pallet: false, ...(oldDone ? { status: 'PICKED', scan_step: 0, picked_at: new Date() } : {}) } });
+    const seq = await tx.$queryRaw<{ n: number }[]>`SELECT COALESCE(max(sequence),0)::int + 1 AS n FROM pick_task_lines WHERE pick_task_id = ${task.id}::uuid`;
+    const nl = await tx.pick_task_lines.create({
+      data: { pick_task_id: task.id, order_line_id: line.order_line_id, allocation_id: alloc.id, sequence: seq[0]!.n, location_id: newLpn.current_location_id, lpn_id: newLpn.id, sku_id: line.sku_id, qty, full_pallet: fullPallet, picker_id: ctx.userId },
+    });
+    newLineId = nl.id;
+    // pieces were taken and the pallet ran out: the original pallet needs a look (its system stock may be wrong)
+    if (line.picked_qty > 0n) {
+      await createIncident(tx, ctx, { incident_type: 'INVENTORY_DIFFERENCE', severity: 'MEDIUM', title: `Tarima ${oldLpn.code} no alcanzó: ${qty} de ${sku.code} se tomaron de ${newLpn.code}`, description: `Surtido dividido por ${ctx.username}: ${line.picked_qty} surtidas de ${oldLpn.code}, ${qty} pendientes pasan a ${newLpn.code}${leftover > 0n ? `, ${leftover} siguen en ${oldLpn.code}` : ''}. Revisar existencia real de ${oldLpn.code}.`, entity_type: 'pick_task', entity_id: task.id, sku_id: line.sku_id, lpn_id: oldLpn.id, location_id: oldLpn.current_location_id, order_id: task.order_id, qty });
+    }
+  }
+  await audit(tx, ctx, { action: split ? 'pick.line_split' : 'pick.line_relocated', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, new_line: split ? newLineId : null, from_lpn: oldLpn.code, to_lpn: newLpn.code, qty: qty.toString(), picked_before: line.picked_qty.toString(), leftover: leftover.toString() } });
+  const view = await pickTaskView(tx, task.id);
+  return { ...view, relocated: { line_id: newLineId, split, qty: qty.toString(), leftover: leftover.toString(), to_lpn: newLpn.code } };
 }

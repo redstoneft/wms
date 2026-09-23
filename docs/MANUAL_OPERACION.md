@@ -98,7 +98,9 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 ## ELEGIR LA TARIMA AL SURTIR
 
-En una línea de surtido, antes de escanear la ubicación, el botón **Tomar de otra tarima** muestra una lista con las demás tarimas que tienen ese producto (LPN, ubicación, piezas disponibles). Al elegir una, la línea se reasigna a esa tarima y el surtido sigue en su ubicación; la tarima original vuelve a quedar disponible. Solo aplica a líneas que aún no tienen piezas surtidas.
+En cualquier paso de una línea de surtido, el botón **Tomar de otra tarima** muestra una lista con las demás tarimas que tienen ese producto (LPN, ubicación, piezas disponibles). Al elegir una, la línea se reasigna a esa tarima y el surtido sigue en su ubicación; la tarima original vuelve a quedar disponible.
+
+**Cuando la tarima no alcanza** (por ejemplo la línea pide 30 y en la tarima solo hay 18): en el paso de cantidad se surte lo que hay (18). La línea queda abierta con lo que falta y aparece el botón **Tomar el resto (12) de otra tarima**. Al elegir la otra tarima, lo ya surtido queda registrado de la primera y el resto se convierte en una **línea nueva** en la tarima elegida (con su ubicación y LPN). Si la segunda tampoco alcanza, se surte lo que tenga y se repite con una tercera. En cada división el sistema levanta una incidencia de *diferencia de inventario* sobre la tarima que no alcanzó, para que se revise su existencia real.
 
 En **surtido libre**, además de escanear un LPN, se puede escanear o escribir el **producto**: aparece la lista de tarimas que lo tienen para elegir una.
 

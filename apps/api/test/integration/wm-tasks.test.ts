@@ -11,7 +11,7 @@ beforeAll(async () => {
   sup = await userWithRoles('stsup', ['SUPERVISOR']);
   picker = await userWithRoles('stpick', ['PICKER']);
   forklift = await userWithRoles('stfork', ['FORKLIFT']);
-  f = await makeFixture({ skus: 2 });
+  f = await makeFixture({ skus: 3 });
 });
 afterAll(closeApp);
 
@@ -308,6 +308,67 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     // the pick continues at the new pallet's location
     const loc = await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: line.id, step: 'LOCATION', scanned: moved.location_barcode }, idem());
     expect(loc.status, JSON.stringify(loc.body)).toBe(200);
+    await expectReconciled();
+  });
+
+  it('pallet ran out mid-pick: the picker takes what there is, then the rest from another pallet (line split, incident on the short pallet)', async () => {
+    // sku 2 is used only here so the allocation can only land on p1 (p2 and p3 are stored after the task exists)
+    const p1 = await storedPallet(f, 2, f.reserve[15]!.id, 30n);
+    const number = `PED-SPLIT-${f.tag}`;
+    const o = await sup.post('/orders', { order_number: number, customer_code: f.customer.code, lines: [{ sku_code: f.skus[2]!.code, qty: 30 }] });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
+    const t = await picker.post('/wm/tasks', { kind: 'PICK', reference: number, purpose: 'tarima no alcanza' });
+    expect(t.status, JSON.stringify(t.body)).toBe(201);
+    const v = await picker.post(`/picking/tasks/${t.body.id}/start`);
+    const line = v.body.lines[0];
+    expect(line.lpn_code).toBe(p1.code);
+    const p2 = await storedPallet(f, 2, f.reserve[16]!.id, 8n);
+    const p3 = await storedPallet(f, 2, f.reserve[17]!.id, 50n);
+    // only 18 pieces really there
+    expect((await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: line.id, step: 'LOCATION', scanned: line.location_barcode }, idem())).status).toBe(200);
+    expect((await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: line.id, step: 'LPN', scanned: p1.code }, idem())).status).toBe(200);
+    const q = await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: line.id, step: 'QTY', qty: '18', uom_code: 'PIECE' }, idem());
+    expect(q.status, JSON.stringify(q.body)).toBe(200);
+    expect(q.body.next).toBe('QTY');
+    // candidates now list the remaining 12 and both other pallets (p2 not enough)
+    const cand = await picker.get(`/picking/tasks/${t.body.id}/lines/${line.id}/candidates`);
+    expect(cand.body.remaining).toBe('12');
+    const c2 = cand.body.candidates.find((c: { lpn_code: string }) => c.lpn_code === p2.code);
+    expect(c2.enough).toBe(false);
+    // 1st split to the small pallet: 8 move, 4 stay on p1
+    const r1 = await picker.post(`/picking/tasks/${t.body.id}/lines/${line.id}/relocate`, { lpn_code: p2.code });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+    expect(r1.body.relocated).toMatchObject({ split: true, qty: '8', leftover: '4', to_lpn: p2.code });
+    const l1 = r1.body.lines.find((l: { id: string }) => l.id === line.id);
+    expect(l1).toMatchObject({ status: 'IN_PROGRESS', qty: '22', picked_qty: '18', lpn_code: p1.code });
+    const n1 = r1.body.lines.find((l: { id: string }) => l.id === r1.body.relocated.line_id);
+    expect(n1).toMatchObject({ status: 'PENDING', qty: '8', picked_qty: '0', lpn_code: p2.code, full_pallet: true });
+    // 2nd split of the 4 left to the big pallet: the original line closes as picked with its 18
+    const r2 = await picker.post(`/picking/tasks/${t.body.id}/lines/${line.id}/relocate`, { lpn_code: p3.code });
+    expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+    expect(r2.body.relocated).toMatchObject({ split: true, qty: '4', leftover: '0' });
+    const l2 = r2.body.lines.find((l: { id: string }) => l.id === line.id);
+    expect(l2).toMatchObject({ status: 'PICKED', qty: '18', picked_qty: '18' });
+    expect(r2.body.lines).toHaveLength(3);
+    const bal = await sql<{ code: string; status: string; qty: bigint }>(`SELECT l.code, b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code IN ('${p1.code}','${p2.code}','${p3.code}') AND b.qty > 0 ORDER BY l.code, b.status`);
+    const byLpn = Object.fromEntries(bal.map((b) => [`${b.code}:${b.status}`, b.qty]));
+    expect(byLpn[`${p1.code}:AVAILABLE`]).toBe(12n); // system still believes 12 are there → incident
+    expect(byLpn[`${p1.code}:ALLOCATED`]).toBeUndefined();
+    expect(byLpn[`${p2.code}:ALLOCATED`]).toBe(8n);
+    expect(byLpn[`${p3.code}:ALLOCATED`]).toBe(4n);
+    const inc = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM incidents i JOIN lpns l ON l.id = i.lpn_id WHERE l.code = '${p1.code}' AND i.incident_type = 'INVENTORY_DIFFERENCE'`);
+    expect(inc[0]!.n).toBe(2n);
+    // finish both new lines → task completes, order line fully picked (18 + 8 + 4)
+    for (const nl of r2.body.lines.filter((l: { status: string }) => l.status === 'PENDING')) {
+      expect((await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: nl.id, step: 'LOCATION', scanned: nl.location_barcode }, idem())).status).toBe(200);
+      expect((await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: nl.id, step: 'LPN', scanned: nl.lpn_code }, idem())).status).toBe(200);
+      const qq = await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: nl.id, step: 'QTY', qty: nl.qty, uom_code: 'PIECE' }, idem());
+      expect(qq.status, JSON.stringify(qq.body)).toBe(200);
+    }
+    const fin = await picker.get(`/picking/tasks/${t.body.id}`);
+    expect(fin.body.task.status).toBe('COMPLETED');
+    const ol = await sql<{ picked_qty: bigint; allocated_qty: bigint }>(`SELECT picked_qty, allocated_qty FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_number = '${number}'`);
+    expect(ol[0]).toMatchObject({ picked_qty: 30n, allocated_qty: 0n });
     await expectReconciled();
   });
 });
