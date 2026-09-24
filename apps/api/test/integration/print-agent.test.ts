@@ -96,7 +96,24 @@ describe('USB print station (print agent)', () => {
     const mine = pr.body.find((x: { id: string }) => x.id === printerId);
     expect(mine.agent_host).toMatch(/^WebUSB · agentsup/);
     // a user without labels.print cannot act as a station
-    const nobody = await userWithRoles('agentviewer', ['VIEWER']);
+    const nobody = await userWithRoles('agentviewer', []); // no roles → no labels.print
     expect((await nobody.get(`/printers/${printerId}/station/jobs`)).status).toBe(403);
+  });
+
+  it('long polling: /jobs?wait=N holds the request until a label is queued and returns at once when one arrives', async () => {
+    const t0 = Date.now();
+    const empty = await agent('GET', '/print-agent/jobs?wait=2', token);
+    expect(empty.status).toBe(200);
+    expect(empty.body.jobs).toHaveLength(0);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1900);
+    const pending = agent('GET', '/print-agent/jobs?wait=10', token);
+    await new Promise((r) => setTimeout(r, 1200));
+    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'long poll' });
+    expect(p.status).toBe(200);
+    const t1 = Date.now();
+    const got = await pending;
+    expect(got.body.jobs).toHaveLength(1);
+    expect(Date.now() - t1).toBeLessThan(3000); // returned as soon as the label was queued, not after the full wait
+    await agent('POST', `/print-agent/jobs/${got.body.jobs[0].id}/result`, token, { ok: true });
   });
 });

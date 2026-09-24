@@ -49,13 +49,24 @@ async function reportJob(printerId: string, id: string, body: { ok: boolean; err
   return { id, status };
 }
 
-const zLimit = z.object({ limit: z.coerce.number().int().min(1).max(20).default(5) });
+const zLimit = z.object({ limit: z.coerce.number().int().min(1).max(20).default(5), wait: z.coerce.number().int().min(0).max(30).default(0) });
+
+/** Long polling: holds the request up to `wait` seconds until a label is queued, so a station needs no timer of its own
+ *  (browser timers stop when the window is hidden; a pending request does not). One short transaction per attempt. */
+async function claimJobsWait(p: { id: string; code: string }, q: { limit: number; wait: number }) {
+  const deadline = Date.now() + q.wait * 1000;
+  for (;;) {
+    const r = await claimJobs(p, q.limit);
+    if (r.jobs.length || Date.now() >= deadline) return r;
+    await new Promise((res) => setTimeout(res, 1000));
+  }
+}
 const zResult = z.object({ ok: z.boolean(), error: z.string().trim().max(500).optional() });
 
 export async function printAgentRoutes(app: FastifyInstance) {
   // ---- token-authenticated (python station on the printer PC)
   app.get('/print-agent/ping', async (req) => pingInfo(await printerFor(req)));
-  app.get('/print-agent/jobs', async (req) => claimJobs(await printerFor(req), zLimit.parse(req.query).limit));
+  app.get('/print-agent/jobs', async (req) => claimJobsWait(await printerFor(req), zLimit.parse(req.query)));
   app.post('/print-agent/jobs/:id/result', async (req) => {
     const p = await printerFor(req);
     return reportJob(p.id, z.string().uuid().parse((req.params as { id: string }).id), zResult.parse(req.body));
@@ -71,7 +82,7 @@ export async function printAgentRoutes(app: FastifyInstance) {
     return p;
   };
   app.get('/printers/:id/station/ping', { preHandler: app.requirePermission('labels.print') }, async (req) => pingInfo(await stationPrinter(req)));
-  app.get('/printers/:id/station/jobs', { preHandler: app.requirePermission('labels.print') }, async (req) => claimJobs(await stationPrinter(req), zLimit.parse(req.query).limit));
+  app.get('/printers/:id/station/jobs', { preHandler: app.requirePermission('labels.print') }, async (req) => claimJobsWait(await stationPrinter(req), zLimit.parse(req.query)));
   app.post('/printers/:id/station/jobs/:jobId/result', { preHandler: app.requirePermission('labels.print') }, async (req) => {
     const p = await stationPrinter(req);
     return reportJob(p.id, z.string().uuid().parse((req.params as { jobId: string }).jobId), zResult.parse(req.body));

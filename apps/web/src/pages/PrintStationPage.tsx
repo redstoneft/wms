@@ -171,49 +171,59 @@ export default function PrintStationPage() {
   };
   const forget = () => { ls.set(LS_TOKEN, null); setToken(''); setPrinter(null); };
 
-  // work loop, driven by a worker ticker (page timers are throttled when the tab is in the background)
+  // work loop: one long-poll request after another (the server holds each one until a label is queued), so it needs no
+  // page timer; a worker ticker and the visibilitychange event only restart the loop if the window was frozen
   useEffect(() => {
     if (!running) return;
     let alive = true;
-    const tick = async () => {
-      if (!alive || busy.current || !device) return;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const run = async () => {
+      if (busy.current || !device) return;
       busy.current = true;
       try {
-        const r = await agent<{ jobs: Job[] }>(token, '/jobs?limit=5');
-        for (const job of r.jobs) {
+        while (alive) {
           try {
-            await writeToZebra(device, job.zpl);
-            await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: true } });
-            setPrinted((n) => n + 1);
-            say(`IMPRESA ${job.label_type} ${job.entity}${job.is_reprint ? ' (reimpresión)' : ''}`);
-            setError(null);
+            const r = await agent<{ jobs: Job[] }>(token, '/jobs?limit=5&wait=25');
+            if (!alive) break;
+            for (const job of r.jobs) {
+              try {
+                await writeToZebra(device, job.zpl);
+                await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: true } });
+                setPrinted((n) => n + 1);
+                say(`IMPRESA ${job.label_type} ${job.entity}${job.is_reprint ? ' (reimpresión)' : ''}`);
+                setError(null);
+              } catch (e) {
+                const m = errText(e);
+                await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, error: m } }).catch(() => undefined);
+                say(`ERROR ${job.label_type} ${job.entity}: ${m}`, false);
+                setError(m);
+              }
+            }
+            const p = await agent<{ printer: string; name: string; queued: number }>(token, '/ping');
+            setPrinter(p);
+            if (r.jobs.length === 0) setError((prev) => (prev && /USB|interfaz|endpoint|claim|open|transfer/i.test(prev) ? prev : null));
           } catch (e) {
-            const m = errText(e);
-            await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, error: m } }).catch(() => undefined);
-            say(`ERROR ${job.label_type} ${job.entity}: ${m}`, false);
-            setError(m);
+            setError(errText(e));
+            await sleep(3000);
           }
         }
-        const p = await agent<{ printer: string; name: string; queued: number }>(token, '/ping');
-        setPrinter(p);
-        if (r.jobs.length === 0) setError((prev) => (prev && /USB|interfaz|endpoint|claim|open|transfer/i.test(prev) ? prev : null));
-      } catch (e) {
-        setError(errText(e));
       } finally {
         busy.current = false;
       }
     };
     say(`Estación activa · ${printer?.name ?? ''}`);
-    void tick();
+    void run();
     let worker: Worker | null = null;
     let fallback: number | null = null;
     try {
       worker = new Worker('/station-tick.js');
-      worker.onmessage = () => void tick();
+      worker.onmessage = () => void run();
     } catch {
-      fallback = window.setInterval(() => void tick(), 3000);
+      fallback = window.setInterval(() => void run(), 3000);
     }
-    return () => { alive = false; worker?.terminate(); if (fallback) window.clearInterval(fallback); };
+    const onVis = () => { if (document.visibilityState === 'visible') void run(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { alive = false; worker?.terminate(); if (fallback) window.clearInterval(fallback); document.removeEventListener('visibilitychange', onVis); };
   }, [running, device, token, printer?.name, say]);
 
   // keep the screen awake while the station runs
