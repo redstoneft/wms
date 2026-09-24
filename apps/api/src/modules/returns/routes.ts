@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zClassifyReturnLine, zCreateReturn, zReceiveReturnLine, zUuid } from '@wms/shared';
+import { zClassifyReturnLine, zCreateReturn, zQuickReturn, zReceiveReturnLine, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { trainingWhere } from '../../lib/training-scope.js';
 import { NotFoundError } from '../../errors.js';
@@ -37,6 +37,14 @@ export async function returnRoutes(app: FastifyInstance) {
   app.post('/returns/classify', { preHandler: perm }, async (req, reply) => {
     const body = zClassifyReturnLine.parse(req.body);
     const r = await runIdempotent(req.actor!, fingerprint('POST', '/returns/classify', body), async (tx) => ({ status: 200, body: await svc.classifyReturnLine(tx, req.actor!, body) }));
+    if (r.replayed) reply.header('Idempotent-Replayed', 'true');
+    return r.body;
+  });
+  /** Quick return from the handheld (idempotent). */
+  app.post('/returns/quick', { preHandler: perm }, async (req, reply) => {
+    const body = zQuickReturn.parse(req.body);
+    const r = await runIdempotent(req.actor!, fingerprint('POST', '/returns/quick', body), async (tx) => ({ status: 201, body: await svc.quickReturn(tx, req.actor!, body) }));
+    reply.status(r.status);
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
   });

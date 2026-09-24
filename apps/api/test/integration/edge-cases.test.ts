@@ -404,8 +404,12 @@ describe('labels', () => {
     expect(p1.body.error).toBe('PRINTER_UNREACHABLE');
     // simulate a successful first print so the next one is a reprint
     await sql(`UPDATE label_prints SET status = 'SENT' WHERE id = '${p1.body.details.print_id}'`);
+    // every operator may reprint on the floor (damaged label), but only with a reason; a user without roles cannot
     const noReason = await recv.post('/labels/print', { label_type: 'LPN', entity_id: lpn.code });
-    expect(noReason.status).toBe(403); // RECEIVING lacks labels.reprint
+    expect(noReason.status).toBe(422);
+    expect(noReason.body.error).toBe('REPRINT_REASON_REQUIRED');
+    const nobody = await userWithRoles('norole-reprint', []);
+    expect((await nobody.post('/labels/print', { label_type: 'LPN', entity_id: lpn.code, reprint_reason: 'x' })).status).toBe(403);
     const supNoReason = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn.code });
     expect(supNoReason.status).toBe(422);
     expect(supNoReason.body.error).toBe('REPRINT_REASON_REQUIRED');

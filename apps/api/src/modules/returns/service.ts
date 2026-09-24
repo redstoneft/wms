@@ -1,10 +1,10 @@
-import type { ReturnDisposition, UomCode } from '@wms/shared';
+import type { QuickReturnInput, ReturnDisposition, UomCode } from '@wms/shared';
 import type { Tx } from '../../db.js';
 import { NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
-import { getSkuByCode, toBaseQty } from '../../lib/lookup.js';
-import { changeStatus, createInventory, createLpn, lockLocationByBarcode, lockLpn, removeInventory } from '../../inventory/ledger.js';
+import { getSkuByCode, resolveSkuBarcode, toBaseQty } from '../../lib/lookup.js';
+import { changeStatus, createInventory, createLpn, lockLocationByBarcode, lockLpn, lockLpnByCode, removeInventory, type LpnRow } from '../../inventory/ledger.js';
 import { createIncident } from '../incidents/service.js';
 import { createPutawayTask } from '../putaway/service.js';
 
@@ -91,6 +91,79 @@ export async function classifyReturnLine(tx: Tx, ctx: ActorContext, input: { ret
   if (avail && done) putaway = await createPutawayTask(tx, ctx, lpn);
   await audit(tx, ctx, { action: 'return.classify', entity_type: 'return', entity_id: ret.id, after: { sku: line.sku.code, disposition: input.disposition, qty: input.qty.toString(), lpn: lpn.code }, reason: input.reason });
   return { disposition: input.disposition, qty: input.qty, lpn_code: lpn.code, return_status: done ? 'CLASSIFIED' : 'INSPECTING', putaway_task: putaway?.id ?? null };
+}
+
+/**
+ * Quick return from the handheld. Good pieces go straight onto a pallet that already holds the product (the operator
+ * confirms at the rack by scanning the pallet or its location); damaged pieces go to the returns area as DAMAGED with
+ * an incident. The return document is created already closed, so the office sees it without extra steps.
+ */
+export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnInput) {
+  // SKU code, or any of its barcodes (the handheld may send what was scanned)
+  const sku = await getSkuByCode(tx, input.sku_code).catch(async (e) => {
+    if (!(e instanceof NotFoundError)) throw e;
+    return (await resolveSkuBarcode(tx, input.sku_code)).sku;
+  });
+  const { base } = await toBaseQty(tx, sku.id, input.qty, input.uom_code);
+  const customer = input.customer_code ? await tx.customers.findUnique({ where: { code: input.customer_code } }) : null;
+  if (input.customer_code && !customer) throw new NotFoundError('customer', input.customer_code);
+  const order = input.original_order_number ? await tx.orders.findUnique({ where: { order_number: input.original_order_number } }) : null;
+  if (input.original_order_number && !order) throw new NotFoundError('order', input.original_order_number);
+  const num = await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('RET', 'return_seq') AS n`;
+  const reason = input.note?.trim() || (input.damaged ? 'Devolución rápida (dañada)' : 'Devolución rápida');
+
+  let lpn: LpnRow;
+  let locationCode: string;
+  let status: 'AVAILABLE' | 'DAMAGED';
+  if (!input.damaged) {
+    if (!input.to_lpn_code) throw new RuleError('PALLET_REQUIRED', 'Elige la tarima donde va la devolución');
+    lpn = await lockLpnByCode(tx, input.to_lpn_code);
+    if (lpn.status !== 'STORED' || !lpn.current_location_id) throw new RuleError('LPN_STATUS', `La tarima ${lpn.code} está ${lpn.status}; elige una tarima guardada en rack`);
+    const loc = await tx.locations.findUniqueOrThrow({ where: { id: lpn.current_location_id }, select: { code: true, barcode: true, location_type: true } });
+    if (loc.location_type !== 'RESERVE' && loc.location_type !== 'PICKING') throw new RuleError('LOCATION_TYPE', `La tarima ${lpn.code} está en ${loc.code} (${loc.location_type}), no en una posición de almacén`);
+    const holds = await tx.inventory_balances.count({ where: { lpn_id: lpn.id, sku_id: sku.id, qty: { gt: 0n } } });
+    if (!holds) throw new RuleError('LPN_OTHER_PRODUCT', `La tarima ${lpn.code} no tiene ${sku.code}; elige una tarima que sí lo tenga`);
+    const scanned = (input.scanned ?? '').trim().toUpperCase();
+    if (!scanned) throw new RuleError('SCAN_REQUIRED', 'Escanea la tarima o la ubicación al dejar las piezas');
+    if (scanned !== lpn.code.toUpperCase() && scanned !== loc.code.toUpperCase() && scanned !== loc.barcode.toUpperCase() && scanned.replace(/^LOC-/, '') !== loc.code.toUpperCase()) {
+      throw new RuleError('WRONG_PALLET', `Escaneaste ${scanned}; la tarima elegida es ${lpn.code} en ${loc.code}`, { expected_lpn: lpn.code, expected_location: loc.code, scanned });
+    }
+    locationCode = loc.code;
+    status = 'AVAILABLE';
+  } else {
+    const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true, NOT: { code: 'ESCUELA' } }, orderBy: { created_at: 'asc' } }));
+    if (!wh) throw new RuleError('NO_WAREHOUSE', 'No hay almacén configurado');
+    const ret = await tx.locations.findFirst({ where: { warehouse_id: wh.id, location_type: 'RETURNS', is_active: true }, orderBy: { code: 'asc' } });
+    if (!ret) throw new RuleError('NO_RETURNS_LOCATION', 'El almacén no tiene un área de devoluciones (RETURNS)');
+    const created = await createLpn(tx, ctx, { warehouse_id: wh.id, lpn_type: 'RETURN', location_id: ret.id });
+    await tx.lpns.update({ where: { id: created.id }, data: { status: 'STORED' } });
+    lpn = { ...created, status: 'STORED' };
+    locationCode = ret.code;
+    status = 'DAMAGED';
+  }
+
+  const r = await tx.returns.create({
+    data: {
+      return_number: num[0]!.n,
+      customer_id: customer?.id ?? null,
+      original_order_id: order?.id ?? null,
+      reason,
+      status: 'CLOSED',
+      created_by: ctx.userId,
+      received_by: ctx.userId,
+      received_at: new Date(),
+      closed_at: new Date(),
+      lines: { create: [{ sku_id: sku.id, expected_qty: base, received_qty: base, disposition: input.damaged ? 'DAMAGED' : 'RESTOCK', disposition_qty: base, lpn_id: lpn.id, inspected_by: ctx.userId, notes: input.note ?? null }] },
+    },
+  });
+  const movementId = await createInventory(tx, ctx, { movement_type: 'RETURN_RECEIPT', to_lpn: lpn, sku_id: sku.id, qty: base, uom_code: input.uom_code, uom_qty: input.qty, status, location_id: lpn.current_location_id!, reference_type: 'return', reference_id: r.id, order_id: order?.id ?? null, reason });
+  let incident: string | null = null;
+  if (input.damaged) {
+    const inc = await createIncident(tx, ctx, { incident_type: 'DAMAGED', severity: 'MEDIUM', title: `Devolución dañada: ${sku.code} x${base}`, description: reason, entity_type: 'return', entity_id: r.id, sku_id: sku.id, lpn_id: lpn.id, location_id: lpn.current_location_id, order_id: order?.id ?? null, qty: base });
+    incident = inc.incident_number;
+  }
+  await audit(tx, ctx, { action: 'return.quick', entity_type: 'return', entity_id: r.id, after: { number: r.return_number, sku: sku.code, qty: base.toString(), lpn: lpn.code, location: locationCode, damaged: input.damaged, customer: customer?.code ?? null, order: order?.order_number ?? null, movement_id: movementId.toString() }, reason });
+  return { return_number: r.return_number, sku: { code: sku.code, description: sku.description }, qty_base: base, lpn: lpn.code, location: locationCode, damaged: input.damaged, incident };
 }
 
 export async function closeReturn(tx: Tx, ctx: ActorContext, returnId: string) {

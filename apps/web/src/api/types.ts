@@ -384,6 +384,15 @@ export interface PutawayOption {
   level: number | null;
   is_current: boolean;
 }
+export interface QuickReturnResult {
+  return_number: string;
+  sku: { code: string; description: string };
+  qty_base: Qty;
+  lpn: string;
+  location: string;
+  damaged: boolean;
+  incident: string | null;
+}
 export interface Attachment {
   id: Uuid;
   entity_type: string;
@@ -890,14 +899,14 @@ export interface ReturnLine {
 export interface Return {
   id: Uuid;
   return_number: string;
-  customer_id: Uuid;
+  customer_id: Uuid | null;
   original_order_id: Uuid | null;
   status: string;
   reason: string | null;
   received_at: Iso | null;
   closed_at: Iso | null;
   created_at: Iso;
-  customer: Party;
+  customer: Party | null;
   original_order: { order_number: string } | Order | null;
   lines: ReturnLine[];
   lpns?: { id: Uuid; code: string; status: LpnStatus }[];

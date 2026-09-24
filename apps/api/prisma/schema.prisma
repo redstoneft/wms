@@ -1048,7 +1048,7 @@ model returns {
   is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   return_number   String    @unique @db.VarChar(40)
-  customer_id     String    @db.Uuid
+  customer_id     String?   @db.Uuid // optional on quick returns from the handheld
   original_order_id String? @db.Uuid
   status          String    @default("OPEN") @db.VarChar(20) // OPEN | RECEIVED | INSPECTING | CLASSIFIED | CLOSED
   reason          String?
@@ -1058,7 +1058,7 @@ model returns {
   created_at      DateTime  @default(now()) @db.Timestamptz(6)
   created_by      String?   @db.Uuid
 
-  customer       customers @relation(fields: [customer_id], references: [id])
+  customer       customers? @relation(fields: [customer_id], references: [id])
   original_order orders?   @relation(fields: [original_order_id], references: [id])
   lines          return_lines[]
 }

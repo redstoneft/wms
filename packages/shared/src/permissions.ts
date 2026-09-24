@@ -69,6 +69,7 @@ const OPERATOR_COMMON: Permission[] = [
   'printers.manage', // every operator may set up the printer they print on
   'labels.print',
   'labels.reprint', // a damaged or lost pallet label is reprinted on the floor (reason required, audited)
+  'returns.manage', // quick returns from the handheld: a couple of pieces straight onto the pallet that holds the product
   'inventory.read',
   'lpn.read',
   'incidents.read',

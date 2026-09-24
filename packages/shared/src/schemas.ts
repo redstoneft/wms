@@ -551,6 +551,22 @@ export const zCreateReturn = z.object({
   reason: z.string().trim().max(500).optional(),
   lines: z.array(z.object({ sku_code: zCode, qty: zQty, uom_code: zUom.default('PIECE') })).min(1),
 });
+/** Quick return from the handheld: the pieces go straight onto a pallet that already holds the product (or, if damaged, to the returns area). */
+export const zQuickReturn = z.object({
+  sku_code: zCode,
+  qty: zQty,
+  uom_code: zUom.default('PIECE'),
+  damaged: z.boolean().default(false),
+  /** destination pallet (required unless damaged) */
+  to_lpn_code: z.string().trim().max(30).optional(),
+  /** what the operator scanned at the rack to confirm: the pallet's LPN or the location (code or barcode) */
+  scanned: z.string().trim().max(64).optional(),
+  customer_code: zCode.optional(),
+  original_order_number: z.string().trim().max(60).optional(),
+  note: z.string().trim().max(300).optional(),
+});
+export type QuickReturnInput = z.infer<typeof zQuickReturn>;
+
 export const zReceiveReturnLine = z.object({
   return_id: zUuid,
   line_id: zUuid,

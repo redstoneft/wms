@@ -25,6 +25,17 @@ Recepción abierta por error (sin pallets recibidos): el supervisor la cancela d
 
 Errores comunes: `Código no encontrado` (producto sin código de barras registrado → avisar a inventarios), `SKU no esperado` (se recibe pero queda marcado con incidencia).
 
+## DEVOLUCIÓN RÁPIDA (handheld)
+
+Para las devoluciones de una o pocas piezas que llegan al almacén: van **directo a la tarima que ya tiene ese producto**, sin pasar por oficina ni por cuarentena.
+
+1. `Almacén → Devolución`. Escanee la pieza o la caja, o escriba clave o nombre del producto.
+2. Capture la cantidad (piezas o cajas). Si viene golpeada, antes marque **Dañada**: en ese caso va al área de devoluciones en una tarima nueva, con incidencia.
+3. Elija la tarima destino en la lista (**Tarimas que ya tienen este producto**, ordenadas por ubicación). Nota opcional (cliente, motivo).
+4. Lleve las piezas a esa ubicación y **escanee la tarima o la etiqueta de la ubicación** para confirmar. Las piezas quedan disponibles en esa tarima de inmediato.
+
+Cada devolución rápida genera un folio `RET-…` ya cerrado, visible en oficina en *Devoluciones* (sin cliente si no se capturó), con el movimiento y la auditoría a nombre de quien la registró. Si no hay ninguna tarima guardada con ese producto, recíbala por *Recibir* como un pallet nuevo.
+
 ## PUT-AWAY (ubicar pallets)
 
 1. `Almacén → Ubicar`. Escanee el **LPN** del pallet.

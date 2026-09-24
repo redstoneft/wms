@@ -48,7 +48,7 @@ export default function ReturnsPage() {
         columns={[
           { key: 'n', header: 'Devolución', render: (r) => <b>{r.return_number}</b> },
           { key: 's', header: 'Estado', render: (r) => <StatusChip status={r.status} /> },
-          { key: 'c', header: 'Cliente', render: (r) => r.customer.name },
+          { key: 'c', header: 'Cliente', render: (r) => r.customer?.name ?? 'Sin cliente (devolución rápida)' },
           { key: 'o', header: 'Pedido original', render: (r) => r.original_order?.order_number ?? '—' },
           { key: 'l', header: 'Líneas', render: (r) => r.lines.length, align: 'right' },
           { key: 'e', header: 'Esperado / Recibido', render: (r) => `${fmtQty(r.lines.reduce((a, l) => a + toBigInt(l.expected_qty), 0n))} / ${fmtQty(r.lines.reduce((a, l) => a + toBigInt(l.received_qty), 0n))}`, align: 'right' },
@@ -86,7 +86,7 @@ function ReturnDrawer({ id, onClose }: { id?: string; onClose: () => void }) {
   const close = useMutation({ mutationFn: () => returnsApi.close(id!), onSuccess: () => { toast.success('Devolución cerrada'); refresh(); }, onError: (e) => toast.error('No se pudo cerrar', e) });
   const r = q.data;
   return (
-    <Drawer open={!!id} onClose={onClose} title={r ? `${r.return_number} · ${r.customer.name}` : 'Devolución'} width="max-w-3xl" footer={r && can('returns.manage') && r.status === 'CLASSIFIED' ? <Button onClick={() => close.mutate()} loading={close.isPending}>Cerrar devolución</Button> : undefined}>
+    <Drawer open={!!id} onClose={onClose} title={r ? `${r.return_number} · ${r.customer?.name ?? 'sin cliente'}` : 'Devolución'} width="max-w-3xl" footer={r && can('returns.manage') && r.status === 'CLASSIFIED' ? <Button onClick={() => close.mutate()} loading={close.isPending}>Cerrar devolución</Button> : undefined}>
       {r && (
         <>
           <dl className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
