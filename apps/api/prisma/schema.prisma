@@ -1197,9 +1197,12 @@ model assembly_orders {
   incident_id         String?  @db.Uuid
   notes               String?
   mode                String   @default("ASSEMBLY") @db.VarChar(10) // ASSEMBLY (component → other SKU) | REPACK (same SKU, new packaging)
-  status              String   @default("COMPLETED") @db.VarChar(20)
+  status              String   @default("COMPLETED") @db.VarChar(20) // IN_PROGRESS (inputs at the station, waiting to be confirmed) | COMPLETED | CANCELLED
   created_by          String   @db.Uuid
   created_at          DateTime @default(now()) @db.Timestamptz(6)
+  started_at          DateTime? @db.Timestamptz(6)
+  completed_at        DateTime? @db.Timestamptz(6)
+  completed_by        String?  @db.Uuid
 
   warehouse  warehouses @relation(fields: [warehouse_id], references: [id])
   station    locations  @relation(fields: [station_location_id], references: [id])

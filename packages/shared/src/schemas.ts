@@ -344,6 +344,27 @@ export const zAssemblyComplete = z.object({
   notes: z.string().trim().min(5).max(2000),
 });
 
+/** Phase 1 of an assembly: the components are taken to the station and blocked; the order stays open until confirmed. */
+export const zAssemblyStart = z.object({
+  station_barcode: zBarcode,
+  inputs: z
+    .array(z.object({ lpn_code: z.string().trim().min(1).max(30), sku_code: zCode, qty: zQty }))
+    .min(1)
+    .max(50),
+  output_sku_code: zCode,
+  notes: z.string().trim().min(5).max(2000),
+});
+/** Phase 2: what came out (pallets, defective pieces) — the inputs of the open order are consumed here. */
+export const zAssemblyFinish = z.object({
+  lot: z.string().trim().max(60).optional(),
+  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  pallets: z.array(z.object({ cases: z.number().int().min(1).max(10000), pieces_per_case: z.number().int().min(1).max(100000) })).min(1).max(50),
+  scrap: z.object({ qty: zQty, reason: zReason }).optional(),
+  notes: z.string().trim().max(2000).optional(),
+});
+export type AssemblyStartInput = z.infer<typeof zAssemblyStart>;
+export type AssemblyFinishInput = z.infer<typeof zAssemblyFinish>;
+
 // ---- tasks an operator creates for themself from the handheld ----
 export const SELF_TASK_KINDS = ['PICK', 'COUNT', 'PUTAWAY', 'RECEIPT'] as const;
 export const zSelfTask = z.object({

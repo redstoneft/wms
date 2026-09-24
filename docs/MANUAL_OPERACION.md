@@ -154,6 +154,13 @@ Cuando un insumo se transforma en producto terminado (cuerpos de sartén en mast
 1. Lleve el pallet de insumo a la **estación de armado** (zona `ARM`) con un traslado normal.
 2. `Almacén → Armado`: escanee la **estación**, luego cada **LPN de insumo** y las **piezas consumidas** (puede agregar varios: mangos, tornillería). "Listo, sin más insumos".
 3. Escanee el **producto terminado** (caja, clave SAE o GTIN) y capture las **tarimas** que salieron y las **piezas por caja** de este armado (el factor de empaque es de la corrida, no del catálogo). Las tarimas no tienen que ser iguales: en la lista *Cajas por tarima* se edita cada una (por ejemplo 70 + 70 + 30); *Cajas en todas* llena todas con el mismo número y *+ Agregar tarima* añade otra.
+
+**Armado en dos fases (lo normal en piso):**
+
+* **Surtir para armar**: `Almacén → Armado → Surtir para armar`. Escanea la estación, las tarimas de cuerpos (con las piezas que se llevan), el producto que va a salir y el para qué. Las tarimas **salen del rack a la estación** (así se ven en el mapa) y quedan **apartadas**: ningún pedido las puede surtir ni nadie las puede mover. El armado queda con folio en *Armados en proceso*.
+* **Confirmar armado**, cuando terminen (ese día u otro, cualquier usuario): en la portada de Armado toca el armado abierto → captura las **tarimas que salieron** (cajas por tarima, piezas por caja) y las **piezas defectuosas** con su motivo → **Confirmar armado**. Ahí se consumen los cuerpos, nacen las tarimas nuevas con etiqueta y tarea de acomodo, y las defectuosas quedan como incidencia. Al ubicar las tarimas nuevas se elige la posición de la lista como en cualquier acomodo.
+* **Cancelar** un armado abierto (botón en la lista, con motivo): las tarimas se desbloquean y reciben tarea de acomodo para regresar al rack.
+* *Armado inmediato* sigue disponible para cuando ya está todo armado y se captura de una vez.
 4. **Merma**: si se consumieron más piezas de las que salieron, capture la diferencia y el motivo; queda como incidencia. Con un solo insumo la cuenta debe cuadrar: consumido = producido + merma.
 4b. **Para qué**: escriba el motivo del armado (obligatorio, mínimo 5 letras); queda en la orden y en la auditoría.
 5. Confirme. El sistema crea los LPN nuevos: **imprima y pegue** cada etiqueta en su tarima. Cada tarima trae ya su **tarea de acomodo**: en `Ubicar`, escanee el LPN y llévelo a donde indique.

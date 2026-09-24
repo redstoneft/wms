@@ -1,8 +1,9 @@
 // /wm/assembly — handheld assembly flow: scan station → scan input pallet(s) and pieces consumed → scan finished product →
 // pallets produced (cases per pallet, pieces per case) → scrap → confirm → print the new LPN labels.
 import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { assemblyApi, type AssemblyResult } from '../api/assembly';
+import { assemblyApi, type AssemblyOrder, type AssemblyResult } from '../api/assembly';
 import { inventoryApi } from '../api/inventory';
 import { labelsApi } from '../api/labels';
 import { masterdataApi } from '../api/masterdata';
@@ -10,7 +11,9 @@ import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
 import { BigButton, BigValue, StepBar, useWm, WmShell } from './WmShell';
 
-type Step = 'STATION' | 'IN_LPN' | 'IN_SKU' | 'IN_QTY' | 'IN_MORE' | 'OUT_SKU' | 'PALLETS' | 'SCRAP' | 'PURPOSE' | 'CONFIRM' | 'DONE';
+type Step = 'HOME' | 'STATION' | 'IN_LPN' | 'IN_SKU' | 'IN_QTY' | 'IN_MORE' | 'OUT_SKU' | 'PALLETS' | 'SCRAP' | 'PURPOSE' | 'CONFIRM' | 'CONFIRM_START' | 'START_DONE' | 'DONE';
+/** ONESHOT: everything at once · START: take components to the station, confirm later · FINISH: confirm an open order */
+type Flow = 'ONESHOT' | 'START' | 'FINISH';
 interface InLine {
   lpn_code: string;
   sku_code: string;
@@ -38,7 +41,12 @@ function Num({ label, value, onChange, testId }: { label: string; value: string;
 
 function Flow() {
   const wm = useWm();
-  const [step, setStep] = useState<Step>('STATION');
+  const qc = useQueryClient();
+  const [step, setStep] = useState<Step>('HOME');
+  const [flow, setFlow] = useState<Flow>('ONESHOT');
+  const [open, setOpen] = useState<AssemblyOrder | null>(null); // the open order being confirmed (FINISH)
+  const [started, setStarted] = useState<AssemblyOrder | null>(null);
+  const openList = useQuery({ queryKey: ['assembly', 'open'], queryFn: () => assemblyApi.list({ status: 'IN_PROGRESS', limit: 50 }), enabled: step === 'HOME', refetchInterval: 15_000 });
   const [station, setStation] = useState('');
   const [lines, setLines] = useState<InLine[]>([]);
   const [draft, setDraft] = useState<InLine | null>(null);
@@ -55,12 +63,12 @@ function Flow() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AssemblyResult | null>(null);
 
-  const consumed = lines.reduce((a, l) => a + (Number(l.qty) || 0), 0);
+  const consumed = flow === 'FINISH' && open ? Number(open.consumed_qty) : lines.reduce((a, l) => a + (Number(l.qty) || 0), 0);
   const totalCases = palletCases.reduce((a, c) => a + (Number(c) || 0), 0);
   const produced = totalCases * (Number(ppc) || 0);
   const setCount = (n: number) => setPalletCases((rows) => (n > rows.length ? [...rows, ...Array.from({ length: n - rows.length }, () => rows[rows.length - 1] ?? '')] : rows.slice(0, Math.max(1, n))));
   const scrapN = Number(scrap) || 0;
-  const single = new Set(lines.map((l) => l.sku_code)).size <= 1;
+  const single = flow === 'FINISH' && open ? new Set(open.inputs.map((i) => i.sku.code)).size <= 1 : new Set(lines.map((l) => l.sku_code)).size <= 1;
   const balanced = !single || consumed === produced + scrapN;
 
   const onLpn = async (code: string) => {
@@ -99,7 +107,69 @@ function Flow() {
       setOut({ code: r.sku.code, description: r.sku.description, requires_lot: r.sku.requires_lot, requires_expiry: r.sku.requires_expiry, case_qty: caseUom ? String(caseUom.base_qty) : '' });
       if (caseUom && !ppc) setPpc(String(caseUom.base_qty));
       wm.ok(lines.every((l) => l.sku_code === r.sku.code) ? `${r.sku.code} · MISMO CÓDIGO: REEMPAQUE` : `${r.sku.code} · ${r.sku.description}`);
+      setStep(flow === 'START' ? 'PURPOSE' : 'PALLETS');
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submitStart = async () => {
+    if (!out) return;
+    setBusy(true);
+    try {
+      const r = await assemblyApi.start({ station_barcode: station, inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })), output_sku_code: out.code, notes: purpose.trim() }, api.newKey());
+      setStarted(r.data);
+      wm.ok(r.replayed ? 'YA REGISTRADO' : `ARMADO ${r.data.code} ABIERTO · ${lines.length} TARIMA(S) EN LA ESTACIÓN`);
+      void qc.invalidateQueries({ queryKey: ['assembly', 'open'] });
+      setStep('START_DONE');
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submitFinish = async () => {
+    if (!open) return;
+    setBusy(true);
+    try {
+      const r = await assemblyApi.finish(open.id, { lot: lot || undefined, expiry_date: expiry || undefined, pallets: palletCases.map((c) => ({ cases: Number(c), pieces_per_case: Number(ppc) })).filter((p) => p.cases > 0), scrap: scrapN > 0 ? { qty: scrapN, reason } : undefined }, api.newKey());
+      setResult(r.data);
+      wm.ok(r.replayed ? 'YA REGISTRADO' : `ARMADO ${r.data.code} CONFIRMADO · ${r.data.produced.length} TARIMAS NUEVAS`);
+      void qc.invalidateQueries({ queryKey: ['assembly', 'open'] });
+      setStep('DONE');
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  /** confirm an open order: load its finished SKU (for lot/expiry/case size) and go straight to the pallets */
+  const pickOpen = async (o: AssemblyOrder) => {
+    setBusy(true);
+    try {
+      const r = await masterdataApi.skuByBarcode(o.output_sku.code);
+      const caseUom = r.uoms.find((u) => u.uom_code === 'CASE');
+      setOut({ code: r.sku.code, description: r.sku.description, requires_lot: r.sku.requires_lot, requires_expiry: r.sku.requires_expiry, case_qty: caseUom ? String(caseUom.base_qty) : '' });
+      setPpc(caseUom ? String(caseUom.base_qty) : '');
+      setOpen(o);
+      setFlow('FINISH');
+      setStation(o.station.barcode);
       setStep('PALLETS');
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cancelOpen = async (o: AssemblyOrder) => {
+    const why = window.prompt(`¿Cancelar el armado ${o.code}? Las tarimas se desbloquean y regresan a rack (tarea de acomodo). Motivo:`);
+    if (!why || why.trim().length < 3) return;
+    setBusy(true);
+    try {
+      await assemblyApi.cancel(o.id, why.trim());
+      wm.ok(`ARMADO ${o.code} CANCELADO`);
+      void qc.invalidateQueries({ queryKey: ['assembly', 'open'] });
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -138,7 +208,10 @@ function Flow() {
     }
   };
   const reset = () => {
-    setStep('STATION');
+    setStep('HOME');
+    setFlow('ONESHOT');
+    setOpen(null);
+    setStarted(null);
     setLines([]);
     setDraft(null);
     setOut(null);
@@ -152,6 +225,50 @@ function Flow() {
     setResult(null);
   };
 
+  if (step === 'HOME')
+    return (
+      <div>
+        <StepBar text="ARMADO · ¿QUÉ VAS A HACER?" />
+        <div className="grid gap-3">
+          <BigButton tone="primary" onClick={() => { setFlow('START'); setStep('STATION'); }} testId="asm-start">
+            Surtir para armar
+            <span className="block text-sm font-normal normal-case text-slate-200">Llevas las tarimas de cuerpos a la mesa; el armado queda abierto y se confirma después</span>
+          </BigButton>
+          <BigButton tone="neutral" onClick={() => { setFlow('ONESHOT'); setStep('STATION'); }} testId="asm-oneshot">
+            Armado inmediato (todo de una vez)
+            <span className="block text-sm font-normal normal-case text-slate-300">Ya está armado: insumos, tarimas que salieron y merma en un solo paso</span>
+          </BigButton>
+        </div>
+        <div className="mt-4 rounded-2xl bg-slate-900 p-3">
+          <div className="mb-1 text-xs font-bold uppercase text-slate-400">Armados en proceso · toca uno para confirmar que ya quedó</div>
+          {(openList.data ?? []).length === 0 && <div className="text-sm text-slate-400">{openList.isLoading ? 'Cargando…' : 'Ninguno abierto'}</div>}
+          <ul className="grid gap-2" data-testid="asm-open-list">
+            {(openList.data ?? []).map((o) => (
+              <li key={o.id} className="rounded-xl bg-slate-800 p-3">
+                <button type="button" className="w-full text-left" onClick={() => void pickOpen(o)} disabled={busy} data-testid={`asm-open-${o.code}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-lg font-black">{o.code}</span>
+                    <span className="text-sm text-slate-300">{o.station.code}</span>
+                  </div>
+                  <div className="text-sm text-slate-200">
+                    {o.output_sku.code} · {o.output_sku.description.slice(0, 30)} · {fmtQty(o.consumed_qty)} pzas en {o.inputs.length} tarima(s)
+                  </div>
+                  <div className="text-xs text-slate-400">{o.notes?.slice(0, 60)}</div>
+                </button>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-bold text-white" onClick={() => void pickOpen(o)} disabled={busy}>
+                    Confirmar armado
+                  </button>
+                  <button type="button" className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-bold text-white" onClick={() => void cancelOpen(o)} disabled={busy}>
+                    Cancelar
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
   if (step === 'STATION')
     return (
       <div>
@@ -181,7 +298,7 @@ function Flow() {
             Listo, sin más insumos
           </BigButton>
         )}
-        <BigButton tone="neutral" className="mt-3" onClick={() => (lines.length ? setStep('IN_MORE') : setStep('STATION'))}>
+        <BigButton tone="neutral" className="mt-3" onClick={() => (lines.length ? setStep('IN_MORE') : setStep('HOME'))}>
           Regresar
         </BigButton>
       </div>
@@ -265,7 +382,7 @@ function Flow() {
   if (step === 'OUT_SKU')
     return (
       <div>
-        <StepBar text="4 · ESCANEA EL PRODUCTO TERMINADO (caja o clave)" />
+        <StepBar text={flow === 'START' ? '4 · ¿QUÉ PRODUCTO VA A SALIR? (escanea caja o clave)' : '4 · ESCANEA EL PRODUCTO TERMINADO (caja o clave)'} />
         <BigValue label="Consumido" value={`${fmtQty(consumed)} pzas`} />
         <div className="mt-3">
           <ScanInput label="Código de barras / clave SAE / GTIN" onScan={onOutSku} disabled={busy} testId="scan-out-sku" />
@@ -278,7 +395,7 @@ function Flow() {
   if (step === 'PALLETS' && out)
     return (
       <div>
-        <StepBar text="5 · ¿CUÁNTAS TARIMAS SALIERON Y CÓMO VAN EMPACADAS?" />
+        <StepBar text={flow === 'FINISH' ? `1 · ${open?.code ?? ''} · ¿CUÁNTAS TARIMAS SALIERON Y CÓMO VAN EMPACADAS?` : '5 · ¿CUÁNTAS TARIMAS SALIERON Y CÓMO VAN EMPACADAS?'} />
         <div className="text-sm text-slate-300">
           {out.code} · {out.description}
         </div>
@@ -330,7 +447,7 @@ function Flow() {
         <BigButton tone="primary" className="mt-3" disabled={produced <= 0 || palletCases.some((c) => !(Number(c) > 0)) || (out.requires_lot && !lot) || (out.requires_expiry && !expiry)} onClick={() => setStep('SCRAP')} testId="pallets-ok">
           Continuar
         </BigButton>
-        <BigButton tone="neutral" className="mt-3" onClick={() => setStep('OUT_SKU')}>
+        <BigButton tone="neutral" className="mt-3" onClick={() => (flow === 'FINISH' ? reset() : setStep('OUT_SKU'))}>
           Regresar
         </BigButton>
       </div>
@@ -338,7 +455,7 @@ function Flow() {
   if (step === 'SCRAP')
     return (
       <div>
-        <StepBar text="6 · ¿HUBO MERMA?" />
+        <StepBar text={flow === 'FINISH' ? '2 · ¿HUBO PIEZAS DEFECTUOSAS?' : '6 · ¿HUBO MERMA?'} />
         <div className="grid gap-2 sm:grid-cols-2">
           <BigValue label="Consumido" value={`${fmtQty(consumed)} pzas`} />
           <BigValue label="Producido" value={`${fmtQty(produced)} pzas`} />
@@ -353,7 +470,7 @@ function Flow() {
           </label>
         )}
         {!balanced && <div className="mt-3 rounded-lg bg-amber-900/60 p-3 text-amber-200">La cuenta no cuadra: consumido {fmtQty(consumed)} ≠ producido {fmtQty(produced)} + merma {fmtQty(scrapN)}. Ajusta la merma o las tarimas.</div>}
-        <BigButton tone="primary" className="mt-3" disabled={!balanced || (scrapN > 0 && reason.trim().length < 3)} onClick={() => setStep('PURPOSE')} testId="scrap-ok">
+        <BigButton tone="primary" className="mt-3" disabled={!balanced || (scrapN > 0 && reason.trim().length < 3)} onClick={() => setStep(flow === 'FINISH' ? 'CONFIRM' : 'PURPOSE')} testId="scrap-ok">
           Continuar
         </BigButton>
         <BigButton tone="neutral" className="mt-3" onClick={() => setStep('PALLETS')}>
@@ -370,8 +487,72 @@ function Flow() {
           <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={3} placeholder="Ej.: pedido de Walmart sale mañana · reponer picking de sartén 20 cm" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-xl text-white" data-testid="asm-purpose" />
           <div className="mt-1 text-xs text-slate-400">Mínimo 5 letras. Queda en la orden y en la auditoría.</div>
         </label>
-        <BigButton tone="primary" className="mt-3" disabled={purpose.trim().length < 5} onClick={() => setStep('CONFIRM')} testId="purpose-ok">
+        <BigButton tone="primary" className="mt-3" disabled={purpose.trim().length < 5} onClick={() => setStep(flow === 'START' ? 'CONFIRM_START' : 'CONFIRM')} testId="purpose-ok">
           Continuar
+        </BigButton>
+        <BigButton tone="neutral" className="mt-3" onClick={() => setStep('SCRAP')}>
+          Regresar
+        </BigButton>
+      </div>
+    );
+  if (step === 'CONFIRM_START' && out)
+    return (
+      <div>
+        <StepBar text="6 · CONFIRMA EL SURTIDO PARA ARMAR" />
+        <div className="grid gap-2 font-mono text-lg">
+          {lines.map((l, i) => (
+            <div key={i} className="rounded bg-slate-800 px-3 py-2">
+              → {fmtQty(l.qty)} pzas de {l.sku_code} · {l.lpn_code} a {station}
+            </div>
+          ))}
+          <div className="rounded bg-emerald-900/60 px-3 py-2 text-emerald-100">Producto que va a salir: {out.code} · {out.description}</div>
+          <div className="rounded bg-slate-800 px-3 py-2 text-slate-200">Para qué: {purpose}</div>
+        </div>
+        <div className="mt-2 text-sm text-slate-300">Las tarimas quedan apartadas en la estación (nadie las puede surtir). Cuando terminen de armar, entras a "Armados en proceso" y confirmas tarimas y defectuosas.</div>
+        <BigButton tone="success" className="mt-3" onClick={submitStart} disabled={busy} testId="confirm-start">
+          Surtir para armar
+        </BigButton>
+        <BigButton tone="neutral" className="mt-3" onClick={() => setStep('PURPOSE')}>
+          Regresar
+        </BigButton>
+      </div>
+    );
+  if (step === 'START_DONE' && started)
+    return (
+      <div>
+        <StepBar text={`ARMADO ${started.code} ABIERTO`} />
+        <BigValue label="Estación" value={started.station.code} tone="ok" />
+        <div className="mt-2 text-center text-lg text-slate-300">
+          {fmtQty(started.consumed_qty)} pzas en {started.inputs.length} tarima(s) apartadas para {started.output_sku.code}.
+        </div>
+        <div className="mt-4 grid gap-2">
+          <BigButton tone="primary" onClick={() => void pickOpen(started)} testId="start-finish-now">
+            Ya quedó armado: confirmar ahora
+          </BigButton>
+          <BigButton tone="neutral" onClick={reset}>
+            Después (queda en Armados en proceso)
+          </BigButton>
+        </div>
+      </div>
+    );
+  if (step === 'CONFIRM' && out && flow === 'FINISH' && open)
+    return (
+      <div>
+        <StepBar text="3 · CONFIRMA QUE YA QUEDÓ ARMADO" />
+        <div className="grid gap-2 font-mono text-lg">
+          {open.inputs.map((l) => (
+            <div key={l.id} className="rounded bg-slate-800 px-3 py-2">
+              − {fmtQty(l.qty)} pzas de {l.sku.code} · {l.lpn.code}
+            </div>
+          ))}
+          <div className="rounded bg-emerald-900/60 px-3 py-2 text-emerald-100">
+            + {palletCases.length} tarima(s) ({palletCases.map((c) => Number(c) || 0).join(' + ')} cajas) × {ppc} pzas de {out.code} = {fmtQty(produced)} pzas
+          </div>
+          {scrapN > 0 && <div className="rounded bg-amber-900/60 px-3 py-2 text-amber-100">Defectuosas {fmtQty(scrapN)} pzas · {reason}</div>}
+        </div>
+        <div className="mt-2 text-sm text-slate-300">Las tarimas nuevas nacen en la estación con etiqueta y tarea de acomodo; al ubicarlas eliges la posición de la lista.</div>
+        <BigButton tone="success" className="mt-3" onClick={submitFinish} disabled={busy} testId="confirm-finish">
+          Confirmar armado
         </BigButton>
         <BigButton tone="neutral" className="mt-3" onClick={() => setStep('SCRAP')}>
           Regresar

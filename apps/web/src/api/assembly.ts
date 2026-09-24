@@ -15,7 +15,9 @@ export interface AssemblyInput {
 export interface AssemblyOrder {
   id: string;
   code: string;
-  status: string;
+  status: string; // IN_PROGRESS | COMPLETED | CANCELLED
+  started_at?: string | null;
+  completed_at?: string | null;
   mode: 'ASSEMBLY' | 'REPACK';
   output_qty: string;
   consumed_qty: string;
@@ -36,9 +38,27 @@ export interface AssemblyResult extends AssemblyOrder {
   warnings: string[];
 }
 
+export interface AssemblyStartInput {
+  station_barcode: string;
+  inputs: { lpn_code: string; sku_code: string; qty: number | string }[];
+  output_sku_code: string;
+  notes: string;
+}
+export interface AssemblyFinishInput {
+  lot?: string;
+  expiry_date?: string;
+  pallets: AssemblyPalletInput[];
+  scrap?: { qty: number | string; reason: string };
+  notes?: string;
+}
 export const assemblyApi = {
-  /** idempotent */
+  /** idempotent: everything at once */
   complete: (body: AssemblyInput, key: string) => api.postIdem<AssemblyResult>('/assembly', body, key),
-  list: (q?: { limit?: number; sku?: string }) => api.get<AssemblyOrder[]>('/assembly', q),
+  /** phase 1 (idempotent): components to the station, order stays open */
+  start: (body: AssemblyStartInput, key: string) => api.postIdem<AssemblyOrder & { moved: { lpn: string; sku: string; qty: string; from: string | null; blocked: string }[] }>('/assembly/start', body, key),
+  /** phase 2 (idempotent): pallets produced + defective pieces */
+  finish: (id: string, body: AssemblyFinishInput, key: string) => api.postIdem<AssemblyResult>(`/assembly/${id}/complete`, body, key),
+  cancel: (id: string, reason: string) => api.post<{ id: string; code: string; status: string }>(`/assembly/${id}/cancel`, { reason }),
+  list: (q?: { limit?: number; sku?: string; status?: string }) => api.get<AssemblyOrder[]>('/assembly', q),
   get: (id: string) => api.get<AssemblyOrder>(`/assembly/${id}`),
 };
