@@ -600,6 +600,18 @@ export const zAuthorize = z.object({
   reason: zReason,
 });
 
+/** Supervisor authorizes an exception right on the operator's handheld with their own credentials (no ID to copy). */
+export const zInlineAuthorize = z.object({
+  username: z.string().trim().min(1).max(60),
+  password: z.string().min(1).max(200),
+  /** TOTP code when the supervisor has MFA */
+  code: z.string().trim().regex(/^\d{6}$/).optional(),
+  exception_type: z.enum(EXCEPTION_TYPES),
+  entity_type: z.string().trim().min(1).max(60),
+  entity_id: z.string().trim().min(1).max(64),
+  reason: zReason,
+});
+
 // ---- settings ----
 export const zSettings = z.object({
   allocation_strategy: z.enum(ALLOCATION_STRATEGIES).optional(),

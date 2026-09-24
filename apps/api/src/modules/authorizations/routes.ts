@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zAuthorize, zUuid } from '@wms/shared';
+import { permissionsForRoles, zAuthorize, zInlineAuthorize, zUuid, type Role } from '@wms/shared';
 import { getDb, withTx, type Tx } from '../../db.js';
-import { ForbiddenError, NotFoundError, RuleError } from '../../errors.js';
+import { AppError, ForbiddenError, NotFoundError, RuleError, UnauthorizedError } from '../../errors.js';
+import { loadConfig } from '../../config.js';
+import { decryptSecret, verifyPassword, verifyTotp } from '../../lib/crypto.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 
@@ -63,6 +65,46 @@ export async function createAuthorization(tx: Tx, ctx: ActorContext, input: z.in
 
 export async function authorizationRoutes(app: FastifyInstance) {
   const db = getDb();
+
+  /**
+   * Inline authorization from the operator's handheld: the supervisor types their own username/password (and MFA
+   * code if enrolled) on the spot. Same rules as an office authorization: the supervisor needs exceptions.authorize
+   * (and putaway.override for location overrides) and can never be the operator requesting it. Failed passwords
+   * count towards the supervisor's account lockout exactly like a login.
+   */
+  app.post('/authorizations/inline', async (req, reply) => {
+    const body = zInlineAuthorize.parse(req.body);
+    const actor = req.actor!;
+    const cfg = loadConfig();
+    const user = await db.users.findUnique({ where: { username: body.username.toLowerCase() }, include: { user_roles: { include: { role: true } } } });
+    const dummy = 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+    const ok = await verifyPassword(body.password, user?.password_hash ?? dummy);
+    if (!user || !user.is_active) throw new UnauthorizedError('Usuario o contraseña del supervisor incorrectos');
+    if (user.locked_until && user.locked_until > new Date()) throw new AppError(423, 'ACCOUNT_LOCKED', 'La cuenta del supervisor está bloqueada temporalmente');
+    const fail = async (action: string) => {
+      const failed = user.failed_login_count + 1;
+      await db.users.update({ where: { id: user.id }, data: { failed_login_count: failed, locked_until: failed >= 10 ? new Date(Date.now() + 15 * 60_000) : null } });
+      await db.audit_logs.create({ data: { user_id: user.id, username: user.username, action, entity_type: body.entity_type, entity_id: body.entity_id, ip: actor.ip, request_id: actor.requestId } });
+    };
+    if (!ok) {
+      await fail('auth.inline_authorize_failed');
+      throw new UnauthorizedError('Usuario o contraseña del supervisor incorrectos');
+    }
+    if (user.mfa_enabled) {
+      if (!body.code) throw new RuleError('MFA_CODE_REQUIRED', 'Este supervisor usa código de verificación (MFA): captúralo también', { mfa: true });
+      if (!user.mfa_secret_enc || !verifyTotp(decryptSecret(user.mfa_secret_enc, cfg.APP_ENCRYPTION_KEY), body.code)) {
+        await fail('auth.inline_authorize_mfa_failed');
+        throw new UnauthorizedError('Código de verificación incorrecto');
+      }
+    }
+    if (user.id === actor.userId) throw new RuleError('SELF_AUTHORIZATION', 'Quien ejecuta la excepción no puede autorizarla; debe autorizar otro supervisor');
+    const roles = user.user_roles.map((r) => r.role.code as Role);
+    const supCtx = { ...actor, userId: user.id, username: user.username, roles, permissions: permissionsForRoles(roles) };
+    const a = await withTx((tx) => createAuthorization(tx, supCtx, { exception_type: body.exception_type, entity_type: body.entity_type, entity_id: body.entity_id, requested_by: actor.userId, reason: body.reason }));
+    await db.users.update({ where: { id: user.id }, data: { failed_login_count: 0 } });
+    reply.status(201);
+    return { id: a.id, supervisor: user.username, reason: a.reason };
+  });
   app.get('/authorizations', { preHandler: app.requirePermission('exceptions.authorize') }, async (req) => {
     const q = z.object({ entity_type: z.string().optional(), entity_id: z.string().optional(), status: z.string().optional() }).parse(req.query);
     return db.authorizations.findMany({

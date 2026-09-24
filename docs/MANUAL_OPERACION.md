@@ -41,9 +41,19 @@ Cada devolución rápida genera un folio `RET-…` ya cerrado, visible en oficin
 1. `Almacén → Ubicar`. Escanee el **LPN** del pallet.
 2. La pantalla muestra en grande la **ubicación destino** (p. ej. `A-03-R05-N02-P04`) y el contenido.
 3. Lleve el pallet y escanee la **etiqueta de la ubicación**.
-4. Verde: pallet ubicado. Rojo `UBICACIÓN INCORRECTA`: está en el lugar equivocado; vaya a la ubicación indicada. Si no puede (rack ocupado/dañado), pida al supervisor una **autorización de override** y vuelva a escanear la nueva ubicación.
+4. Verde: pallet ubicado. Rojo `UBICACIÓN INCORRECTA`: está en el lugar equivocado; vaya a la ubicación indicada. Si de verdad debe quedar en otro lugar, en la misma pantalla aparece la **autorización de supervisor**: el supervisor teclea ahí mismo su usuario y contraseña (y su código MFA si lo usa) con el motivo, y el pallet se ubica donde se escaneó. Si quien ubica ya tiene permiso de supervisor, solo escribe el motivo y presiona **Autorizar yo mismo**. Ya no hay que copiar ningún ID de oficina (sigue disponible como opción).
 5. **Elegir otro destino sin autorización:** antes de escanear, **Otra ubicación (automática)** pide al sistema el siguiente mejor hueco, y **Elegir ubicación de la lista** muestra un menú con las ubicaciones que aceptan el pallet (primero las que ya tienen ese producto, con ocupación `n/capacidad`). Al elegir una, esa pasa a ser el destino y se confirma escaneándola. Solo aparecen ubicaciones válidas (tipo, capacidad, peso, compatibilidad), por eso no requiere supervisor.
 6. Nunca deje un pallet sin escanear su ubicación: para el sistema seguiría en el andén.
+
+## AUTORIZACIONES DE SUPERVISOR EN EL HANDHELD
+
+Algunas excepciones exigen que un supervisor las apruebe: ubicar un pallet fuera del destino sugerido y verificar un pedido que uno mismo surtió. En ellas el handheld ya no pide un "ID de autorización":
+
+* **Otro supervisor presente**: teclea su usuario y contraseña en el handheld del operador (y su código MFA si lo tiene) y el motivo. Queda registrado como autorizado por ese supervisor; una contraseña equivocada cuenta como intento fallido de login.
+* **Quien ejecuta ya es supervisor** (tiene el permiso correspondiente): solo escribe el motivo y aprueba él mismo; en auditoría queda como auto-autorización.
+* **ID de oficina**: sigue existiendo (Oficina → Autorizaciones) para quien prefiera ese camino; se captura desplegando "Tengo un ID de autorización".
+
+Regla que se conserva: nadie puede autorizar con sus propias credenciales una excepción que él mismo está ejecutando; para eso está el permiso de supervisor. Cancelar un pedido que ya está en surtido sigue requiriendo la autorización de **otro** supervisor (Oficina → Autorizaciones).
 
 ## PICKING (surtido)
 

@@ -14,6 +14,8 @@ export const adminApi = {
   updateSettings: (body: Partial<Settings>) => api.put<Settings>('/settings', body),
   authorizations: (q?: { entity_type?: string; entity_id?: string; status?: string }) => api.get<Authorization[]>('/authorizations', q),
   authorize: (body: { exception_type: string; entity_type: string; entity_id: string; requested_by?: string; reason: string }) => api.post<Authorization>('/authorizations', body),
+  /** supervisor authorizes on the operator's handheld with their own credentials */
+  inlineAuthorize: (body: { username: string; password: string; code?: string; exception_type: string; entity_type: string; entity_id: string; reason: string }) => api.post<{ id: string; supervisor: string; reason: string }>('/authorizations/inline', body),
   revokeAuthorization: (id: string) => api.post<Authorization>(`/authorizations/${id}/revoke`),
   audit: (q?: { entity_type?: string; entity_id?: string; user_id?: string; action?: string; from?: string; to?: string; limit?: number; before_id?: string }) =>
     api.get<{ items: AuditRow[]; next_before_id: string | null }>('/audit', q),

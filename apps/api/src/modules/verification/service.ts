@@ -21,13 +21,17 @@ export async function startVerification(tx: Tx, ctx: ActorContext, input: { orde
   const active = await tx.verifications.findFirst({ where: { order_id: order.id, status: 'IN_PROGRESS' } });
   if (active) throw new ConflictError('VERIFICATION_IN_PROGRESS', 'A verification is already in progress for this order');
   let authId: string | null = null;
+  let selfOverride = false;
   if (order.picker_id === ctx.userId) {
-    if (!input.authorization_id) {
+    if (input.authorization_id) {
+      // the authorizing supervisor must be neither the verifier nor the picker
+      await consumeAuthorization(tx, input.authorization_id, { exception_type: 'SAME_USER_VERIFICATION', entity_type: 'order', entity_id: order.id }, ctx, [order.picker_id]);
+      authId = input.authorization_id;
+    } else if (ctx.permissions.has('verification.override_same_user')) {
+      selfOverride = true; // a supervisor who picked and verifies the same order: allowed on their own authority, audited
+    } else {
       throw new RuleError('SAME_USER', 'SURTIDOR = VERIFICADOR: the picker cannot verify their own order. A supervisor authorization (SAME_USER_VERIFICATION) is required.', { picker_id: order.picker_id });
     }
-    // the authorizing supervisor must be neither the verifier nor the picker
-    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'SAME_USER_VERIFICATION', entity_type: 'order', entity_id: order.id }, ctx, [order.picker_id]);
-    authId = input.authorization_id;
   }
   const expected = await tx.$queryRaw<{ lpn_id: string; sku_id: string; qty: bigint }[]>`
     SELECT b.lpn_id, b.sku_id, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id
@@ -36,8 +40,8 @@ export async function startVerification(tx: Tx, ctx: ActorContext, input: { orde
   const v = await tx.verifications.create({
     data: { order_id: order.id, verifier_id: ctx.userId, same_user_authorization_id: authId, lines: { create: expected.map((e) => ({ sku_id: e.sku_id, lpn_id: e.lpn_id, expected_qty: e.qty })) } },
   });
-  await audit(tx, ctx, { action: 'verification.start', entity_type: 'order', entity_id: order.id, after: { verification_id: v.id, same_user_authorized: !!authId, lines: expected.length } });
-  return { verification_id: v.id, order_number: order.order_number, lpn_count: new Set(expected.map((e) => e.lpn_id)).size, same_user_authorized: !!authId };
+  await audit(tx, ctx, { action: 'verification.start', entity_type: 'order', entity_id: order.id, after: { verification_id: v.id, same_user_authorized: !!authId || selfOverride, self_override: selfOverride, lines: expected.length } });
+  return { verification_id: v.id, order_number: order.order_number, lpn_count: new Set(expected.map((e) => e.lpn_id)).size, same_user_authorized: !!authId || selfOverride };
 }
 
 export async function verifyScan(tx: Tx, ctx: ActorContext, input: { verification_id: string; lpn_code: string; barcode: string; qty: bigint; uom_code?: UomCode }) {

@@ -8,6 +8,7 @@ import type { PendingVerificationOrder } from '../api/types';
 import { QtyPad } from '../components/QtyPad';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
+import { SupervisorAuth } from './SupervisorAuth';
 import { BigButton, BigValue, StepBar, useWm, WmList, WmShell } from './WmShell';
 
 type Step = 'ORDER' | 'AUTH' | 'LPN' | 'PRODUCT' | 'QTY' | 'RESULT';
@@ -28,7 +29,6 @@ function Flow() {
   const [vid, setVid] = useState<string | null>(null);
   const view = useQuery({ queryKey: ['verification', vid], queryFn: () => verificationApi.get(vid!), enabled: !!vid });
   const [step, setStep] = useState<Step>('ORDER');
-  const [authId, setAuthId] = useState('');
   const [lpn, setLpn] = useState('');
   const [product, setProduct] = useState('');
   const [busy, setBusy] = useState(false);
@@ -119,21 +119,19 @@ function Flow() {
       <div>
         <StepBar text="AUTORIZACIÓN DE SUPERVISOR REQUERIDA" />
         <div className="rounded-2xl bg-amber-400 p-4 text-amber-950">
-          <div className="text-xl font-black">Tú surtiste este pedido. Un supervisor debe autorizar la excepción.</div>
-          <p className="mt-1 text-sm">
-            Oficina → Autorizaciones: tipo <b>SAME_USER_VERIFICATION</b>, entidad <b>order</b>, id:
-          </p>
-          <div className="my-1 select-all break-all rounded bg-amber-300 p-2 font-mono text-xs">{order.id}</div>
+          <div className="text-xl font-black">Tú surtiste este pedido. Un supervisor debe autorizar que también lo verifiques.</div>
         </div>
-        <input value={authId} onChange={(e) => setAuthId(e.target.value)} placeholder="ID de autorización (UUID)" className="mt-3 h-14 w-full rounded-xl bg-slate-800 px-3 font-mono text-white" />
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <BigButton tone="neutral" onClick={() => setStep('ORDER')}>
-            Otro pedido
-          </BigButton>
-          <BigButton tone="warning" disabled={busy || authId.trim().length < 36} onClick={() => start(order, authId.trim())}>
-            Iniciar con autorización
-          </BigButton>
-        </div>
+        <SupervisorAuth
+          title={`Verificar el pedido ${order.order_number} surtido por ti`}
+          exceptionType="SAME_USER_VERIFICATION"
+          entityType="order"
+          entityId={order.id}
+          selfPermission="verification.override_same_user"
+          busy={busy}
+          onAuthorized={(id) => start(order, id)}
+          onSelf={() => start(order)}
+          onCancel={() => setStep('ORDER')}
+        />
       </div>
     );
 

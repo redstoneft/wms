@@ -6,6 +6,7 @@ import { putawayApi } from '../api/storage';
 import type { PutawayOption, PutawayStartResult } from '../api/types';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
+import { SupervisorAuth } from './SupervisorAuth';
 import { BigButton, BigValue, StepBar, useWm, WmShell } from './WmShell';
 
 export default function WmPutawayPage() {
@@ -20,7 +21,7 @@ function Flow() {
   const wm = useWm();
   const [task, setTask] = useState<PutawayStartResult | null>(null);
   const [busy, setBusy] = useState(false);
-  const [override, setOverride] = useState<{ scanned: string; authId: string; reason: string } | null>(null);
+  const [override, setOverride] = useState<{ scanned: string } | null>(null);
   const [done, setDone] = useState<{ lpn: string; location: string; overridden: boolean } | null>(null);
   const pending = useQuery({ queryKey: ['putaway-tasks'], queryFn: () => putawayApi.tasks(), refetchInterval: 10_000, enabled: !task });
 
@@ -39,12 +40,12 @@ function Flow() {
     }
   };
 
-  const confirm = async (locationBarcode: string, auth?: { authId: string; reason: string }) => {
+  const confirm = async (locationBarcode: string, auth?: { authId?: string; reason: string }) => {
     if (!task) return;
     setBusy(true);
     try {
       const r = await putawayApi.confirm(
-        { task_id: task.task.id, lpn_code: task.lpn.code, location_barcode: locationBarcode, authorization_id: auth?.authId, override_reason: auth?.reason || undefined },
+        { task_id: task.task.id, lpn_code: task.lpn.code, location_barcode: locationBarcode, authorization_id: auth?.authId || undefined, override_reason: auth?.reason || undefined },
         api.newKey(),
       );
       wm.ok(r.replayed ? 'YA CONFIRMADO' : `UBICADO EN ${r.data.location}`);
@@ -52,9 +53,9 @@ function Flow() {
       setTask(null);
       setOverride(null);
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'WRONG_LOCATION') {
-        wm.error(e, 'UBICACIÓN INCORRECTA');
-        setOverride({ scanned: locationBarcode, authId: '', reason: '' });
+      if (e instanceof ApiError && (e.code === 'WRONG_LOCATION' || e.code === 'REASON_REQUIRED')) {
+        wm.error(e, e.code === 'WRONG_LOCATION' ? 'UBICACIÓN INCORRECTA' : 'FALTA EL MOTIVO');
+        setOverride({ scanned: locationBarcode });
       } else wm.fail(e);
     } finally {
       setBusy(false);
@@ -146,18 +147,17 @@ function Flow() {
         <ScanInput label="Código de la ubicación" onScan={(v) => confirm(v)} disabled={busy} testId="scan-location" placeholder="LOC-…" />
       </div>
       {override && (
-        <div className="mt-3 rounded-2xl border-2 border-amber-400 bg-slate-900 p-3" data-testid="override-panel">
-          <div className="text-lg font-black text-amber-300">¿UBICAR EN OTRO LUGAR? Requiere autorización de supervisor</div>
-          <p className="mt-1 text-sm text-slate-300">
-            Pide al supervisor que autorice en Oficina → Autorizaciones con tipo <b>PUTAWAY_LOCATION_OVERRIDE</b>, entidad <b>putaway_task</b> id:
-          </p>
-          <div className="my-1 select-all break-all rounded bg-slate-800 p-2 font-mono text-xs">{task.task.id}</div>
-          <input value={override.authId} onChange={(e) => setOverride({ ...override, authId: e.target.value })} placeholder="ID de autorización (UUID)" className="mt-2 h-14 w-full rounded-xl bg-slate-800 px-3 font-mono text-white" />
-          <input value={override.reason} onChange={(e) => setOverride({ ...override, reason: e.target.value })} placeholder="Motivo (opcional, usa el de la autorización)" className="mt-2 h-14 w-full rounded-xl bg-slate-800 px-3 text-white" />
-          <BigButton tone="warning" className="mt-2" disabled={busy || override.authId.trim().length < 36} onClick={() => confirm(override.scanned, { authId: override.authId.trim(), reason: override.reason })}>
-            Ubicar en {override.scanned} con autorización
-          </BigButton>
-        </div>
+        <SupervisorAuth
+          title={`¿Ubicar en ${override.scanned} en vez de ${task.target?.code ?? '?'}?`}
+          exceptionType="PUTAWAY_LOCATION_OVERRIDE"
+          entityType="putaway_task"
+          entityId={task.task.id}
+          selfPermission="putaway.override"
+          busy={busy}
+          onAuthorized={(id, reason) => confirm(override.scanned, { authId: id, reason })}
+          onSelf={(reason) => confirm(override.scanned, { reason })}
+          onCancel={() => setOverride(null)}
+        />
       )}
       {options && (
         <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="location-chooser">

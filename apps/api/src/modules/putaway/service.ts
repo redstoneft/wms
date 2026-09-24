@@ -273,7 +273,16 @@ export async function confirmPutaway(
   let overrideBy: string | null = null;
   let overrideReason: string | null = null;
   if (scanned.id !== task.suggested_location_id) {
-    if (!input.authorization_id) {
+    if (input.authorization_id) {
+      const auth = await consumeAuthorization(tx, input.authorization_id, { exception_type: 'PUTAWAY_LOCATION_OVERRIDE', entity_type: 'putaway_task', entity_id: task.id }, ctx);
+      overrideBy = auth.supervisor_id;
+      overrideReason = input.override_reason ?? auth.reason;
+    } else if (ctx.permissions.has('putaway.override')) {
+      // a supervisor doing the put-away themselves overrides on their own authority: reason mandatory, audited as self-override
+      overrideBy = ctx.userId;
+      overrideReason = input.override_reason?.trim() || null;
+      if (!overrideReason) throw new RuleError('REASON_REQUIRED', 'Indica el motivo para ubicar en otro lugar', { self_override: true });
+    } else {
       const suggested = task.suggested_location_id ? await tx.locations.findUnique({ where: { id: task.suggested_location_id } }) : null;
       throw new RuleError('WRONG_LOCATION', `UBICACIÓN INCORRECTA: expected ${suggested?.code ?? '?'}, scanned ${scanned.code}`, {
         expected: suggested?.code ?? null,
@@ -281,9 +290,6 @@ export async function confirmPutaway(
         hint: 'A supervisor authorization (PUTAWAY_LOCATION_OVERRIDE) is required to store the pallet elsewhere',
       });
     }
-    const auth = await consumeAuthorization(tx, input.authorization_id, { exception_type: 'PUTAWAY_LOCATION_OVERRIDE', entity_type: 'putaway_task', entity_id: task.id }, ctx);
-    overrideBy = auth.supervisor_id;
-    overrideReason = input.override_reason ?? auth.reason;
     if (!overrideReason) throw new RuleError('REASON_REQUIRED', 'Override requires a reason');
   }
 
@@ -308,7 +314,7 @@ export async function confirmPutaway(
   });
   await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'STORED', lpn_type: 'STORAGE' } });
   await audit(tx, ctx, {
-    action: overrideBy ? 'putaway.confirm_override' : 'putaway.confirm',
+    action: overrideBy ? (overrideBy === ctx.userId ? 'putaway.confirm_override_self' : 'putaway.confirm_override') : 'putaway.confirm',
     entity_type: 'lpn',
     entity_id: lpn.id,
     before: { location_id: lpn.current_location_id },
