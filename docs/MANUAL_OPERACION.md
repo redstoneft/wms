@@ -132,7 +132,7 @@ Cuando un insumo se transforma en producto terminado (cuerpos de sartén en mast
 
 1. Lleve el pallet de insumo a la **estación de armado** (zona `ARM`) con un traslado normal.
 2. `Almacén → Armado`: escanee la **estación**, luego cada **LPN de insumo** y las **piezas consumidas** (puede agregar varios: mangos, tornillería). "Listo, sin más insumos".
-3. Escanee el **producto terminado** (caja, clave SAE o GTIN) y capture **tarimas**, **cajas por tarima** y **piezas por caja** de este armado (el factor de empaque es de la corrida, no del catálogo).
+3. Escanee el **producto terminado** (caja, clave SAE o GTIN) y capture las **tarimas** que salieron y las **piezas por caja** de este armado (el factor de empaque es de la corrida, no del catálogo). Las tarimas no tienen que ser iguales: en la lista *Cajas por tarima* se edita cada una (por ejemplo 70 + 70 + 30); *Cajas en todas* llena todas con el mismo número y *+ Agregar tarima* añade otra.
 4. **Merma**: si se consumieron más piezas de las que salieron, capture la diferencia y el motivo; queda como incidencia. Con un solo insumo la cuenta debe cuadrar: consumido = producido + merma.
 4b. **Para qué**: escriba el motivo del armado (obligatorio, mínimo 5 letras); queda en la orden y en la auditoría.
 5. Confirme. El sistema crea los LPN nuevos: **imprima y pegue** cada etiqueta en su tarima. Cada tarima trae ya su **tarea de acomodo**: en `Ubicar`, escanee el LPN y llévelo a donde indique.

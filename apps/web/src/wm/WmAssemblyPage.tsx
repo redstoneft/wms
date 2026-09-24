@@ -44,8 +44,8 @@ function Flow() {
   const [draft, setDraft] = useState<InLine | null>(null);
   const [options, setOptions] = useState<{ sku_code: string; description: string; qty: string }[]>([]);
   const [out, setOut] = useState<{ code: string; description: string; requires_lot: boolean; requires_expiry: boolean; case_qty: string } | null>(null);
-  const [nPallets, setNPallets] = useState('1');
-  const [cases, setCases] = useState('');
+  // one entry per physical pallet (cases on it); pallets need not be equal: 70 + 70 + 30 is fine
+  const [palletCases, setPalletCases] = useState<string[]>(['']);
   const [ppc, setPpc] = useState('');
   const [lot, setLot] = useState('');
   const [expiry, setExpiry] = useState('');
@@ -56,7 +56,9 @@ function Flow() {
   const [result, setResult] = useState<AssemblyResult | null>(null);
 
   const consumed = lines.reduce((a, l) => a + (Number(l.qty) || 0), 0);
-  const produced = (Number(nPallets) || 0) * (Number(cases) || 0) * (Number(ppc) || 0);
+  const totalCases = palletCases.reduce((a, c) => a + (Number(c) || 0), 0);
+  const produced = totalCases * (Number(ppc) || 0);
+  const setCount = (n: number) => setPalletCases((rows) => (n > rows.length ? [...rows, ...Array.from({ length: n - rows.length }, () => rows[rows.length - 1] ?? '')] : rows.slice(0, Math.max(1, n))));
   const scrapN = Number(scrap) || 0;
   const single = new Set(lines.map((l) => l.sku_code)).size <= 1;
   const balanced = !single || consumed === produced + scrapN;
@@ -108,12 +110,11 @@ function Flow() {
     if (!out) return;
     setBusy(true);
     try {
-      const n = Number(nPallets);
       const r = await assemblyApi.complete(
         {
           station_barcode: station,
           inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })),
-          output: { sku_code: out.code, lot: lot || undefined, expiry_date: expiry || undefined, pallets: Array.from({ length: n }, () => ({ cases: Number(cases), pieces_per_case: Number(ppc) })) },
+          output: { sku_code: out.code, lot: lot || undefined, expiry_date: expiry || undefined, pallets: palletCases.map((c) => ({ cases: Number(c), pieces_per_case: Number(ppc) })).filter((p) => p.cases > 0) },
           scrap: scrapN > 0 ? { qty: scrapN, reason } : undefined,
           notes: purpose.trim(),
         },
@@ -141,8 +142,7 @@ function Flow() {
     setLines([]);
     setDraft(null);
     setOut(null);
-    setNPallets('1');
-    setCases('');
+    setPalletCases(['']);
     setPpc('');
     setLot('');
     setExpiry('');
@@ -283,9 +283,30 @@ function Flow() {
           {out.code} · {out.description}
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          <Num label="Tarimas" value={nPallets} onChange={setNPallets} testId="n-pallets" />
-          <Num label="Cajas por tarima" value={cases} onChange={setCases} testId="cases" />
+          <Num label="Tarimas" value={String(palletCases.length)} onChange={(v) => setCount(Math.min(50, Number(v) || 0))} testId="n-pallets" />
+          <Num label="Cajas en todas" value={palletCases.every((c) => c === palletCases[0]) ? palletCases[0]! : ''} onChange={(v) => setPalletCases((rows) => rows.map(() => v))} testId="cases" />
           <Num label="Piezas por caja" value={ppc} onChange={setPpc} testId="ppc" />
+        </div>
+        <div className="mt-3 rounded-2xl bg-slate-900 p-3" data-testid="pallet-rows">
+          <div className="mb-1 text-xs font-bold uppercase text-slate-400">Cajas por tarima (edita cada una si no van iguales)</div>
+          <div className="grid gap-2">
+            {palletCases.map((c, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="w-24 font-mono text-slate-300">Tarima {i + 1}</span>
+                <input type="number" inputMode="numeric" min={0} value={c} onChange={(e) => setPalletCases((rows) => rows.map((x, j) => (j === i ? e.target.value : x)))} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-2 font-mono text-2xl text-white" data-testid={`pallet-cases-${i}`} />
+                <span className="text-sm text-slate-400">cajas</span>
+                <button type="button" className="rounded bg-slate-700 px-2 py-2 text-xs font-bold text-white disabled:opacity-40" onClick={() => setPalletCases((rows) => rows.filter((_, j) => j !== i))} disabled={palletCases.length <= 1} aria-label={`Quitar tarima ${i + 1}`}>
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="mt-2 w-full rounded-xl border-2 border-slate-500 py-2 text-sm font-bold text-slate-200" onClick={() => setCount(palletCases.length + 1)} data-testid="pallet-add">
+            + Agregar tarima
+          </button>
+          <div className="mt-2 text-sm text-slate-300">
+            {palletCases.length} tarima(s) · {palletCases.map((c) => Number(c) || 0).join(' + ')} = {totalCases} cajas
+          </div>
         </div>
         {(out.requires_lot || out.requires_expiry) && (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -306,7 +327,7 @@ function Flow() {
         <div className="mt-3">
           <BigValue label="Producido" value={`${fmtQty(produced)} pzas`} tone={balanced ? 'ok' : 'warn'} testId="produced" />
         </div>
-        <BigButton tone="primary" className="mt-3" disabled={produced <= 0 || (out.requires_lot && !lot) || (out.requires_expiry && !expiry)} onClick={() => setStep('SCRAP')} testId="pallets-ok">
+        <BigButton tone="primary" className="mt-3" disabled={produced <= 0 || palletCases.some((c) => !(Number(c) > 0)) || (out.requires_lot && !lot) || (out.requires_expiry && !expiry)} onClick={() => setStep('SCRAP')} testId="pallets-ok">
           Continuar
         </BigButton>
         <BigButton tone="neutral" className="mt-3" onClick={() => setStep('OUT_SKU')}>
@@ -368,7 +389,7 @@ function Flow() {
             </div>
           ))}
           <div className="rounded bg-emerald-900/60 px-3 py-2 text-emerald-100">
-            + {nPallets} tarima(s) × {cases} cajas × {ppc} pzas de {out.code} = {fmtQty(produced)} pzas
+            + {palletCases.length} tarima(s) ({palletCases.map((c) => Number(c) || 0).join(' + ')} cajas) × {ppc} pzas de {out.code} = {fmtQty(produced)} pzas
           </div>
           {scrapN > 0 && <div className="rounded bg-amber-900/60 px-3 py-2 text-amber-100">Merma {fmtQty(scrapN)} pzas · {reason}</div>}
           <div className="rounded bg-slate-800 px-3 py-2 text-slate-200">Para qué: {purpose}</div>
