@@ -264,16 +264,17 @@ describe('orders: cancellation during picking, partial allocation, short pick', 
     expect(pk.status).toBe(200);
     const outbound = pk.body.outbound_lpn as string;
     const before = await skuTotal(f.skus[2]!.id);
-    const noAuth = await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló' });
-    expect(noAuth.status).toBe(422);
-    // the authorizer must be a different supervisor than the one executing the cancellation
-    const sup2 = await userWithRoles('esup2', ['SUPERVISOR']);
+    // a user without supervisor rights needs an authorization from a supervisor
+    const clerk = await userWithRoles('eclerk', ['INVENTORY_CONTROL']);
+    const noAuth = await clerk.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló' });
+    expect([403, 422]).toContain(noAuth.status);
+    // a supervisor can never consume an authorization issued by themselves…
     const selfAuth = await sup.post('/authorizations', { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.body.id, reason: 'cliente canceló' });
     expect((await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló', authorization_id: selfAuth.body.id })).body.error).toBe('SELF_AUTHORIZATION');
     await sup.post(`/authorizations/${selfAuth.body.id}/revoke`);
-    const auth = await sup2.post('/authorizations', { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.body.id, reason: 'cliente canceló' });
-    const c = await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló', authorization_id: auth.body.id });
-    expect(c.status).toBe(200);
+    // …but cancels on their own authority without an ID (reason mandatory, audited)
+    const c = await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló' });
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
     expect(await skuTotal(f.skus[2]!.id)).toBe(before); // nothing lost
     // source pallet: everything not picked is AVAILABLE again; picked units live on the (now storage) outbound pallet, AVAILABLE, with a put-away task
     const src = await sql<{ status: string; qty: bigint }>(`SELECT b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${line.lpn_code}' ORDER BY b.status`);

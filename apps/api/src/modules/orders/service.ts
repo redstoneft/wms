@@ -222,8 +222,9 @@ export async function cancelOrder(tx: Tx, ctx: ActorContext, input: { order_id: 
   if (['SHIPPED', 'LOADED', 'LOADING', 'CANCELLED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status} and cannot be cancelled`);
   if (o.shipment_id) throw new RuleError('ORDER_IN_SHIPMENT', 'Remove the order from its shipment first');
   if (['PICKING', 'PICKED', 'STAGED', 'VERIFIED'].includes(o.status)) {
-    if (!input.authorization_id) throw new RuleError('AUTHORIZATION_REQUIRED', 'Cancelling an order during/after picking requires supervisor authorization (ORDER_CANCEL_DURING_PICKING)');
-    await consumeAuthorization(tx, input.authorization_id, { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.id }, ctx);
+    if (input.authorization_id) await consumeAuthorization(tx, input.authorization_id, { exception_type: 'ORDER_CANCEL_DURING_PICKING', entity_type: 'order', entity_id: o.id }, ctx);
+    else if (!ctx.permissions.has('exceptions.authorize')) throw new RuleError('AUTHORIZATION_REQUIRED', 'Cancelling an order during/after picking requires supervisor authorization (ORDER_CANCEL_DURING_PICKING)');
+    // else: a supervisor/admin cancels on their own authority (reason is mandatory; the audit entry names them)
     await unpickOrder(tx, ctx, o.id, input.reason);
   }
   const de = await deallocateOrder(tx, ctx, o.id, input.reason);

@@ -53,7 +53,7 @@ Algunas excepciones exigen que un supervisor las apruebe: ubicar un pallet fuera
 * **Quien ejecuta ya es supervisor** (tiene el permiso correspondiente): solo escribe el motivo y aprueba él mismo; en auditoría queda como auto-autorización.
 * **ID de oficina**: sigue existiendo (Oficina → Autorizaciones) para quien prefiera ese camino; se captura desplegando "Tengo un ID de autorización".
 
-Regla que se conserva: nadie puede autorizar con sus propias credenciales una excepción que él mismo está ejecutando; para eso está el permiso de supervisor. Cancelar un pedido que ya está en surtido sigue requiriendo la autorización de **otro** supervisor (Oficina → Autorizaciones).
+Regla que se conserva: nadie puede autorizar con sus propias credenciales una excepción que él mismo está ejecutando; para eso está el permiso de supervisor. Cancelar un pedido que ya está en surtido: un supervisor o administrador lo cancela desde oficina con solo el motivo (queda auditado); otros usuarios necesitan la autorización de un supervisor.
 
 ## PICKING (surtido)
 

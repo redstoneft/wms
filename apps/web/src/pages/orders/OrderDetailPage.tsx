@@ -205,12 +205,13 @@ export default function OrderDetailPage() {
       </Modal>
       <ConfirmDialog open={cancel.open} onClose={() => setCancel({ open: false, reason: '', auth: '' })} onConfirm={() => doCancel.mutate()} title={`Cancelar pedido ${o.order_number}`} danger loading={doCancel.isPending} confirmLabel="Cancelar pedido">
         <div className="grid gap-3">
-          {needsAuth && <Alert tone="warn">El pedido está en surtido/staging: se requiere autorización de supervisor <b>ORDER_CANCEL_DURING_PICKING</b> (entidad order, id {o.id}). Los pallets surtidos regresan a inventario disponible con tarea de put-away.</Alert>}
+          {needsAuth && can('exceptions.authorize') && <Alert tone="info">El pedido está en surtido/staging. Como supervisor puedes cancelarlo con solo el motivo (queda auditado a tu nombre). Los pallets surtidos regresan a inventario disponible con tarea de put-away.</Alert>}
+          {needsAuth && !can('exceptions.authorize') && <Alert tone="warn">El pedido está en surtido/staging: se requiere autorización de supervisor <b>ORDER_CANCEL_DURING_PICKING</b> (entidad order, id {o.id}). Los pallets surtidos regresan a inventario disponible con tarea de put-away.</Alert>}
           <Field label="Motivo (mín. 3)" required>
             <Textarea value={cancel.reason} onChange={(e) => setCancel({ ...cancel, reason: e.target.value })} />
           </Field>
           {needsAuth && (
-            <Field label="ID de autorización" required>
+            <Field label={can('exceptions.authorize') ? 'ID de autorización (opcional para supervisor)' : 'ID de autorización'} required={!can('exceptions.authorize')}>
               <Input value={cancel.auth} onChange={(e) => setCancel({ ...cancel, auth: e.target.value })} className="font-mono" />
             </Field>
           )}
