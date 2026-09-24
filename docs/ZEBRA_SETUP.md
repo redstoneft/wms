@@ -50,9 +50,8 @@ Cuando la Zebra está conectada por USB a una PC y **otra aplicación de etiquet
 
 Configuración, una sola vez, en Chrome o Edge de esa PC:
 
-1. WMS → Datos maestros → Impresoras → la Zebra → **Generar token** → botón **Abrir estación USB con este token**. Se abre `/print-station` y el token queda guardado en ese navegador.
+1. WMS → Datos maestros → Impresoras → la Zebra → **Generar token** → **Descargar estacion_wms.bat** (un solo archivo, ya trae el token). Doble clic: se copia solo a la carpeta Inicio de Windows y abre la estación en su propia ventana de Edge/Chrome.
 2. **Elegir la Zebra**: en la ventanita del navegador seleccionar la Zebra y "Conectar". Solo se pide la primera vez.
-3. **Imprimir prueba** para confirmar. Desde ese momento la estación ya está imprimiendo la cola (no hay botón de iniciar; "Pausar" la detiene).
-4. Para que arranque sola al prender la PC: descargar `estacion_wms.bat` desde la misma página y pegarlo en la carpeta Inicio (Win+R → `shell:startup`). Abre la estación en su propia ventana de Edge/Chrome.
+3. **Imprimir prueba** para confirmar. Desde ese momento la estación ya está imprimiendo la cola (no hay botón de iniciar; "Pausar" la detiene) y arranca sola cada vez que se prende la PC.
 
 La página consulta la cola cada 3 segundos (con un worker, para que siga funcionando aunque la ventana esté atrás), escribe el ZPL directo a la Zebra por USB y marca las etiquetas como enviadas. En Impresoras la estación aparece como "WebUSB - Win32". La app de etiquetas SAE y esta estación conviven: cada una toma la impresora solo mientras manda una etiqueta.

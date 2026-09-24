@@ -226,7 +226,7 @@ export default function PrintStationPage() {
   }, [running]);
 
   const origin = window.location.origin;
-  const startupBat = `@echo off\r\nrem Abre la estacion de impresion del WMS en su propia ventana (Edge o Chrome). Ponme en la carpeta Inicio (Win+R -> shell:startup).\r\ntimeout /t 20 >nul\r\nstart "" msedge --app=${origin}/print-station 2>nul || start "" chrome --app=${origin}/print-station 2>nul || start "" ${origin}/print-station\r\n`;
+  const startupBat = `@echo off\r\nrem Estacion de impresion WMS. Doble clic: se copia a la carpeta Inicio y abre la estacion en su propia ventana.\r\nset "URL=${origin}/print-station"\r\nset "INICIO=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\"\r\nif /i not "%~dp0"=="%INICIO%" copy /y "%~f0" "%INICIO%estacion_wms.bat" >nul 2>nul\r\nif /i "%~dp0"=="%INICIO%" timeout /t 20 >nul\r\nstart "" msedge --app="%URL%" 2>nul || start "" chrome --app="%URL%" 2>nul || start "" "%URL%"\r\n`;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800">
@@ -301,8 +301,7 @@ export default function PrintStationPage() {
         <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4 text-sm">
           <div className="font-semibold text-slate-700">Que arranque sola al prender la PC</div>
           <ol className="mt-1 list-decimal space-y-1 pl-5 text-slate-600">
-            <li>Descarga <a className="font-semibold text-sky-700 underline" href={URL.createObjectURL(new Blob([startupBat], { type: 'application/octet-stream' }))} download="estacion_wms.bat">estacion_wms.bat</a>.</li>
-            <li>Win+R → escribe <span className="font-mono">shell:startup</span> → Enter, y pega ahí el archivo.</li>
+            <li>Descarga <a className="font-semibold text-sky-700 underline" href={URL.createObjectURL(new Blob([startupBat], { type: 'application/octet-stream' }))} download="estacion_wms.bat">estacion_wms.bat</a> y dale doble clic: se copia solo a la carpeta Inicio de Windows.</li>
             <li>Listo: al iniciar Windows se abre esta estación en su propia ventana y empieza a imprimir. Si la cierran por error, doble clic en el mismo archivo.</li>
           </ol>
           <div className="mt-2 text-xs text-slate-500">El token y la Zebra quedan guardados en este navegador de esta PC. Si otra app (por ejemplo la de etiquetas SAE) está usando la impresora en ese instante, la etiqueta se reintenta en el siguiente ciclo.</div>

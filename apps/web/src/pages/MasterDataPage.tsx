@@ -260,35 +260,39 @@ function Printers() {
       {can('printers.manage') && <div className="mb-3"><Button onClick={() => setEdit({ isNew: true, code: '', name: '', host: '', mode: 'NETWORK', port: 9100, dpi: 203, label_width_mm: 101, label_height_mm: 84, is_default: false })}>Nueva impresora</Button></div>}
       <Modal open={!!token} onClose={() => setToken(null)} title={`Estación de impresión · ${token?.printer ?? ''}`}>
         <p className="text-sm text-slate-700">
-          Una página web no puede ver las impresoras de la computadora. Por eso la Zebra en USB se conecta con la <b>estación de impresión</b>: un programa pequeño que corre en la PC donde está la impresora y le pide al WMS las etiquetas. El <b>token</b> es la contraseña de esa PC ante el WMS.
+          La Zebra está en USB en una computadora; el WMS le manda las etiquetas a través de la <b>estación de impresión</b>, que corre en esa PC. Un solo archivo la deja lista y la hace arrancar sola al prender la PC.
         </p>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>
-            En la PC de la Zebra, instala Python desde <span className="font-mono">python.org</span> marcando "Add Python to PATH". Las librerías necesarias se instalan solas al ejecutar el archivo.
-          </li>
-          <li>Descarga los dos archivos de abajo en una carpeta, por ejemplo <span className="font-mono">C:\wms-print</span>. El <span className="font-mono">.bat</span> ya trae este token.</li>
-          <li>
-            Doble clic en <span className="font-mono">run_agent.bat</span>. Debe decir "Impresora WMS: {token?.printer}" y la impresora de Windows con su puerto USB. Desde ese momento todo lo que imprimas aquí sale en la Zebra, y esta pantalla marca la estación como conectada. Si dice "impresa" pero no sale nada: usa <span className="font-mono">prueba_impresora.bat</span>, revisa que la cola de Windows no esté en pausa ni "sin conexión", y que sea la Zebra correcta (si hay varias, fija el nombre en run_agent.bat). Si Windows marca la impresora en "Error", guarda <span className="font-mono">reparar_impresora.bat</span> en la misma carpeta y ejecútalo: pide permisos de administrador, revisa el USB, limpia la cola, crea la impresora "ZEBRA" con driver genérico, imprime una prueba y deja run_agent.bat listo.
-          </li>
-          <li>Para que arranque sola: acceso directo del .bat en la carpeta Inicio de Windows (Win+R → shell:startup).</li>
+          <li>En la PC de la Zebra (con Chrome o Edge), descarga <span className="font-mono">estacion_wms.bat</span> y dale doble clic. Se copia solo a la carpeta Inicio de Windows y abre la estación en su propia ventana.</li>
+          <li>La primera vez, en esa ventana presiona <b>Elegir la Zebra</b>, selecciónala y "Conectar". Luego <b>Imprimir prueba</b>.</li>
+          <li>Listo: desde ese momento, y cada vez que se prenda la PC, imprime sola todo lo que se mande desde el WMS. Aquí la verás como "conectada".</li>
         </ol>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Estacion de impresion WMS - ${token?.printer ?? ''}\r\ncd /d %~dp0\r\nset WMS_URL=${window.location.origin}\r\nset WMS_PRINT_TOKEN=${token?.token ?? ''}\r\nrem Si hay varias Zebra o no imprime, pon aqui el nombre exacto de la impresora de Windows (quita el 'rem'):\r\nrem set WMS_WINDOWS_PRINTER=ZDesigner GK420t\r\nif "%1"=="prueba" (python -m pip install --quiet pywin32 requests & python wms_print_agent.py --test & pause & exit /b 0)\r\npython --version >nul 2>nul || (echo No se encontro Python. Instalalo desde python.org marcando "Add Python to PATH" y vuelve a abrir este archivo. & pause & exit /b 1)\r\npython -m pip install --quiet pywin32 requests\r\n:loop\r\npython wms_print_agent.py\r\necho.\r\necho La estacion se detuvo. Reiniciando en 5 segundos... (cierra esta ventana para salir)\r\ntimeout /t 5 >nul\r\ngoto loop\r\n`], { type: 'application/octet-stream' }))} download="run_agent.bat">
-            Descargar run_agent.bat (con el token)
+          <a className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\nrem Estacion de impresion WMS - ${token?.printer ?? ''}. Doble clic: abre la estacion y la deja para que arranque sola al prender la PC.\r\nset "URL=${window.location.origin}/print-station#token=${token?.token ?? ''}"\r\nset "INICIO=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\"\r\nif /i not "%~dp0"=="%INICIO%" copy /y "%~f0" "%INICIO%estacion_wms.bat" >nul 2>nul\r\nif /i "%~dp0"=="%INICIO%" timeout /t 20 >nul\r\nstart "" msedge --app="%URL%" 2>nul || start "" chrome --app="%URL%" 2>nul || start "" "%URL%"\r\n`], { type: 'application/octet-stream' }))} download="estacion_wms.bat" data-testid="agent-download-station">
+            Descargar estacion_wms.bat
           </a>
-          <a className="rounded-md bg-slate-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ncd /d %~dp0\r\ncall run_agent.bat prueba\r\n`], { type: 'application/octet-stream' }))} download="prueba_impresora.bat">
-            Descargar prueba_impresora.bat (imprime una etiqueta de prueba)
-          </a>
-          <a className="rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Reparar impresora Zebra - WMS\r\ncd /d %~dp0\r\nnet session >nul 2>nul || (echo Pidiendo permisos de administrador... & powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" & exit /b)\r\necho Descargando la herramienta de reparacion...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing '${window.location.origin}/print-agent/reparar_impresora.ps1' -OutFile '%~dp0reparar_impresora.ps1'"\r\nif not exist "%~dp0reparar_impresora.ps1" (echo No se pudo descargar. Revisa el internet de esta PC. & pause & exit /b 1)\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0reparar_impresora.ps1"\r\necho.\r\npause\r\n`], { type: 'application/octet-stream' }))} download="reparar_impresora.bat">
-            Descargar reparar_impresora.bat (si Windows marca la Zebra en "Error")
-          </a>
-          <a className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white" href={`/print-station#token=${token?.token ?? ''}`} target="_blank" rel="noreferrer" data-testid="agent-open-station">
-            Abrir estación USB con este token (Chrome/Edge en la PC de la Zebra, sin instalar nada)
-          </a>
-          <a className="rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white" href="/print-agent/wms_print_agent.py" download="wms_print_agent.py">
-            Descargar wms_print_agent.py
+          <a className="rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-700" href={`/print-station#token=${token?.token ?? ''}`} target="_blank" rel="noreferrer" data-testid="agent-open-station">
+            Abrir la estación aquí mismo (si esta ya es la PC de la Zebra)
           </a>
         </div>
+        <details className="mt-3 text-xs text-slate-500">
+          <summary>Opción B · estación Python (solo si la Zebra usa el driver normal de Windows y el navegador no la puede tomar)</summary>
+          <p className="mt-2">Instala Python desde python.org marcando "Add Python to PATH". Guarda estos archivos en una carpeta (por ejemplo C:\wms-print) y ejecuta run_agent.bat; las librerías se instalan solas. prueba_impresora.bat imprime una prueba; reparar_impresora.bat arregla la cola de Windows si marca "Error".</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <a className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Estacion de impresion WMS - ${token?.printer ?? ''}\r\ncd /d %~dp0\r\nset WMS_URL=${window.location.origin}\r\nset WMS_PRINT_TOKEN=${token?.token ?? ''}\r\nrem Si hay varias Zebra o no imprime, pon aqui el nombre exacto de la impresora de Windows (quita el 'rem'):\r\nrem set WMS_WINDOWS_PRINTER=ZDesigner GK420t\r\nif "%1"=="prueba" (python -m pip install --quiet pywin32 requests & python wms_print_agent.py --test & pause & exit /b 0)\r\npython --version >nul 2>nul || (echo No se encontro Python. Instalalo desde python.org marcando "Add Python to PATH" y vuelve a abrir este archivo. & pause & exit /b 1)\r\npython -m pip install --quiet pywin32 requests\r\n:loop\r\npython wms_print_agent.py\r\necho.\r\necho La estacion se detuvo. Reiniciando en 5 segundos... (cierra esta ventana para salir)\r\ntimeout /t 5 >nul\r\ngoto loop\r\n`], { type: 'application/octet-stream' }))} download="run_agent.bat">
+              run_agent.bat
+            </a>
+            <a className="rounded-md bg-slate-600 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ncd /d %~dp0\r\ncall run_agent.bat prueba\r\n`], { type: 'application/octet-stream' }))} download="prueba_impresora.bat">
+              prueba_impresora.bat
+            </a>
+            <a className="rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Reparar impresora Zebra - WMS\r\ncd /d %~dp0\r\nnet session >nul 2>nul || (echo Pidiendo permisos de administrador... & powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" & exit /b)\r\necho Descargando la herramienta de reparacion...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing '${window.location.origin}/print-agent/reparar_impresora.ps1' -OutFile '%~dp0reparar_impresora.ps1'"\r\nif not exist "%~dp0reparar_impresora.ps1" (echo No se pudo descargar. Revisa el internet de esta PC. & pause & exit /b 1)\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0reparar_impresora.ps1"\r\necho.\r\npause\r\n`], { type: 'application/octet-stream' }))} download="reparar_impresora.bat">
+              reparar_impresora.bat
+            </a>
+            <a className="rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white" href="/print-agent/wms_print_agent.py" download="wms_print_agent.py">
+              wms_print_agent.py
+            </a>
+          </div>
+        </details>
         <details className="mt-3 text-xs text-slate-500">
           <summary>Ver el token</summary>
           <pre className="mt-2 select-all break-all rounded bg-slate-900 p-3 font-mono text-sm text-emerald-300" data-testid="agent-token">{token?.token}</pre>
