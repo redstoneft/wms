@@ -210,7 +210,8 @@ export default function PrintStationPage() {
             if (!alive) break;
             for (const job of r.jobs) {
               try {
-                await writeToZebra(device, job.zpl);
+                // other apps (SAE labels) may leave the printer in EPL mode: force ZPL before every label, it is harmless otherwise
+                await writeToZebra(device, FORCE_ZPL + job.zpl);
                 await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: true } });
                 setPrinted((n) => n + 1);
                 say(`IMPRESA ${job.label_type} ${job.entity}${job.is_reprint ? ' (reimpresión)' : ''}`);

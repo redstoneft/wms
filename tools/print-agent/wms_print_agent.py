@@ -220,7 +220,8 @@ def main():
             ok, err = False, ""
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
-                    print_raw(job["zpl"], PRINTER_NAME)
+                    # otras apps pueden dejar la Zebra en modo EPL: forzar ZPL antes de cada etiqueta (inofensivo si ya esta en ZPL)
+                    print_raw(FORCE_ZPL + job["zpl"].encode("utf-8"), PRINTER_NAME)
                     ok = True
                     break
                 except Exception as e:  # noqa: BLE001
