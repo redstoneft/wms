@@ -24,6 +24,8 @@ async function touch(printerId: string, host: string | null) {
 }
 
 async function pingInfo(p: { id: string; code: string; name: string; dpi: number; label_width_mm: number; label_height_mm: number }) {
+  // a station that died mid-print leaves PRINTING claims behind: they go back to the queue here as well as on claim
+  await getDb().label_prints.updateMany({ where: { printer_id: p.id, status: 'PRINTING', claimed_at: { lt: new Date(Date.now() - STALE_CLAIM_MS) } }, data: { status: 'QUEUED', claimed_at: null } });
   const queued = await getDb().label_prints.count({ where: { printer_id: p.id, status: 'QUEUED' } });
   return { printer: p.code, name: p.name, dpi: p.dpi, label_width_mm: p.label_width_mm, label_height_mm: p.label_height_mm, queued };
 }

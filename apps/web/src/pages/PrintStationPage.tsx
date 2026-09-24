@@ -62,32 +62,51 @@ async function agent<T>(token: string, path: string, init?: { method?: string; b
   return (await r.json()) as T;
 }
 
+/** A USB call that never answers (printer paused, out of labels, head open, cable) must not freeze the station. */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = window.setTimeout(() => reject(new Error(`La Zebra no responde (${what} > ${Math.round(ms / 1000)} s): revisa que esté encendida, con etiquetas, sin pausa y con la tapa cerrada`)), ms);
+    p.then((v) => { window.clearTimeout(t); resolve(v); }, (e) => { window.clearTimeout(t); reject(e); });
+  });
+}
+
 /** Writes raw ZPL to the Zebra: open → claim printer interface → bulk OUT → release/close (so other apps can use it). */
 async function writeToZebra(dev: UsbDevice, data: string) {
-  if (!dev.opened) await dev.open();
+  if (!dev.opened) await withTimeout(dev.open(), 8000, 'abrir');
   try {
-    if (!dev.configuration) await dev.selectConfiguration(dev.configurations[0]?.configurationValue ?? 1);
+    if (!dev.configuration) await withTimeout(dev.selectConfiguration(dev.configurations[0]?.configurationValue ?? 1), 5000, 'configurar');
     const cfg = dev.configuration!;
     const iface = cfg.interfaces.find((i) => i.alternates.some((a) => a.interfaceClass === 7)) ?? cfg.interfaces[0];
     if (!iface) throw new Error('La impresora no expone una interfaz USB de impresión');
     const alt = iface.alternates.find((a) => a.endpoints.some((e) => e.direction === 'out' && e.type === 'bulk')) ?? iface.alternates[0]!;
     const ep = alt.endpoints.find((e) => e.direction === 'out' && e.type === 'bulk');
     if (!ep) throw new Error('La impresora no tiene endpoint de salida');
-    await dev.claimInterface(iface.interfaceNumber);
+    await withTimeout(dev.claimInterface(iface.interfaceNumber), 8000, 'tomar la interfaz');
     try {
       const bytes = new TextEncoder().encode(data);
       const CHUNK = 16 * 1024;
       for (let i = 0; i < bytes.length; i += CHUNK) {
-        const r = await dev.transferOut(ep.endpointNumber, bytes.slice(i, i + CHUNK));
+        const r = await withTimeout(dev.transferOut(ep.endpointNumber, bytes.slice(i, i + CHUNK)), 20000, 'enviar datos');
         if (r.status !== 'ok') throw new Error(`USB transfer ${r.status}`);
       }
     } finally {
-      await dev.releaseInterface(iface.interfaceNumber).catch(() => undefined);
+      await withTimeout(dev.releaseInterface(iface.interfaceNumber), 5000, 'soltar la interfaz').catch(() => undefined);
     }
   } finally {
-    await dev.close().catch(() => undefined);
+    await withTimeout(dev.close(), 5000, 'cerrar').catch(() => undefined);
   }
 }
+
+/** The deployed bundle changed (a new version of the WMS): reload when idle so the station never runs stale code. */
+async function deployedBundle(): Promise<string | null> {
+  try {
+    const html = await (await fetch('/', { cache: 'no-store', credentials: 'omit' })).text();
+    return /assets\/(index-[A-Za-z0-9_-]+\.js)/.exec(html)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+const CURRENT_BUNDLE = /assets\/(index-[A-Za-z0-9_-]+\.js)/.exec(Array.from(document.scripts).map((s) => s.src).join(' '))?.[1] ?? null;
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 interface LogRow { t: string; msg: string; ok: boolean }
@@ -112,6 +131,7 @@ export default function PrintStationPage() {
   const [printed, setPrinted] = useState(0);
   const [ready, setReady] = useState(false); // remembered devices checked
   const busy = useRef(false);
+  const cycleStart = useRef(0); // watchdog: when the loop got stuck in a USB call
   const supported = !!usb();
   const secure = window.isSecureContext;
   const running = !!token && !!device && !paused;
@@ -177,11 +197,14 @@ export default function PrintStationPage() {
     if (!running) return;
     let alive = true;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let generation = 0;
     const run = async () => {
       if (busy.current || !device) return;
       busy.current = true;
+      const mine = ++generation;
       try {
-        while (alive) {
+        while (alive && mine === generation) {
+          cycleStart.current = Date.now();
           try {
             const r = await agent<{ jobs: Job[] }>(token, '/jobs?limit=5&wait=25');
             if (!alive) break;
@@ -208,8 +231,18 @@ export default function PrintStationPage() {
           }
         }
       } finally {
-        busy.current = false;
+        if (mine === generation) busy.current = false;
       }
+    };
+    // watchdog: a cycle is at most one long poll (25 s) plus a few labels; far beyond that the loop is stuck → abandon it and restart
+    const kick = () => {
+      if (busy.current && cycleStart.current && Date.now() - cycleStart.current > 120_000) {
+        say('La estación se quedó atorada; reiniciando el ciclo', false);
+        generation++;
+        busy.current = false;
+        void device.close().catch(() => undefined);
+      }
+      void run();
     };
     say(`Estación activa · ${printer?.name ?? ''}`);
     void run();
@@ -217,11 +250,11 @@ export default function PrintStationPage() {
     let fallback: number | null = null;
     try {
       worker = new Worker('/station-tick.js');
-      worker.onmessage = () => void run();
+      worker.onmessage = kick;
     } catch {
-      fallback = window.setInterval(() => void run(), 3000);
+      fallback = window.setInterval(kick, 3000);
     }
-    const onVis = () => { if (document.visibilityState === 'visible') void run(); };
+    const onVis = () => { if (document.visibilityState === 'visible') kick(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { alive = false; worker?.terminate(); if (fallback) window.clearInterval(fallback); document.removeEventListener('visibilitychange', onVis); };
   }, [running, device, token, printer?.name, say]);
@@ -234,6 +267,16 @@ export default function PrintStationPage() {
     wl?.request('screen').then((l) => { lock = l; }).catch(() => undefined);
     return () => { void lock?.release(); };
   }, [running]);
+
+  // new version deployed → reload when idle (every 5 min check)
+  useEffect(() => {
+    const id = window.setInterval(async () => {
+      const b = await deployedBundle();
+      if (b && CURRENT_BUNDLE && b !== CURRENT_BUNDLE && !busy.current) window.location.reload();
+      else if (b && CURRENT_BUNDLE && b !== CURRENT_BUNDLE) window.setTimeout(() => { if (!busy.current) window.location.reload(); }, 30_000);
+    }, 5 * 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const origin = window.location.origin;
   const startupBat = `@echo off\r\nrem Estacion de impresion WMS. Doble clic: se copia a la carpeta Inicio y abre la estacion en su propia ventana.\r\nset "URL=${origin}/print-station"\r\nset "INICIO=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\"\r\nif /i not "%~dp0"=="%INICIO%" copy /y "%~f0" "%INICIO%estacion_wms.bat" >nul 2>nul\r\nif /i "%~dp0"=="%INICIO%" timeout /t 20 >nul\r\nstart "" msedge --app="%URL%" 2>nul || start "" chrome --app="%URL%" 2>nul || start "" "%URL%"\r\n`;

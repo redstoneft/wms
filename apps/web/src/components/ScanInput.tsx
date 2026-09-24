@@ -86,7 +86,13 @@ export function ScanInput({ onScan, onType, label, placeholder = 'Escanea…', d
           value={value}
           onChange={(e) => { setValue(e.target.value); onType?.(e.target.value); }}
           onKeyDown={onKey}
-          onBlur={() => setTimeout(focus, 50)}
+          onBlur={() => {
+            // keep the scanner target focused, but never steal focus from another field or button the operator chose
+            setTimeout(() => {
+              const ae = document.activeElement;
+              if (!ae || ae === document.body || ae.tagName === 'CANVAS') focus();
+            }, 50);
+          }}
           disabled={disabled || busy}
           placeholder={placeholder}
           inputMode={inputMode}
