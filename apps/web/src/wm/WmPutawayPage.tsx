@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { putawayApi } from '../api/storage';
-import type { PutawayStartResult } from '../api/types';
+import type { PutawayOption, PutawayStartResult } from '../api/types';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
 import { BigButton, BigValue, StepBar, useWm, WmShell } from './WmShell';
@@ -61,14 +61,33 @@ function Flow() {
     }
   };
 
-  const resuggest = async () => {
+  // choosing the destination: "another one" (engine) or a location from the list
+  const [options, setOptions] = useState<{ list: PutawayOption[]; selected: string } | null>(null);
+  const choose = async (body: { location_code?: string; other?: boolean }) => {
     if (!task) return;
     setBusy(true);
     try {
-      await putawayApi.resuggest(task.task.id);
-      const r = await putawayApi.start(task.lpn.code);
-      setTask(r);
-      wm.ok(`NUEVO DESTINO ${r.target?.code ?? '?'}`);
+      const r = await putawayApi.choose(task.task.id, body);
+      setTask({ ...task, target: r.target, task: { ...task.task, suggested_location_id: r.target.id } });
+      setOptions(null);
+      setOverride(null);
+      wm.ok(`NUEVO DESTINO ${r.target.code}`);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const openOptions = async () => {
+    if (!task) return;
+    setBusy(true);
+    try {
+      const r = await putawayApi.options(task.task.id);
+      if (!r.options.length) {
+        wm.warn('NO HAY OTRA UBICACIÓN DISPONIBLE');
+        return;
+      }
+      setOptions({ list: r.options, selected: r.options.find((o) => !o.is_current)?.code ?? r.options[0]!.code });
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -140,14 +159,39 @@ function Flow() {
           </BigButton>
         </div>
       )}
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <BigButton tone="neutral" onClick={resuggest} disabled={busy}>
-          Re-sugerir destino
-        </BigButton>
-        <BigButton tone="neutral" onClick={() => setTask(null)}>
-          Cancelar
-        </BigButton>
-      </div>
+      {options && (
+        <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="location-chooser">
+          <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Elige la ubicación destino</div>
+          <select value={options.selected} onChange={(e) => setOptions({ ...options, selected: e.target.value })} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="location-select">
+            {options.list.map((o) => (
+              <option key={o.code} value={o.code}>
+                {o.code}{o.has_same_sku ? ' · ya tiene este producto' : ''}{o.pallet_capacity > 0 ? ` · ${o.lpn_count}/${o.pallet_capacity}` : ''}{o.is_current ? ' (actual)' : ''}
+              </option>
+            ))}
+          </select>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <BigButton tone="neutral" onClick={() => setOptions(null)}>
+              Cancelar
+            </BigButton>
+            <BigButton tone="success" onClick={() => choose({ location_code: options.selected })} disabled={busy} testId="location-use">
+              Usar esta ubicación
+            </BigButton>
+          </div>
+        </div>
+      )}
+      {!options && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <BigButton tone="neutral" onClick={() => choose({ other: true })} disabled={busy} testId="location-other">
+            Otra ubicación (automática)
+          </BigButton>
+          <BigButton tone="neutral" onClick={openOptions} disabled={busy} testId="location-pick">
+            Elegir ubicación de la lista
+          </BigButton>
+        </div>
+      )}
+      <BigButton tone="neutral" className="mt-2" onClick={() => { setTask(null); setOptions(null); }}>
+        Cancelar
+      </BigButton>
     </div>
   );
 }

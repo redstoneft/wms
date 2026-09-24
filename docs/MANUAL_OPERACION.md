@@ -21,6 +21,8 @@ Recepción abierta por error (sin pallets recibidos): el supervisor la cancela d
 6. Al terminar el pallet: **CERRAR PALLET** (ya no acepta más producto y queda listo para ubicar).
 7. Al terminar el contenedor: **COMPLETAR RECEPCIÓN**. Si hay faltantes o sobrantes aparecerá la comparación *Esperado vs Recibido*; confirme para que se generen las incidencias.
 
+**Me equivoqué (producto escaneado dos veces, cantidad de más):** en la pantalla del pallet registrado, botón **Me equivoqué: deshacer este registro**; o en la pantalla de escaneo, en *Contenido del pallet actual*, toque **✕ Quitar** junto al producto e indique cuántas piezas quitar (todas = el producto sale del pallet). Se puede corregir mientras el pallet siga en el andén, aunque ya esté cerrado; si el pallet queda vacío se cancela. Una vez ubicado en rack ya no se corrige aquí: use *Re-recibir tarima* o un conteo.
+
 Errores comunes: `Código no encontrado` (producto sin código de barras registrado → avisar a inventarios), `SKU no esperado` (se recibe pero queda marcado con incidencia).
 
 ## PUT-AWAY (ubicar pallets)
@@ -29,7 +31,8 @@ Errores comunes: `Código no encontrado` (producto sin código de barras registr
 2. La pantalla muestra en grande la **ubicación destino** (p. ej. `A-03-R05-N02-P04`) y el contenido.
 3. Lleve el pallet y escanee la **etiqueta de la ubicación**.
 4. Verde: pallet ubicado. Rojo `UBICACIÓN INCORRECTA`: está en el lugar equivocado; vaya a la ubicación indicada. Si no puede (rack ocupado/dañado), pida al supervisor una **autorización de override** y vuelva a escanear la nueva ubicación.
-5. Nunca deje un pallet sin escanear su ubicación: para el sistema seguiría en el andén.
+5. **Elegir otro destino sin autorización:** antes de escanear, **Otra ubicación (automática)** pide al sistema el siguiente mejor hueco, y **Elegir ubicación de la lista** muestra un menú con las ubicaciones que aceptan el pallet (primero las que ya tienen ese producto, con ocupación `n/capacidad`). Al elegir una, esa pasa a ser el destino y se confirma escaneándola. Solo aparecen ubicaciones válidas (tipo, capacidad, peso, compatibilidad), por eso no requiere supervisor.
+6. Nunca deje un pallet sin escanear su ubicación: para el sistema seguiría en el andén.
 
 ## PICKING (surtido)
 

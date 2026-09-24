@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReason, zReceiveScan, zUuid } from '@wms/shared';
+import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReason, zReceiveScan, zReceiveUndo, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { trainingWhere } from '../../lib/training-scope.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
@@ -140,6 +140,14 @@ export async function inboundRoutes(app: FastifyInstance) {
         .then((s) => (s.auto_print_lpn_labels === false ? null : printLabel(actor, { label_type: 'LPN', entity_id: r.body.lpn.code, copies: 1 }, 'PRINT')))
         .catch((e: Error) => req.log.warn({ err: e.message, lpn: r.body.lpn.code }, 'auto label print failed'));
     }
+    return r.body;
+  });
+
+  /** Undo a scan registered by mistake while the pallet is still at the dock. */
+  app.post('/receipts/undo', { preHandler: app.requirePermission('receiving.scan') }, async (req, reply) => {
+    const body = zReceiveUndo.parse(req.body);
+    const r = await runIdempotent(req.actor!, fingerprint('POST', '/receipts/undo', body), async (tx) => ({ status: 200, body: await svc.undoReceiveScan(tx, req.actor!, body) }));
+    if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
   });
 

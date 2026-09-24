@@ -1,6 +1,6 @@
 // put-away, transfers, replenishment, cycle counts
 import { api } from './client';
-import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult } from './types';
+import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult, PutawayOption } from './types';
 
 export const putawayApi = {
   tasks: (status?: string) => api.get<PutawayTaskRow[]>('/putaway/tasks', { status }),
@@ -10,6 +10,9 @@ export const putawayApi = {
   /** idempotent */
   confirm: (body: { task_id: string; lpn_code: string; location_barcode: string; override_reason?: string; authorization_id?: string }, key: string) =>
     api.postIdem<PutawayConfirmResult>('/putaway/confirm', body, key),
+  /** destinations the operator may pick, and the pick itself (a code from the list, or "another one") */
+  options: (id: string) => api.get<{ task_id: string; current: string | null; options: PutawayOption[] }>(`/putaway/tasks/${id}/options`),
+  choose: (id: string, body: { location_code?: string; other?: boolean }) => api.post<{ task: unknown; target: { id: string; code: string; barcode: string } }>(`/putaway/tasks/${id}/choose`, body),
   resuggest: (id: string) => api.post<{ task: unknown; explanation: unknown }>(`/putaway/tasks/${id}/resuggest`),
   cancel: (id: string, reason: string) => api.post<{ ok: true }>(`/putaway/tasks/${id}/cancel`, { reason }),
 };

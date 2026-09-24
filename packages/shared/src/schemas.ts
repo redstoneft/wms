@@ -263,6 +263,16 @@ export const zCreateReceipt = z.object({
   expected: z.array(z.object({ sku_code: zCode, qty: zQty, uom_code: zUom.default('CASE') })).optional(),
 });
 
+/** Undo a receiving scan (wrong product or quantity registered twice): removes qty from a pallet still at the dock. */
+export const zReceiveUndo = z.object({
+  receipt_id: zUuid,
+  lpn_code: z.string().trim().min(1).max(30),
+  sku_code: zCode,
+  qty: zQty,
+  uom_code: zUom.default('PIECE'),
+  reason: z.string().trim().max(300).optional(),
+});
+
 // One physical pallet built during receiving: scanned barcode + counted qty.
 export const zReceiveScan = z.object({
   receipt_id: zUuid,
@@ -289,6 +299,11 @@ export const zCloseReceipt = z.object({
 
 // ---- put-away / transfers ----
 export const zPutawayScanLpn = z.object({ lpn_code: z.string().trim().min(1).max(30) });
+/** Operator picks the destination of a put-away: a location from the list, or "another one" chosen by the engine. */
+export const zPutawayChoose = z.object({
+  location_code: z.string().trim().min(1).max(40).optional(),
+  other: z.boolean().default(false),
+});
 export const zPutawayConfirm = z.object({
   task_id: zUuid,
   lpn_code: z.string().trim().min(1).max(30),
@@ -586,4 +601,5 @@ export const zSettings = z.object({
 export type LoginInput = z.infer<typeof zLogin>;
 export type CreateSkuInput = z.infer<typeof zCreateSku>;
 export type ReceiveScanInput = z.infer<typeof zReceiveScan>;
+export type ReceiveUndoInput = z.infer<typeof zReceiveUndo>;
 export type CreateOrderInput = z.infer<typeof zCreateOrder>;

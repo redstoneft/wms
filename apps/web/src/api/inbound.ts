@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Attachment, Container, Paged, PurchaseOrder, Receipt, ReceiveScanResult } from './types';
+import type { Attachment, Container, Paged, PurchaseOrder, Receipt, ReceiveScanResult, ReceiveUndoResult } from './types';
 
 export const inboundApi = {
   purchaseOrders: (q?: { status?: string; limit?: number }) => api.get<PurchaseOrder[]>('/purchase-orders', q),
@@ -20,6 +20,8 @@ export const inboundApi = {
   /** idempotent */
   scan: (body: Record<string, unknown>, key: string) => api.postIdem<ReceiveScanResult>('/receipts/scan', body, key),
   /** idempotent */
+  /** undo a scan registered by mistake (pallet still at the dock); idempotent */
+  undo: (body: { receipt_id: string; lpn_code: string; sku_code: string; qty: string; uom_code?: string; reason?: string }, key: string) => api.postIdem<ReceiveUndoResult>('/receipts/undo', body, key),
   closeLpn: (lpn_code: string, key: string) => api.postIdem<{ lpn_code: string; putaway_task: { id: string; suggested_location_id: string | null } | null }>('/receipts/lpn/close', { lpn_code }, key),
   /** receipt opened by mistake (nothing received): status CANCELLED, audited, number not reused */
   cancel: (id: string, reason: string) => api.post<{ id: string; status: string }>(`/receipts/${id}/cancel`, { reason }),

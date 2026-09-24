@@ -58,7 +58,7 @@ export interface SlottingExplanation {
   rejected_sample: { code: string; reasons: string[] }[];
   candidates_evaluated: number;
   weights: SlottingWeights;
-  alternatives: { code: string; score: number }[];
+  alternatives: { location_id: string; code: string; score: number; has_same_sku: boolean; lpn_count: number; pallet_capacity: number; level: number | null }[];
 }
 
 async function loadWeights(tx: Tx, profile: LpnProfile, abc: string): Promise<SlottingWeights> {
@@ -182,7 +182,7 @@ export async function suggestLocation(tx: Tx, lpn: LpnRow): Promise<SlottingExpl
     rejected_sample: rejected,
     candidates_evaluated: candidates.length,
     weights,
-    alternatives: scored.slice(1, 4).map((s) => ({ code: s.c.code, score: s.score })),
+    alternatives: scored.slice(1, 25).map((s) => ({ location_id: s.c.id, code: s.c.code, score: s.score, has_same_sku: s.c.has_same_sku, lpn_count: s.c.lpn_count + s.c.reserved_count, pallet_capacity: s.c.pallet_capacity, level: s.c.level })),
   };
 }
 
@@ -337,6 +337,63 @@ export async function resuggest(tx: Tx, ctx: ActorContext, taskId: string) {
   const updated = await tx.putaway_tasks.update({ where: { id: taskId }, data: { suggested_location_id: s.chosen?.location_id ?? null, explanation: JSON.parse(JSON.stringify(s)) } });
   await audit(tx, ctx, { action: 'putaway.resuggest', entity_type: 'putaway_task', entity_id: taskId, before: { suggested: t.suggested_location_id }, after: { suggested: s.chosen?.code ?? null } });
   return { task: updated, explanation: s };
+}
+
+
+/** Destinations the operator may pick for a pending task: the engine's suggestion plus the next best locations. */
+export async function putawayOptions(tx: Tx, taskId: string) {
+  const t = await tx.putaway_tasks.findUnique({ where: { id: taskId } });
+  if (!t) throw new NotFoundError('putaway task', taskId);
+  if (!['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(t.status)) throw new RuleError('TASK_STATUS', `Task is ${t.status}`);
+  const lpn = await lockLpn(tx, t.lpn_id);
+  const s = await suggestLocation(tx, lpn);
+  const current = t.suggested_location_id ? await tx.locations.findUnique({ where: { id: t.suggested_location_id }, select: { id: true, code: true } }) : null;
+  const options = [
+    ...(s.chosen ? [{ location_id: s.chosen.location_id, code: s.chosen.code, score: s.chosen.score, has_same_sku: s.factors.some((f) => f.factor === 'same_sku'), lpn_count: -1, pallet_capacity: -1, level: null as number | null }] : []),
+    ...s.alternatives,
+  ];
+  // same-SKU locations first (consolidation), then by score; the current target is flagged
+  options.sort((a, b) => Number(b.has_same_sku) - Number(a.has_same_sku) || b.score - a.score);
+  return { task_id: t.id, current: current?.code ?? null, options: options.map((o) => ({ ...o, is_current: o.location_id === current?.id })) };
+}
+
+/**
+ * Operator chooses the destination: a specific location from the options (validated against the location rules), or
+ * "another one" (the best location other than the current suggestion). No supervisor authorization: every option
+ * offered is one the engine already accepts.
+ */
+export async function chooseLocation(tx: Tx, ctx: ActorContext, taskId: string, input: { location_code?: string; other?: boolean }) {
+  const rows = await tx.$queryRaw<{ id: string; lpn_id: string; suggested_location_id: string | null; status: string }[]>`SELECT id, lpn_id, suggested_location_id, status FROM putaway_tasks WHERE id = ${taskId}::uuid FOR UPDATE`;
+  const t = rows[0];
+  if (!t) throw new NotFoundError('putaway task', taskId);
+  if (!['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(t.status)) throw new RuleError('TASK_STATUS', `Task is ${t.status}`);
+  const lpn = await lockLpn(tx, t.lpn_id);
+  let targetId: string | null = null;
+  if (input.location_code) {
+    const found = await tx.locations.findFirst({ where: { code: input.location_code.trim().toUpperCase(), warehouse_id: lpn.warehouse_id }, select: { id: true } });
+    if (!found) throw new NotFoundError('location', input.location_code);
+    const loc = await lockLocation(tx, found.id);
+    if (loc.location_type !== 'RESERVE' && loc.location_type !== 'PICKING') throw new RuleError('LOCATION_TYPE', `Location ${loc.code} is ${loc.location_type}; put-away requires a storage location`);
+    if (!loc.is_active || loc.admin_status !== 'ACTIVE') throw new RuleError('LOCATION_BLOCKED', `Location ${loc.code} is not active`);
+    const fit = await checkLocationAccepts(tx, loc, lpn);
+    if (!fit.ok) throw new RuleError('LOCATION_REJECTED', `Location ${loc.code} cannot accept LPN ${lpn.code}: ${fit.reasons.join(', ')}`, fit);
+    // capacity counting other pending put-aways headed there
+    const reserved = await tx.putaway_tasks.count({ where: { suggested_location_id: loc.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] }, id: { not: t.id } } });
+    const occ = await locationOccupancy(tx, loc.id, lpn.id);
+    if (occ.lpn_count + reserved >= loc.pallet_capacity) throw new RuleError('LOCATION_FULL', `Location ${loc.code} is full or already reserved`, { lpn_count: occ.lpn_count, reserved, capacity: loc.pallet_capacity });
+    targetId = loc.id;
+  } else if (input.other) {
+    const s = await suggestLocation(tx, lpn);
+    const next = [s.chosen, ...s.alternatives].find((c) => c && c.location_id !== t.suggested_location_id);
+    if (!next) throw new RuleError('NO_LOCATION_AVAILABLE', `No other location can accept LPN ${lpn.code}`);
+    targetId = next.location_id;
+  } else {
+    throw new RuleError('CHOICE_REQUIRED', 'location_code or other=true is required');
+  }
+  const updated = await tx.putaway_tasks.update({ where: { id: t.id }, data: { suggested_location_id: targetId, version: { increment: 1 } } });
+  const target = await tx.locations.findUniqueOrThrow({ where: { id: targetId }, select: { id: true, code: true, barcode: true } });
+  await audit(tx, ctx, { action: 'putaway.choose_location', entity_type: 'putaway_task', entity_id: t.id, before: { suggested: t.suggested_location_id }, after: { target: target.code, by: input.location_code ? 'operator' : 'engine_other' } });
+  return { task: updated, target };
 }
 
 export { lockLocation, locationOccupancy };

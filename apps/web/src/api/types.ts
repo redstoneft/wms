@@ -367,6 +367,23 @@ export interface ReceiveScanResult {
   movement_id: string;
   unexpected_sku: boolean;
 }
+export interface ReceiveUndoResult {
+  lpn: { code: string; status: string; empty: boolean };
+  sku: { code: string; description: string };
+  qty_base: Qty;
+  line: { expected_qty: Qty; received_qty: Qty; status: string } | null;
+  movements: string[];
+}
+export interface PutawayOption {
+  location_id: Uuid;
+  code: string;
+  score: number;
+  has_same_sku: boolean;
+  lpn_count: number;
+  pallet_capacity: number;
+  level: number | null;
+  is_current: boolean;
+}
 export interface Attachment {
   id: Uuid;
   entity_type: string;

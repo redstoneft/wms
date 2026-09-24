@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zPutawayConfirm, zPutawayScanLpn, zReason, zUuid } from '@wms/shared';
+import { zPutawayChoose, zPutawayConfirm, zPutawayScanLpn, zReason, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { includeTraining } from '../../lib/training-scope.js';
 import { NotFoundError } from '../../errors.js';
@@ -51,6 +51,17 @@ export async function putawayRoutes(app: FastifyInstance) {
     const r = await runIdempotent(req.actor!, fingerprint('POST', '/putaway/confirm', body), async (tx) => ({ status: 200, body: await svc.confirmPutaway(tx, req.actor!, body) }));
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
+  });
+
+  /** Choosing the destination: options the engine accepts, and the operator's pick (or "another one"). */
+  app.get('/putaway/tasks/:id/options', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    return withTx((tx) => svc.putawayOptions(tx, id));
+  });
+  app.post('/putaway/tasks/:id/choose', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const body = zPutawayChoose.parse(req.body);
+    return withTx((tx) => svc.chooseLocation(tx, req.actor!, id, body));
   });
 
   app.post('/putaway/tasks/:id/resuggest', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {

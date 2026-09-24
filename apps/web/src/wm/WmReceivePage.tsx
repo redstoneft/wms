@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { UomCode } from '@wms/shared';
 import { api, ApiError } from '../api/client';
 import { inboundApi } from '../api/inbound';
+import { inventoryApi } from '../api/inventory';
 import { masterdataApi } from '../api/masterdata';
 import type { Receipt, ReceiveScanResult, Sku } from '../api/types';
 import { QtyPad } from '../components/QtyPad';
@@ -13,7 +14,7 @@ import { fmtQty, fmtUom, toBigInt } from '../lib/format';
 import { LabelPrintPanel } from './LabelPrintPanel';
 import { BigButton, BigValue, useWm, WmList, WmShell } from './WmShell';
 
-type Step = 'RECEIPT' | 'SCAN' | 'LPN_CHOICE' | 'QTY' | 'RESULT' | 'LABEL' | 'COMPLETE';
+type Step = 'RECEIPT' | 'SCAN' | 'LPN_CHOICE' | 'QTY' | 'RESULT' | 'LABEL' | 'COMPLETE' | 'UNDO';
 
 export default function WmReceivePage() {
   return (
@@ -40,6 +41,27 @@ function Flow() {
   const [last, setLast] = useState<ReceiveScanResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [differences, setDifferences] = useState<{ sku: string; expected: string; received: string }[] | null>(null);
+  // correcting a mistake: remove product registered on the current pallet (scanned twice, wrong quantity)
+  const [undoTarget, setUndoTarget] = useState<{ lpn: string; sku: string; description: string; qty: string } | null>(null);
+  const palletContents = useQuery({ queryKey: ['lpn', currentLpn], queryFn: () => inventoryApi.lpn(currentLpn!), enabled: !!currentLpn && step === 'SCAN', refetchInterval: 8_000 });
+  const undo = async (lpn: string, skuCode: string, qty: string) => {
+    if (!receipt) return;
+    setBusy(true);
+    try {
+      const r = await inboundApi.undo({ receipt_id: receipt.id, lpn_code: lpn, sku_code: skuCode, qty, uom_code: 'PIECE' }, api.newKey());
+      wm.ok(r.replayed ? 'YA CORREGIDO' : `QUITADAS ${fmtQty(r.data.qty_base)} PZAS DE ${r.data.sku.code}${r.data.lpn.empty ? ' · PALLET VACÍO, CANCELADO' : ''}`);
+      if (r.data.lpn.empty && currentLpn === lpn) setCurrentLpn(null);
+      setLast(null);
+      setUndoTarget(null);
+      void qc.invalidateQueries({ queryKey: ['receipt', receipt.id] });
+      void qc.invalidateQueries({ queryKey: ['lpn', lpn] });
+      setStep('SCAN');
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const receipts = useQuery({ queryKey: ['receipts', 'open'], queryFn: () => inboundApi.receipts({ status: 'OPEN,IN_PROGRESS', limit: 100 }), refetchInterval: 10_000 });
 
@@ -230,6 +252,30 @@ function Flow() {
             Imprimir etiqueta {currentLpn}
           </BigButton>
         )}
+        {currentLpn && (
+          <div className="mt-3 rounded-2xl bg-slate-900 p-3" data-testid="pallet-contents">
+            <div className="mb-1 text-xs font-bold uppercase text-slate-400">Contenido de {currentLpn} · toca ✕ para corregir</div>
+            {(palletContents.data?.balances ?? []).filter((b) => Number(b.qty) > 0).length === 0 ? (
+              <div className="text-sm text-slate-400">Pallet vacío</div>
+            ) : (
+              <ul className="grid gap-1 font-mono text-base">
+                {(palletContents.data?.balances ?? []).filter((b) => Number(b.qty) > 0).map((b) => (
+                  <li key={b.id} className="flex items-center justify-between gap-2 rounded bg-slate-800 px-3 py-2">
+                    <span>
+                      {b.sku.code} <span className="text-xs text-slate-400">{b.sku.description.slice(0, 22)}</span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      {fmtQty(b.qty)} pzas
+                      <button type="button" className="rounded bg-rose-700 px-2 py-1 text-xs font-bold text-white" onClick={() => { setUndoTarget({ lpn: currentLpn, sku: b.sku.code, description: b.sku.description, qty: String(b.qty) }); setStep('UNDO'); }} aria-label={`Quitar ${b.sku.code}`} data-testid={`undo-${b.sku.code}`}>
+                        ✕ Quitar
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         <div className="mt-4 rounded-2xl bg-slate-900 p-3">
           <div className="mb-1 text-xs font-bold uppercase text-slate-400">Esperado vs recibido</div>
           {lines.length === 0 ? (
@@ -363,7 +409,25 @@ function Flow() {
           <BigButton tone="neutral" onClick={closeLpn} disabled={busy} testId="close-lpn">
             Cerrar LPN {last.lpn.code}
           </BigButton>
+          <BigButton tone="danger" onClick={() => undo(last.lpn.code, last.sku.code, String(last.qty_base))} disabled={busy} testId="undo-last">
+            Me equivoqué: deshacer este registro ({fmtQty(last.qty_base)} pzas)
+          </BigButton>
         </div>
+      </div>
+    );
+  }
+
+  if (step === 'UNDO' && undoTarget) {
+    return (
+      <div>
+        <StepBar text={`CORREGIR · QUITAR DE ${undoTarget.lpn}`} />
+        {header}
+        <div className="mb-3 rounded-2xl bg-rose-900/60 px-4 py-2">
+          <div className="font-mono text-2xl font-black">{undoTarget.sku}</div>
+          <div className="text-sm">{undoTarget.description}</div>
+          <div className="mt-1 text-xs text-rose-100">En el pallet: {fmtQty(undoTarget.qty)} pzas. Indica cuántas piezas se registraron de más (todas = se quita el producto del pallet).</div>
+        </div>
+        <QtyPad uoms={[{ uom_code: 'PIECE', base_qty: '1' }]} defaultUom="PIECE" initial={undoTarget.qty} hint="¿CUÁNTAS PIEZAS QUITAR?" confirmLabel="QUITAR" busy={busy} onCancel={() => { setUndoTarget(null); setStep('SCAN'); }} onConfirm={(q) => undo(undoTarget.lpn, undoTarget.sku, q)} />
       </div>
     );
   }

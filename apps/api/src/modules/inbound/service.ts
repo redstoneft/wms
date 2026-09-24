@@ -4,7 +4,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { getSkuByCode, resolveSkuBarcode, toBaseQty } from '../../lib/lookup.js';
-import { createInventory, createLpn, lockLocation, lockLpnByCode, type LpnRow } from '../../inventory/ledger.js';
+import { createInventory, createLpn, getBalance, lockLocation, lockLpnByCode, removeInventory, type LpnRow } from '../../inventory/ledger.js';
 import { createIncident } from '../incidents/service.js';
 import { createPutawayTask } from '../putaway/service.js';
 
@@ -241,6 +241,55 @@ export async function receiveScan(tx: Tx, ctx: ActorContext, input: ReceiveScanI
     movement_id: movementId,
     unexpected_sku: unexpectedSku,
   };
+}
+
+/**
+ * Reverses a receiving scan made by mistake (product scanned twice, wrong quantity): the quantity leaves the pallet
+ * with a RECEIPT_UNDO movement and the receipt line goes back down. Only while the pallet is still at the dock
+ * (open, or closed but not yet put away); afterwards it is a count/adjustment, not a receiving correction.
+ */
+export async function undoReceiveScan(tx: Tx, ctx: ActorContext, input: { receipt_id: string; lpn_code: string; sku_code: string; qty: bigint; uom_code: UomCode; reason?: string }) {
+  const rows = await tx.$queryRaw<{ id: string; status: string; receiving_location_id: string }[]>`SELECT id, status, receiving_location_id FROM receipts WHERE id = ${input.receipt_id}::uuid FOR UPDATE`;
+  const r = rows[0];
+  if (!r) throw new NotFoundError('receipt', input.receipt_id);
+  if (!['OPEN', 'IN_PROGRESS'].includes(r.status)) throw new RuleError('RECEIPT_NOT_OPEN', `Receipt is ${r.status}`);
+  const lpn = await lockLpnByCode(tx, input.lpn_code);
+  if (lpn.receipt_id !== r.id) throw new RuleError('LPN_OTHER_RECEIPT', `LPN ${lpn.code} belongs to another receipt`);
+  if (lpn.current_location_id !== r.receiving_location_id || !['OPEN', 'STORED'].includes(lpn.status)) {
+    throw new RuleError('LPN_LEFT_DOCK', `LPN ${lpn.code} ya no está en el andén de recepción; corrige con un conteo o ajuste`);
+  }
+  const putaway = await tx.putaway_tasks.findFirst({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } } });
+  const sku = await getSkuByCode(tx, input.sku_code);
+  const { base } = await toBaseQty(tx, sku.id, input.qty, input.uom_code);
+  // damaged pieces were received as DAMAGED; take from AVAILABLE first
+  const avail = await getBalance(tx, lpn.id, sku.id, 'AVAILABLE');
+  const damaged = await getBalance(tx, lpn.id, sku.id, 'DAMAGED');
+  if (avail + damaged < base) throw new RuleError('INSUFFICIENT_INVENTORY', `LPN ${lpn.code} solo tiene ${avail + damaged} de ${sku.code}`, { available: (avail + damaged).toString(), requested: base.toString() });
+  const fromAvail = avail >= base ? base : avail;
+  const fromDamaged = base - fromAvail;
+  const movements: bigint[] = [];
+  const reason = input.reason?.trim() || 'Corrección de recepción: escaneo registrado por error';
+  if (fromAvail > 0n) movements.push(await removeInventory(tx, ctx, { movement_type: 'RECEIPT_UNDO', from_lpn: lpn, sku_id: sku.id, qty: fromAvail, uom_code: input.uom_code, uom_qty: input.qty, status: 'AVAILABLE', receipt_id: r.id, reference_type: 'receipt', reference_id: r.id, reason }));
+  if (fromDamaged > 0n) movements.push(await removeInventory(tx, ctx, { movement_type: 'RECEIPT_UNDO', from_lpn: lpn, sku_id: sku.id, qty: fromDamaged, uom_code: input.uom_code, uom_qty: input.qty, status: 'DAMAGED', receipt_id: r.id, reference_type: 'receipt', reference_id: r.id, reason }));
+  const line = await tx.receipt_lines.findUnique({ where: { receipt_id_sku_id: { receipt_id: r.id, sku_id: sku.id } } });
+  let lineOut: { expected_qty: bigint; received_qty: bigint; status: string } | null = null;
+  if (line) {
+    const received = line.received_qty - base < 0n ? 0n : line.received_qty - base;
+    const dmg = line.damaged_qty - fromDamaged < 0n ? 0n : line.damaged_qty - fromDamaged;
+    const status = lineStatus(line.expected_qty, received);
+    await tx.receipt_lines.update({ where: { id: line.id }, data: { received_qty: received, damaged_qty: dmg, status } });
+    lineOut = { expected_qty: line.expected_qty, received_qty: received, status };
+  }
+  // an emptied pallet is cancelled (open) or consumed (closed) and loses its put-away task
+  const left = await tx.inventory_balances.count({ where: { lpn_id: lpn.id, qty: { gt: 0n } } });
+  let lpnStatus = lpn.status;
+  if (left === 0) {
+    lpnStatus = lpn.status === 'OPEN' ? 'CANCELLED' : 'CONSUMED';
+    await tx.lpns.update({ where: { id: lpn.id }, data: { status: lpnStatus, version: { increment: 1 } } });
+    if (putaway) await tx.putaway_tasks.update({ where: { id: putaway.id }, data: { status: 'CANCELLED' } });
+  }
+  await audit(tx, ctx, { action: 'receipt.undo_scan', entity_type: 'receipt', entity_id: r.id, after: { lpn: lpn.code, sku: sku.code, qty: base.toString(), uom: input.uom_code, uom_qty: input.qty.toString(), lpn_status: lpnStatus, movements: movements.map(String) }, reason });
+  return { lpn: { code: lpn.code, status: lpnStatus, empty: left === 0 }, sku: { code: sku.code, description: sku.description }, qty_base: base, line: lineOut, movements };
 }
 
 function lineStatus(expected: bigint, received: bigint): string {

@@ -151,7 +151,7 @@ describe('guided warehouse-mode training', () => {
     const lpns = sCodes.filter((c) => c.label.startsWith('Pallet')).map((c) => c.value);
     expect(lpns.length).toBeGreaterThan(0);
     await notYet('stage');
-    for (const l of lpns) expect((await t.post('/staging/scan', { lpn_code: l, staging_location_barcode: code(sCodes, 'Carril') }, idem())).status).toBe(200);
+    for (const l of lpns) { const st = await t.post('/staging/scan', { lpn_code: l, staging_location_barcode: code(sCodes, 'Carril') }, idem()); expect(st.status, JSON.stringify(st.body)).toBe(200); }
     await pass('stage');
   });
 

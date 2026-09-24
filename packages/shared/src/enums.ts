@@ -68,6 +68,7 @@ export const MOVEMENT_TYPES = [
   'INITIAL_LOAD',
   'ASSEMBLY_OUT', // components consumed by an assembly order
   'ASSEMBLY_IN', // finished product produced by an assembly order
+  'RECEIPT_UNDO', // a receiving scan registered by mistake, reversed while the pallet is still at the dock
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
@@ -87,6 +88,7 @@ export const OUTBOUND_MOVEMENTS: readonly MovementType[] = [
   'COUNT_ADJUST_OUT',
   'SCRAP',
   'ASSEMBLY_OUT',
+  'RECEIPT_UNDO',
 ];
 
 export const LOCATION_TYPES = [
