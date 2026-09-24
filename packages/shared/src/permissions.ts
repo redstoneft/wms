@@ -68,6 +68,7 @@ const OPERATOR_COMMON: Permission[] = [
   'masterdata.read',
   'printers.manage', // every operator may set up the printer they print on
   'labels.print',
+  'labels.reprint', // a damaged or lost pallet label is reprinted on the floor (reason required, audited)
   'inventory.read',
   'lpn.read',
   'incidents.read',
