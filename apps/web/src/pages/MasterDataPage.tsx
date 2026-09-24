@@ -282,8 +282,8 @@ function Printers() {
           <a className="rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-white" href={URL.createObjectURL(new Blob([`@echo off\r\ntitle Reparar impresora Zebra - WMS\r\ncd /d %~dp0\r\nnet session >nul 2>nul || (echo Pidiendo permisos de administrador... & powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" & exit /b)\r\necho Descargando la herramienta de reparacion...\r\npowershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing '${window.location.origin}/print-agent/reparar_impresora.ps1' -OutFile '%~dp0reparar_impresora.ps1'"\r\nif not exist "%~dp0reparar_impresora.ps1" (echo No se pudo descargar. Revisa el internet de esta PC. & pause & exit /b 1)\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0reparar_impresora.ps1"\r\necho.\r\npause\r\n`], { type: 'application/octet-stream' }))} download="reparar_impresora.bat">
             Descargar reparar_impresora.bat (si Windows marca la Zebra en "Error")
           </a>
-          <a className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white" href="/print-station" target="_blank" rel="noreferrer">
-            Sin instalar nada: abrir la estación USB en este navegador (Chrome/Edge en la PC de la Zebra)
+          <a className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white" href={`/print-station#token=${token?.token ?? ''}`} target="_blank" rel="noreferrer" data-testid="agent-open-station">
+            Abrir estación USB con este token (Chrome/Edge en la PC de la Zebra, sin instalar nada)
           </a>
           <a className="rounded-md bg-slate-700 px-3 py-2 text-sm font-semibold text-white" href="/print-agent/wms_print_agent.py" download="wms_print_agent.py">
             Descargar wms_print_agent.py

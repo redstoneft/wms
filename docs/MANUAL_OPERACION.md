@@ -148,4 +148,4 @@ Cualquier operador puede **reportar** (`Incidencias → Nueva`): tipo (faltante,
 
 ### Impresora Zebra por USB desde el navegador
 
-Si la PC de la Zebra usa otra app de etiquetas por WebUSB (driver WinUSB), la estación del WMS se abre en Chrome/Edge en esa PC: menú Catálogos → **Estación USB** → Elegir la Zebra → Iniciar estación, y se deja la pestaña abierta. Detalle en `docs/ZEBRA_SETUP.md`.
+Si la PC de la Zebra usa otra app de etiquetas por WebUSB (driver WinUSB), la estación del WMS se abre en Chrome/Edge en esa PC: Impresoras → Generar token → **Abrir estación USB con este token** → Elegir la Zebra; después se conecta sola cada vez que se abre (y al prender la PC con `estacion_wms.bat` en la carpeta Inicio). Detalle en `docs/ZEBRA_SETUP.md`.

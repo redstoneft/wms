@@ -122,6 +122,8 @@ export default function App() {
     <Suspense fallback={<FullSpinner />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* WebUSB print station on the printer PC: authenticated with the printer's station token, not a user session */}
+        <Route path="/print-station" element={<Suspense fallback={<FullSpinner />}><PrintStationPage /></Suspense>} />
         <Route
           path="/mfa"
           element={
@@ -153,7 +155,7 @@ export default function App() {
         <Route path="/returns" element={<Office perms={['returns.manage', 'orders.read']}><ReturnsPage /></Office>} />
         <Route path="/returns/:id" element={<Office perms={['returns.manage', 'orders.read']}><ReturnsPage /></Office>} />
         <Route path="/labels" element={<Office perms={['labels.print']}><LabelsPage /></Office>} />
-        <Route path="/print-station" element={<Office perms={['labels.print']}><PrintStationPage /></Office>} />
+
         <Route path="/timeline" element={<Office perms={['inventory.read', 'lpn.read']}><TimelinePage /></Office>} />
         <Route path="/timeline/:lpn" element={<Office perms={['inventory.read', 'lpn.read']}><TimelinePage /></Office>} />
         <Route path="/account" element={<Office perms={[]}><AccountPage /></Office>} />
