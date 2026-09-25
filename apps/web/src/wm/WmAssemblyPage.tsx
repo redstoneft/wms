@@ -118,7 +118,7 @@ function Flow() {
     if (!out) return;
     setBusy(true);
     try {
-      const r = await assemblyApi.start({ station_barcode: station, inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })), output_sku_code: out.code, notes: purpose.trim() }, api.newKey());
+      const r = await assemblyApi.start({ station_barcode: station || undefined, inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })), output_sku_code: out.code, notes: purpose.trim() }, api.newKey());
       setStarted(r.data);
       wm.ok(r.replayed ? 'YA REGISTRADO' : `ARMADO ${r.data.code} ABIERTO · ${lines.length} TARIMA(S) EN LA ESTACIÓN`);
       void qc.invalidateQueries({ queryKey: ['assembly', 'open'] });
@@ -182,7 +182,7 @@ function Flow() {
     try {
       const r = await assemblyApi.complete(
         {
-          station_barcode: station,
+          station_barcode: station || undefined,
           inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })),
           output: { sku_code: out.code, lot: lot || undefined, expiry_date: expiry || undefined, pallets: palletCases.map((c) => ({ cases: Number(c), pieces_per_case: Number(ppc) })).filter((p) => p.cases > 0) },
           scrap: scrapN > 0 ? { qty: scrapN, reason } : undefined,
@@ -230,11 +230,11 @@ function Flow() {
       <div>
         <StepBar text="ARMADO · ¿QUÉ VAS A HACER?" />
         <div className="grid gap-3">
-          <BigButton tone="primary" onClick={() => { setFlow('START'); setStep('STATION'); }} testId="asm-start">
+          <BigButton tone="primary" onClick={() => { setFlow('START'); setStation(''); setStep('IN_LPN'); }} testId="asm-start">
             Surtir para armar
             <span className="block text-sm font-normal normal-case text-slate-200">Llevas las tarimas de cuerpos a la mesa; el armado queda abierto y se confirma después</span>
           </BigButton>
-          <BigButton tone="neutral" onClick={() => { setFlow('ONESHOT'); setStep('STATION'); }} testId="asm-oneshot">
+          <BigButton tone="neutral" onClick={() => { setFlow('ONESHOT'); setStation(''); setStep('IN_LPN'); }} testId="asm-oneshot">
             Armado inmediato (todo de una vez)
             <span className="block text-sm font-normal normal-case text-slate-300">Ya está armado: insumos, tarimas que salieron y merma en un solo paso</span>
           </BigButton>
@@ -289,7 +289,15 @@ function Flow() {
     return (
       <div>
         <StepBar text={lines.length ? `2 · ESCANEA OTRO PALLET DE INSUMO (${lines.length} agregado${lines.length > 1 ? 's' : ''})` : '2 · ESCANEA EL PALLET DE INSUMO (cuerpos)'} />
-        <BigValue label="Estación" value={station} tone="accent" />
+        <div className="flex items-center justify-between rounded-2xl bg-slate-800 px-4 py-2">
+          <div>
+            <div className="text-xs uppercase text-slate-400">Estación</div>
+            <div className="font-mono text-lg font-black">{station || 'Mesa de armado (automática)'}</div>
+          </div>
+          <button type="button" className="rounded-lg bg-slate-700 px-3 py-2 text-xs font-bold text-white" onClick={() => setStep('STATION')} data-testid="change-station">
+            {station ? 'Cambiar' : 'Escanear otra'}
+          </button>
+        </div>
         <div className="mt-3">
           <ScanInput label="LPN de entrada" autoUpper onScan={onLpn} disabled={busy} testId="scan-lpn" />
         </div>
@@ -502,7 +510,7 @@ function Flow() {
         <div className="grid gap-2 font-mono text-lg">
           {lines.map((l, i) => (
             <div key={i} className="rounded bg-slate-800 px-3 py-2">
-              → {fmtQty(l.qty)} pzas de {l.sku_code} · {l.lpn_code} a {station}
+              → {fmtQty(l.qty)} pzas de {l.sku_code} · {l.lpn_code} a {station || 'la mesa de armado'}
             </div>
           ))}
           <div className="rounded bg-emerald-900/60 px-3 py-2 text-emerald-100">Producto que va a salir: {out.code} · {out.description}</div>

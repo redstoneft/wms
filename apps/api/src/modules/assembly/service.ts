@@ -31,9 +31,7 @@ async function resolveSku(tx: Tx, code: string) {
 }
 
 export async function completeAssembly(tx: Tx, ctx: ActorContext, input: AssemblyCompleteInput) {
-  const station = await lockLocationByBarcode(tx, input.station_barcode);
-  if (!station.is_active || station.admin_status !== 'ACTIVE') throw new RuleError('STATION_BLOCKED', `Station ${station.code} is ${station.admin_status}`);
-  if (station.rack_id) throw new RuleError('STATION_IS_RACK', `${station.code} is a rack position; the assembly station must be a floor area (zone ARM / staging)`);
+  const station = await resolveStation(tx, input.station_barcode, input.inputs[0]?.lpn_code);
 
   const outSku = await resolveSku(tx, input.output.sku_code);
   if (!outSku.is_active) throw new RuleError('SKU_INACTIVE', `SKU ${outSku.code} is inactive`);
@@ -188,7 +186,17 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
 // put-away tasks) and records the defective pieces. An open order can be cancelled: inputs unblocked, put-away back.
 // ---------------------------------------------------------------------------------------------------------------
 
-async function resolveStation(tx: Tx, barcode: string): Promise<LocationRow> {
+/** The station: the scanned one, or (no scan) the warehouse's assembly area — zone ARM, else its first floor area. */
+async function resolveStation(tx: Tx, barcode: string | undefined, firstLpnCode?: string): Promise<LocationRow> {
+  if (!barcode) {
+    const lpn = firstLpnCode ? await tx.lpns.findUnique({ where: { code: firstLpnCode.trim().toUpperCase() }, select: { warehouse_id: true } }) : null;
+    const wh = lpn?.warehouse_id ?? (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } }))?.id ?? null;
+    if (!wh) throw new RuleError('NO_STATION', 'No hay estación de armado configurada');
+    const arm = await tx.locations.findFirst({ where: { warehouse_id: wh, is_active: true, admin_status: 'ACTIVE', rack_id: null, OR: [{ zone: { code: { contains: 'ARM', mode: 'insensitive' } } }, { code: { contains: 'ARM', mode: 'insensitive' } }] }, orderBy: { code: 'asc' }, select: { id: true } })
+      ?? (await tx.locations.findFirst({ where: { warehouse_id: wh, is_active: true, admin_status: 'ACTIVE', rack_id: null, location_type: 'STAGING' }, orderBy: { code: 'asc' }, select: { id: true } }));
+    if (!arm) throw new RuleError('NO_STATION', 'El almacén no tiene estación de armado (zona ARM) ni área de piso; escanea una');
+    return lockLocation(tx, arm.id);
+  }
   const station = await lockLocationByBarcode(tx, barcode);
   if (!station.is_active || station.admin_status !== 'ACTIVE') throw new RuleError('STATION_BLOCKED', `Station ${station.code} is ${station.admin_status}`);
   if (station.rack_id) throw new RuleError('STATION_IS_RACK', `${station.code} is a rack position; the assembly station must be a floor area (zone ARM / staging)`);
@@ -196,7 +204,7 @@ async function resolveStation(tx: Tx, barcode: string): Promise<LocationRow> {
 }
 
 export async function startAssembly(tx: Tx, ctx: ActorContext, input: AssemblyStartInput) {
-  const station = await resolveStation(tx, input.station_barcode);
+  const station = await resolveStation(tx, input.station_barcode, input.inputs[0]?.lpn_code);
   const outSku = await resolveSku(tx, input.output_sku_code);
   if (!outSku.is_active) throw new RuleError('SKU_INACTIVE', `SKU ${outSku.code} is inactive`);
   const consumedQty = input.inputs.reduce((acc, i) => acc + BigInt(i.qty), 0n);

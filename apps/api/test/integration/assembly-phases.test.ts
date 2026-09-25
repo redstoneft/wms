@@ -48,6 +48,18 @@ describe('assembly in two phases', () => {
     await expectReconciled();
   });
 
+  it('no station scanned: the warehouse assembly area is used (zone ARM, else its first floor area)', async () => {
+    const body = await storedPallet(f, BODY, f.reserve[4]!.id, 24n);
+    const r = await sup.post('/assembly/start', { inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output_sku_code: f.skus[PAN]!.code, notes: 'sin escanear estación' }, idem());
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.station.code).toBe(f.staging[0]!.code); // the fixture has no ARM zone → first floor area
+    const where = await sql<{ loc: string }>(`SELECT loc.code AS loc FROM lpns l JOIN locations loc ON loc.id = l.current_location_id WHERE l.code = '${body.code}'`);
+    expect(where[0]!.loc).toBe(f.staging[0]!.code);
+    const done = await sup.post(`/assembly/${r.body.id}/complete`, { pallets: [{ cases: 2, pieces_per_case: 12 }] }, idem());
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    await expectReconciled();
+  });
+
   it('cancel: the reserved pallet is unblocked and gets a put-away task back to the racks', async () => {
     const body = await storedPallet(f, BODY, f.reserve[2]!.id, 48n);
     const r = await sup.post('/assembly/start', { station_barcode: f.staging[1]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }], output_sku_code: f.skus[PAN]!.code, notes: 'se cancela' }, idem());

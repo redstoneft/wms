@@ -325,8 +325,8 @@ export const zTransferComplete = z.object({
 
 // ---- assembly (components → finished product) ----
 export const zAssemblyComplete = z.object({
-  /** where the work happens; the new pallets are born here and get a put-away task */
-  station_barcode: zBarcode,
+  /** where the work happens; the new pallets are born here and get a put-away task (omitted → the warehouse's assembly station) */
+  station_barcode: zBarcode.optional(),
   inputs: z
     .array(z.object({ lpn_code: z.string().trim().min(1).max(30), sku_code: zCode, qty: zQty }))
     .min(1)
@@ -346,7 +346,8 @@ export const zAssemblyComplete = z.object({
 
 /** Phase 1 of an assembly: the components are taken to the station and blocked; the order stays open until confirmed. */
 export const zAssemblyStart = z.object({
-  station_barcode: zBarcode,
+  /** omitted → the warehouse's assembly station (zone ARM, else the first floor area) is used */
+  station_barcode: zBarcode.optional(),
   inputs: z
     .array(z.object({ lpn_code: z.string().trim().min(1).max(30), sku_code: zCode, qty: zQty }))
     .min(1)

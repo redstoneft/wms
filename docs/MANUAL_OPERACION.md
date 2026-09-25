@@ -157,7 +157,7 @@ Cuando un insumo se transforma en producto terminado (cuerpos de sartén en mast
 
 **Armado en dos fases (lo normal en piso):**
 
-* **Surtir para armar**: `Almacén → Armado → Surtir para armar`. Escanea la estación, las tarimas de cuerpos (con las piezas que se llevan), el producto que va a salir y el para qué. Las tarimas **salen del rack a la estación** (así se ven en el mapa) y quedan **apartadas**: ningún pedido las puede surtir ni nadie las puede mover. El armado queda con folio en *Armados en proceso*.
+* **Surtir para armar**: `Almacén → Armado → Surtir para armar`. Escanea las tarimas de cuerpos (con las piezas que se llevan), el producto que va a salir y el para qué. La estación no se escanea: se usa la mesa de armado del almacén (zona ARM) en automático; si algún día hay varias mesas, el botón *Escanear otra* permite elegirla. Las tarimas **salen del rack a la estación** (así se ven en el mapa) y quedan **apartadas**: ningún pedido las puede surtir ni nadie las puede mover. El armado queda con folio en *Armados en proceso*.
 * **Confirmar armado**, cuando terminen (ese día u otro, cualquier usuario): en la portada de Armado toca el armado abierto → captura las **tarimas que salieron** (cajas por tarima, piezas por caja) y las **piezas defectuosas** con su motivo → **Confirmar armado**. Ahí se consumen los cuerpos, nacen las tarimas nuevas con etiqueta y tarea de acomodo, y las defectuosas quedan como incidencia. Al ubicar las tarimas nuevas se elige la posición de la lista como en cualquier acomodo.
 * **Cancelar** un armado abierto (botón en la lista, con motivo): las tarimas se desbloquean y reciben tarea de acomodo para regresar al rack.
 * *Armado inmediato* sigue disponible para cuando ya está todo armado y se captura de una vez.

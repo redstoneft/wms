@@ -6,7 +6,7 @@ export interface AssemblyPalletInput {
   pieces_per_case: number;
 }
 export interface AssemblyInput {
-  station_barcode: string;
+  station_barcode?: string;
   inputs: { lpn_code: string; sku_code: string; qty: number | string }[];
   output: { sku_code: string; lot?: string; expiry_date?: string; pallets: AssemblyPalletInput[] };
   scrap?: { qty: number | string; reason: string };
@@ -39,7 +39,7 @@ export interface AssemblyResult extends AssemblyOrder {
 }
 
 export interface AssemblyStartInput {
-  station_barcode: string;
+  station_barcode?: string;
   inputs: { lpn_code: string; sku_code: string; qty: number | string }[];
   output_sku_code: string;
   notes: string;
