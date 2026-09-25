@@ -10,6 +10,7 @@ import type { PickLine, PickTaskView } from '../api/types';
 import { QtyPad } from '../components/QtyPad';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty, fmtUom, toBigInt } from '../lib/format';
+import { OutboundPallets } from './OutboundPallets';
 import { WmFreePick } from './WmFreePick';
 import { BigButton, BigValue, StepBar, useWm, WmList, WmShell } from './WmShell';
 
@@ -206,11 +207,15 @@ function Flow() {
       <div>
         <StepBar text="PEDIDO SURTIDO" />
         {head}
-        <BigValue label="LPN de salida" value={v.task.outbound_lpn ?? v.lines.find((l) => l.full_pallet)?.lpn_code ?? '—'} tone="ok" />
-        <div className="mt-2 text-center text-lg text-slate-300">Lleva el(los) pallet(s) al carril de staging {v.staging?.code ?? ''} y escanéalos en STAGING.</div>
+        <BigValue label="Tarimas de salida" value={String(v.pallets.length)} tone="ok" />
+        <OutboundPallets taskId={v.task.id} pallets={v.pallets} orderDestination={v.order.destination} busy={busy} setBusy={setBusy} onChanged={(pallets) => { const nv = { ...v, pallets }; qc.setQueryData(['pick-task', v.task.id], nv); if (completed) setCompleted(nv); }} />
+        <div className="mt-2 text-center text-lg text-slate-300">Pega la etiqueta a cada tarima, llévalas al carril de staging {v.staging?.code ?? ''} y escanéalas en STAGING.</div>
         <div className="mt-4 grid gap-2">
           <BigButton tone="primary" onClick={() => nav('/wm/stage')}>
             Ir a staging
+          </BigButton>
+          <BigButton tone="neutral" onClick={() => nav('/wm/split')}>
+            Dividir una tarima (altura / otro destino)
           </BigButton>
           <BigButton tone="neutral" onClick={() => { setTaskId(null); setCompleted(null); }}>
             Volver a tareas
@@ -225,6 +230,7 @@ function Flow() {
     <div>
       <StepBar text={stepNo === 0 ? `LÍNEA ${line.sequence} · 1 VE A LA UBICACIÓN Y ESCANÉALA` : stepNo === 1 ? `LÍNEA ${line.sequence} · 2 ESCANEA EL PALLET O PRODUCTO` : `LÍNEA ${line.sequence} · 3 CANTIDAD`} />
       {head}
+      <OutboundPallets compact taskId={v.task.id} pallets={v.pallets} orderDestination={v.order.destination} busy={busy} setBusy={setBusy} onChanged={(pallets) => qc.setQueryData(['pick-task', v.task.id], { ...v, pallets })} />
       <div className="grid gap-2 sm:grid-cols-2">
         <BigValue label="Ubicación" value={line.location_code} tone={stepNo >= 1 ? 'ok' : 'accent'} testId="pick-location" />
         <BigValue label="Pallet / SKU" value={stepNo >= 1 ? `${line.lpn_code}` : '• • •'} tone={stepNo >= 2 ? 'ok' : stepNo === 1 ? 'accent' : 'default'} />

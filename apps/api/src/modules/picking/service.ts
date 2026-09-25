@@ -50,7 +50,8 @@ export async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string):
   const rows = await tx.$queryRaw<{ id: string; code: string; barcode: string }[]>`
     SELECT loc.id, loc.code, loc.barcode FROM locations loc JOIN zones z ON z.id = loc.zone_id AND z.zone_type = 'STAGING'
      WHERE loc.location_type = 'STAGING' AND loc.is_active AND loc.admin_status = 'ACTIVE'
-       AND loc.warehouse_id IN (SELECT DISTINCT l.warehouse_id FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id JOIN lpns l ON l.id = a.lpn_id WHERE ol.order_id = ${orderId}::uuid AND a.status = 'ACTIVE')
+       AND loc.warehouse_id IN (SELECT DISTINCT l.warehouse_id FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id JOIN lpns l ON l.id = a.lpn_id WHERE ol.order_id = ${orderId}::uuid AND a.status IN ('ACTIVE','PICKED')
+                                UNION SELECT l.warehouse_id FROM lpns l WHERE l.order_id = ${orderId}::uuid AND l.status IN ('PICKING','STAGED'))
        AND NOT EXISTS (SELECT 1 FROM staging_assignments sa WHERE sa.location_id = loc.id AND sa.released_at IS NULL)
        AND NOT EXISTS (SELECT 1 FROM lpns l WHERE l.current_location_id = loc.id)
      ORDER BY loc.code FOR UPDATE SKIP LOCKED LIMIT 1`;
@@ -93,7 +94,135 @@ export async function pickTaskView(tx: Tx, taskId: string) {
     order: { id: task.order.id, order_number: task.order.order_number, customer: task.order.customer.name, destination: task.order.destination, status: task.order.status },
     staging: task.order.staging_assignments[0]?.location ?? null,
     lines,
+    pallets: await outboundPallets(tx, task.order_id, task.outbound_lpn_id),
   };
+}
+
+/** The order's outbound pallets as the floor sees them: what each holds, where it goes, and which one is still being filled. */
+export async function outboundPallets(tx: Tx, orderId: string, openLpnId: string | null = null) {
+  const rows = await tx.$queryRaw<{ id: string; code: string; status: string; destination: string | null; location: string | null; qty: bigint; skus: string[] | null }[]>`
+    SELECT l.id, l.code, l.status, l.destination, loc.code AS location, COALESCE(sum(b.qty), 0)::bigint AS qty,
+           array_agg(DISTINCT s.code) FILTER (WHERE b.qty > 0) AS skus
+      FROM lpns l LEFT JOIN locations loc ON loc.id = l.current_location_id
+      LEFT JOIN inventory_balances b ON b.lpn_id = l.id AND b.qty > 0 LEFT JOIN skus s ON s.id = b.sku_id
+     WHERE l.order_id = ${orderId}::uuid AND l.status IN ('PICKING','STAGED','LOADED')
+     GROUP BY l.id, l.code, l.status, l.destination, loc.code ORDER BY l.created_at`;
+  return rows.filter((r) => r.qty > 0n || r.id === openLpnId).map((r) => ({ lpn_code: r.code, status: r.status, destination: r.destination, location: r.location, qty: r.qty.toString(), skus: r.skus ?? [], open: r.id === openLpnId }));
+}
+
+/**
+ * The picker closes the outbound pallet being filled: it is full (height), or it goes to another destination. Its
+ * destination is recorded (printed on the label) and the next partial pick starts a new pallet. Whole pallets converted
+ * in place are already closed pallets: use setPalletDestination for them.
+ */
+export async function closePallet(tx: Tx, ctx: ActorContext, input: { pick_task_id: string; destination?: string }) {
+  const trows = await tx.$queryRaw<{ id: string; status: string; order_id: string; outbound_lpn_id: string | null }[]>`SELECT id, status, order_id, outbound_lpn_id FROM pick_tasks WHERE id = ${input.pick_task_id}::uuid FOR UPDATE`;
+  const task = trows[0];
+  if (!task) throw new NotFoundError('pick task', input.pick_task_id);
+  if (task.status === 'CANCELLED') throw new RuleError('TASK_STATUS', 'Task is CANCELLED');
+  if (!task.outbound_lpn_id) throw new RuleError('NO_OPEN_PALLET', 'NO HAY TARIMA DE SALIDA ABIERTA: surte algo primero');
+  const lpn = await lockLpn(tx, task.outbound_lpn_id);
+  const qty = (await tx.inventory_balances.aggregate({ where: { lpn_id: lpn.id, qty: { gt: 0n } }, _sum: { qty: true } }))._sum.qty ?? 0n;
+  if (qty <= 0n) throw new RuleError('EMPTY_PALLET', `La tarima ${lpn.code} está vacía`);
+  const cur = await tx.lpns.findUniqueOrThrow({ where: { id: lpn.id }, select: { destination: true } });
+  const destination = input.destination?.trim() ? input.destination.trim() : cur.destination;
+  await tx.lpns.update({ where: { id: lpn.id }, data: { destination, version: { increment: 1 } } });
+  await tx.pick_tasks.update({ where: { id: task.id }, data: { outbound_lpn_id: null, version: { increment: 1 } } });
+  await audit(tx, ctx, { action: 'pick.close_pallet', entity_type: 'pick_task', entity_id: task.id, after: { lpn: lpn.code, qty: qty.toString(), destination } });
+  return { lpn_code: lpn.code, qty: qty.toString(), destination, pallets: await outboundPallets(tx, task.order_id, null) };
+}
+
+/** Where one outbound pallet is delivered (CEDIS / store). Allowed until the pallet is loaded. */
+export async function setPalletDestination(tx: Tx, ctx: ActorContext, input: { lpn_code: string; destination: string }) {
+  const lpn = await lockLpnByCode(tx, input.lpn_code);
+  if (!lpn.order_id || !['PICKING', 'STAGED'].includes(lpn.status)) throw new RuleError('LPN_STATUS', `LPN ${lpn.code} is ${lpn.status}; only picked or staged pallets of an order take a destination`);
+  const destination = input.destination.trim() || null;
+  const cur = await tx.lpns.findUniqueOrThrow({ where: { id: lpn.id }, select: { destination: true } });
+  await tx.lpns.update({ where: { id: lpn.id }, data: { destination, version: { increment: 1 } } });
+  await audit(tx, ctx, { action: 'pick.pallet_destination', entity_type: 'lpn', entity_id: lpn.id, before: { destination: cur.destination }, after: { destination } });
+  return { lpn_code: lpn.code, destination, pallets: await outboundPallets(tx, lpn.order_id, null) };
+}
+
+/**
+ * Part of an outbound pallet goes onto another pallet of the same order: a new one (born next to the source, same
+ * status) or an existing one scanned. Used when the customer wants the goods split (by height, by destination) after
+ * they were picked. Works on picked (PICKING) and staged pallets; nothing changes for the order's quantities.
+ */
+export async function splitPallet(tx: Tx, ctx: ActorContext, input: { from_lpn_code: string; sku_code: string; qty: bigint; uom_code?: UomCode; to_lpn_code?: string; destination?: string }) {
+  const from = await lockLpnByCode(tx, input.from_lpn_code);
+  if (!from.order_id || !['PICKING', 'STAGED'].includes(from.status)) throw new RuleError('LPN_STATUS', `LPN ${from.code} is ${from.status}; only picked or staged pallets can be split`);
+  if (!from.current_location_id) throw new RuleError('LPN_STATUS', `LPN ${from.code} has no location`);
+  const { sku } = await resolveSkuBarcode(tx, input.sku_code);
+  const { base } = await toBaseQty(tx, sku.id, input.qty, input.uom_code ?? 'PIECE');
+  if (base <= 0n) throw new RuleError('INVALID_QTY', 'Quantity must be > 0');
+  const invStatus = from.status === 'STAGED' ? 'STAGING' : 'PICKING';
+  const have = await getBalance(tx, from.id, sku.id, invStatus);
+  if (have <= 0n) throw new RuleError('WRONG_SKU', `LA TARIMA ${from.code} NO TIENE ${sku.code}`, { lpn: from.code, sku: sku.code });
+  if (base > have) throw new RuleError('QTY_EXCEEDED', `LA TARIMA ${from.code} SOLO TIENE ${have} DE ${sku.code}`, { available: have.toString(), requested: base.toString() });
+  let to: LpnRow;
+  let created = false;
+  if (input.to_lpn_code?.trim()) {
+    to = await lockLpnByCode(tx, input.to_lpn_code);
+    if (to.id === from.id) throw new RuleError('SAME_LPN', 'ES LA MISMA TARIMA');
+    if (to.order_id !== from.order_id) throw new RuleError('WRONG_ORDER', `LA TARIMA ${to.code} ES DE OTRO PEDIDO`);
+    if (to.status !== from.status) throw new RuleError('LPN_STATUS', `LA TARIMA ${to.code} ESTÁ ${to.status}; la de origen está ${from.status}`);
+    if (to.current_location_id !== from.current_location_id) throw new RuleError('WRONG_LOCATION', `LA TARIMA ${to.code} ESTÁ EN OTRO LUGAR: júntalas primero`);
+  } else {
+    to = await createLpn(tx, ctx, { warehouse_id: from.warehouse_id, lpn_type: 'OUTBOUND', location_id: from.current_location_id, order_id: from.order_id, parent_lpn_id: from.id });
+    await tx.lpns.update({ where: { id: to.id }, data: { status: from.status } });
+    to = { ...to, status: from.status };
+    created = true;
+  }
+  const movementId = await transferBetweenLpns(tx, ctx, { movement_type: 'LPN_SPLIT', from_lpn: from, to_lpn: to, sku_id: sku.id, qty: base, uom_code: input.uom_code ?? 'PIECE', uom_qty: input.qty, from_status: invStatus, to_status: invStatus, to_location_id: from.current_location_id, order_id: from.order_id, reference_type: 'lpn_split', reference_id: from.id, note: `Dividir tarima ${from.code} → ${to.code}` });
+  if (input.destination?.trim()) await tx.lpns.update({ where: { id: to.id }, data: { destination: input.destination.trim() } });
+  const left = (await tx.inventory_balances.aggregate({ where: { lpn_id: from.id, qty: { gt: 0n } }, _sum: { qty: true } }))._sum.qty ?? 0n;
+  if (left === 0n) {
+    await tx.lpns.update({ where: { id: from.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+    await tx.pick_tasks.updateMany({ where: { outbound_lpn_id: from.id }, data: { outbound_lpn_id: null } });
+  }
+  const toQty = (await tx.inventory_balances.aggregate({ where: { lpn_id: to.id, qty: { gt: 0n } }, _sum: { qty: true } }))._sum.qty ?? 0n;
+  await audit(tx, ctx, { action: 'pick.split_pallet', entity_type: 'lpn', entity_id: from.id, after: { to: to.code, created, sku: sku.code, qty: base.toString(), from_left: left.toString(), movement_id: movementId.toString() } });
+  return { from_lpn: from.code, from_left: left.toString(), to_lpn: to.code, to_qty: toQty.toString(), created, sku: sku.code, qty: base.toString(), destination: input.destination?.trim() || null, pallets: await outboundPallets(tx, from.order_id, null) };
+}
+
+/**
+ * Pallets produced by an assembly straight for an order: they are outbound pallets (PICKING) at the station, booked on
+ * the order like a whole-pallet pick (allocation + pick line already PICKED), so they go on to staging → verification →
+ * loading. The order gets its staging lane; the pick task is created closed when no other pick is open.
+ */
+export async function bookProducedPallets(tx: Tx, ctx: ActorContext, orderId: string, skuId: string, pallets: { lpn: LpnRow; qty: bigint }[], stationLocationId: string, reason: string) {
+  const orows = await tx.$queryRaw<{ id: string; status: string; order_number: string }[]>`SELECT id, status, order_number FROM orders WHERE id = ${orderId}::uuid FOR UPDATE`;
+  const order = orows[0];
+  if (!order) throw new NotFoundError('order', orderId);
+  if (['STAGED', 'VERIFIED', 'LOADING', 'LOADED', 'SHIPPED', 'CANCELLED'].includes(order.status)) throw new RuleError('ORDER_STATUS', `EL PEDIDO ${order.order_number} ESTÁ ${order.status}: ya no se le pueden agregar tarimas`);
+  const total = pallets.reduce((a, p) => a + p.qty, 0n);
+  let line = await tx.order_lines.findFirst({ where: { order_id: order.id, sku_id: skuId } });
+  const sku = await tx.skus.findUniqueOrThrow({ where: { id: skuId }, select: { code: true } });
+  if (line) {
+    const active = (await tx.allocations.aggregate({ where: { order_line_id: line.id, status: 'ACTIVE' }, _sum: { qty: true } }))._sum.qty ?? 0n;
+    const room = line.required_qty - line.picked_qty - active;
+    if (total > room) throw new RuleError('EXCEEDS_ORDER', `EL PEDIDO ${order.order_number} SOLO NECESITA ${room < 0n ? 0n : room} MÁS DE ${sku.code} (produjiste ${total})`, { room: (room < 0n ? 0n : room).toString(), produced: total.toString() });
+  } else {
+    const max = await tx.order_lines.aggregate({ where: { order_id: order.id }, _max: { line_no: true } });
+    line = await tx.order_lines.create({ data: { order_id: order.id, line_no: (max._max.line_no ?? 0) + 1, sku_id: skuId, required_qty: total, uom_code: 'PIECE', uom_qty: total } });
+  }
+  let task = await tx.pick_tasks.findFirst({ where: { order_id: order.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, orderBy: { created_at: 'asc' } });
+  const ownTask = !task;
+  if (!task) task = await tx.pick_tasks.create({ data: { order_id: order.id, mode: 'FREE', status: 'COMPLETED', assigned_to: ctx.userId, purpose: reason, started_at: new Date(), completed_at: new Date() } });
+  let seq = (await tx.pick_task_lines.aggregate({ where: { pick_task_id: task.id }, _max: { sequence: true } }))._max.sequence ?? 0;
+  for (const p of pallets) {
+    const alloc = await tx.allocations.create({ data: { order_line_id: line.id, lpn_id: p.lpn.id, sku_id: skuId, qty: p.qty, picked_qty: p.qty, status: 'PICKED', strategy: 'ASSEMBLY' } });
+    seq += 1;
+    await tx.pick_task_lines.create({ data: { pick_task_id: task.id, order_line_id: line.id, allocation_id: alloc.id, sequence: seq, location_id: stationLocationId, lpn_id: p.lpn.id, sku_id: skuId, qty: p.qty, picked_qty: p.qty, full_pallet: true, status: 'PICKED', scan_step: 0, picked_at: new Date(), picker_id: ctx.userId } });
+  }
+  await tx.order_lines.update({ where: { id: line.id }, data: { picked_qty: { increment: total } } });
+  const staging = await assignStaging(tx, ctx, order.id);
+  if (ownTask) {
+    const remainingAllocs = await tx.allocations.count({ where: { order_line: { order_id: order.id }, status: 'ACTIVE' } });
+    await tx.orders.update({ where: { id: order.id }, data: { status: remainingAllocs > 0 ? 'PARTIALLY_ALLOCATED' : 'PICKED', version: { increment: 1 } } });
+  }
+  await audit(tx, ctx, { action: 'pick.assembled_for_order', entity_type: 'order', entity_id: order.id, after: { sku: sku.code, qty: total.toString(), pallets: pallets.map((p) => p.lpn.code), pick_task: task.id, own_task: ownTask, staging: staging?.code ?? null }, reason });
+  return { order_id: order.id, order_number: order.order_number, pick_task_id: task.id, staging: staging?.code ?? null };
 }
 
 // ---------------------------------------------------------------------

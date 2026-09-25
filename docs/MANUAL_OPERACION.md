@@ -84,6 +84,20 @@ Regla que se conserva: nadie puede autorizar con sus propias credenciales una ex
 2. Escanee el **carril de staging** que indica la pantalla (cada pedido tiene el suyo). Carril equivocado = rojo.
 3. Cuando todos los pallets del pedido están en su carril, el pedido pasa a *Listo para verificar*.
 
+## TARIMAS DE SALIDA: CERRAR, DESTINO Y DIVIDIR
+
+Lo suelto que se surte (piezas o cajas que no son tarima completa) cae en la **tarima de salida abierta**, que se ve en amarillo arriba de la pantalla de Surtir. Cuando esa tarima ya no admite más (altura) o lo que sigue va a otro CEDIS/tienda, el surtidor toca **Tarima llena / va a otro lado → cerrar y abrir otra**, escribe opcionalmente la **entrega** (CEDIS o tienda) y confirma: se imprime la etiqueta (con PEDIDO, CLIENTE y ENTREGA) y lo siguiente que surta cae en una tarima nueva. Así el número de LPN coincide con las tarimas físicas. Las tarimas completas ya están cerradas; su entrega se pone al final con **Destino**. Al terminar el pedido la pantalla lista todas las tarimas con su entrega, y cada una tiene **Destino** y **Etiqueta**.
+
+`Almacén → Dividir tarima`: parte de una tarima de salida (surtida o ya en staging) pasa a otra tarima del mismo pedido: **tarima nueva** (se crea el LPN y se imprime su etiqueta, con entrega opcional) o **a otra tarima del pedido** (se escanea; debe estar en el mismo lugar). Se usa cuando el cliente pide la división después de surtir (altura, destino) o cuando faltó cerrar tarimas. El pedido no cambia: solo se reparte. Nunca se mezclan pedidos en una tarima.
+
+## ARMADO DIRECTO PARA UN PEDIDO
+
+En Armado, al escribir "para qué", se puede indicar **¿Es para un pedido?** con el número del pedido (también al confirmar un armado en dos tiempos). Las tarimas producidas nacen como tarimas de salida **ya surtidas para ese pedido** (sin tarea de acomodo), se les asigna el carril de staging y su etiqueta dice PEDIDO y carril. El sistema no deja producir para el pedido más de lo que pide: el sobrante se arma aparte, sin pedido, y va a existencia con acomodo.
+
+## PEDIDO ENTREGADO FUERA DE FLUJO (solo administrador)
+
+Cuando un pedido ya salió sin pasar por staging/verificación/carga, el administrador entra al pedido en oficina y toca **Marcar como entregado (fuera de flujo)** con el motivo. El inventario se descuenta como embarcado desde donde esté (lo surtido, lo asignado y, si falta, la existencia disponible); lo que no exista queda en una incidencia de severidad alta; el pedido pasa a SHIPPED y se libera su carril. Queda auditado con el usuario y el motivo. Permiso `orders.force_deliver`, solo del rol ADMIN.
+
 ## VERIFICACIÓN (doble validación)
 
 Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR = VERIFICADOR`, pida a otro compañero o al supervisor.

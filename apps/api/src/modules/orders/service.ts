@@ -4,7 +4,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { getSkuByCode, toBaseQty } from '../../lib/lookup.js';
-import { getBalance, lockLpn, recordMovement } from '../../inventory/ledger.js';
+import { getBalance, lockBalances, lockLpn, recordMovement, removeInventory } from '../../inventory/ledger.js';
 import { consumeAuthorization } from '../authorizations/routes.js';
 import { getSettings } from '../settings/routes.js';
 import { createIncident } from '../incidents/service.js';
@@ -86,8 +86,8 @@ export async function acceptOrder(tx: Tx, ctx: ActorContext, orderId: string) {
 }
 
 async function lockOrder(tx: Tx, orderId: string) {
-  const rows = await tx.$queryRaw<{ id: string; status: string; version: number; order_number: string; picker_id: string | null; shipment_id: string | null }[]>`
-    SELECT id, status, version, order_number, picker_id, shipment_id FROM orders WHERE id = ${orderId}::uuid FOR UPDATE`;
+  const rows = await tx.$queryRaw<{ id: string; status: string; version: number; order_number: string; picker_id: string | null; shipment_id: string | null; is_training: boolean }[]>`
+    SELECT id, status, version, order_number, picker_id, shipment_id, is_training FROM orders WHERE id = ${orderId}::uuid FOR UPDATE`;
   const o = rows[0];
   if (!o) throw new NotFoundError('order', orderId);
   return o;
@@ -275,4 +275,81 @@ export async function orderDetail(tx: Tx, orderId: string) {
     order.verifier_id ? tx.users.findUnique({ where: { id: order.verifier_id }, select: { username: true, full_name: true } }) : null,
   ]);
   return { ...order, picker, verifier };
+}
+
+/**
+ * Admin only: the goods left the warehouse without following the flow (no staging/verification/loading). Everything
+ * the order holds (picked, staged, loaded pallets) is shipped; what was never picked leaves from its allocated pallet,
+ * or from available stock when nothing was allocated. Missing stock is not invented: it is recorded on an incident.
+ */
+export async function forceDeliver(tx: Tx, ctx: ActorContext, input: { order_id: string; reason: string }) {
+  const o = await lockOrder(tx, input.order_id);
+  if (['SHIPPED', 'CANCELLED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}`);
+  const lines = await tx.order_lines.findMany({ where: { order_id: o.id }, include: { sku: true }, orderBy: { line_no: 'asc' } });
+  const shipped: { lpn: string; sku: string; qty: string; from: string }[] = [];
+  const missing: { sku: string; qty: string }[] = [];
+  const ship = async (lpnId: string, skuId: string, qty: bigint, status: 'PICKING' | 'STAGING' | 'LOADED' | 'ALLOCATED' | 'AVAILABLE', from: string) => {
+    const lpn = await lockLpn(tx, lpnId);
+    await removeInventory(tx, ctx, { movement_type: 'SHIP', from_lpn: lpn, sku_id: skuId, qty, status, order_id: o.id, reference_type: 'order_force_deliver', reference_id: o.id, reason: input.reason, note: 'entrega fuera de flujo' });
+    const left = await tx.inventory_balances.count({ where: { lpn_id: lpn.id, qty: { gt: 0n } } });
+    if (left === 0) await tx.lpns.update({ where: { id: lpn.id }, data: { status: lpn.order_id === o.id ? 'SHIPPED' : 'CONSUMED', version: { increment: 1 } } });
+    const sku = lines.find((l) => l.sku_id === skuId)?.sku.code ?? skuId;
+    shipped.push({ lpn: lpn.code, sku, qty: qty.toString(), from });
+  };
+  // 1) whatever the order already holds on its outbound pallets
+  const own = await tx.lpns.findMany({ where: { order_id: o.id, status: { in: ['PICKING', 'STAGED', 'LOADED'] } } });
+  for (const l of own) {
+    const balances = (await lockBalances(tx, l.id)).filter((b) => b.qty > 0n && ['PICKING', 'STAGING', 'LOADED'].includes(b.status));
+    for (const b of balances) await ship(l.id, b.sku_id, b.qty, b.status as 'PICKING' | 'STAGING' | 'LOADED', 'surtido');
+  }
+  // 2) what was never picked: from the allocated pallets, then from available stock
+  for (const line of lines) {
+    let remaining = line.required_qty - line.picked_qty;
+    if (remaining <= 0n) continue;
+    const allocs = await tx.allocations.findMany({ where: { order_line_id: line.id, status: 'ACTIVE' } });
+    for (const a of allocs) {
+      if (remaining <= 0n) break;
+      const have = await getBalance(tx, a.lpn_id, line.sku_id, 'ALLOCATED');
+      const take = have < remaining ? have : remaining;
+      if (take > 0n) {
+        await ship(a.lpn_id, line.sku_id, take, 'ALLOCATED', 'asignado');
+        remaining -= take;
+      }
+      await tx.allocations.update({ where: { id: a.id }, data: { status: 'PICKED', picked_qty: a.qty } });
+    }
+    if (remaining > 0n) {
+      const stock = await tx.$queryRaw<{ lpn_id: string; qty: bigint }[]>`
+        SELECT b.lpn_id, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id JOIN warehouses w ON w.id = l.warehouse_id
+         WHERE b.sku_id = ${line.sku_id}::uuid AND b.status = 'AVAILABLE' AND b.qty > 0 AND l.status IN ('STORED','OPEN') AND l.current_location_id IS NOT NULL
+           AND (w.code = 'ESCUELA') = ${o.is_training}
+         ORDER BY b.qty DESC, l.created_at ASC`;
+      for (const s of stock) {
+        if (remaining <= 0n) break;
+        const take = s.qty < remaining ? s.qty : remaining;
+        await ship(s.lpn_id, line.sku_id, take, 'AVAILABLE', 'existencia');
+        remaining -= take;
+      }
+    }
+    await tx.order_lines.update({ where: { id: line.id }, data: { picked_qty: line.required_qty - remaining, verified_qty: line.required_qty - remaining, loaded_qty: line.required_qty - remaining, allocated_qty: 0n } });
+    if (remaining > 0n) missing.push({ sku: line.sku.code, qty: remaining.toString() });
+  }
+  // 3) close everything the flow left open
+  await tx.pick_tasks.updateMany({ where: { order_id: o.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: { status: 'COMPLETED', completed_at: new Date() } });
+  await tx.pick_task_lines.updateMany({ where: { pick_task: { order_id: o.id }, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
+  await tx.allocations.updateMany({ where: { order_line: { order_id: o.id }, status: 'ACTIVE' }, data: { status: 'RELEASED' } });
+  await tx.staging_assignments.updateMany({ where: { order_id: o.id, released_at: null }, data: { released_at: new Date() } });
+  await tx.verifications.updateMany({ where: { order_id: o.id, status: 'IN_PROGRESS' }, data: { status: 'CANCELLED', completed_at: new Date() } });
+  const prev = await tx.orders.findUniqueOrThrow({ where: { id: o.id }, select: { notes: true, order_number: true } });
+  await tx.orders.update({ where: { id: o.id }, data: { status: 'SHIPPED', version: { increment: 1 }, notes: [prev.notes, `[ENTREGADO FUERA DE FLUJO] ${input.reason}`].filter(Boolean).join('\n') } });
+  const inc = await createIncident(tx, ctx, {
+    incident_type: 'OTHER',
+    severity: missing.length ? 'HIGH' : 'MEDIUM',
+    title: `Pedido ${prev.order_number} entregado fuera de flujo`,
+    description: `${input.reason}${missing.length ? ` · SIN EXISTENCIA PARA: ${missing.map((m) => `${m.sku} ${m.qty}`).join(', ')}` : ''}`,
+    entity_type: 'order',
+    entity_id: o.id,
+    order_id: o.id,
+  });
+  await audit(tx, ctx, { action: 'order.force_deliver', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status: 'SHIPPED', shipped, missing, incident_id: inc.id }, reason: input.reason });
+  return { order_id: o.id, status: 'SHIPPED', shipped, missing, incident_id: inc.id };
 }

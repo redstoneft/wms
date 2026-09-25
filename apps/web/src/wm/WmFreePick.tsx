@@ -11,6 +11,7 @@ import { QtyPad } from '../components/QtyPad';
 import { ProductInput } from '../components/ProductInput';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
+import { OutboundPallets } from './OutboundPallets';
 import { BigButton, BigValue, StepBar, useWm } from './WmShell';
 
 interface Pallet {
@@ -140,6 +141,7 @@ export function WmFreePick({ view, onRefresh, onPause, onClosed, onCancelled }: 
           <div className="font-mono text-xl font-black text-violet-300">{view.staging?.code ?? '—'}</div>
         </div>
       </div>
+      {!pallet && <OutboundPallets compact taskId={view.task.id} pallets={view.pallets ?? []} orderDestination={view.order.destination} busy={busy} setBusy={setBusy} onChanged={(pallets) => onRefresh({ ...view, pallets })} />}
 
       {!pallet && (
         <>

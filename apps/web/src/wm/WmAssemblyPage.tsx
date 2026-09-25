@@ -78,6 +78,8 @@ function Flow() {
   const [scrap, setScrap] = useState('0');
   const [reason, setReason] = useState('');
   const [purpose, setPurpose] = useState('');
+  // produced straight for an order: the pallets go to its staging lane instead of the racks
+  const [forOrder, setForOrder] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AssemblyResult | null>(null);
 
@@ -138,7 +140,7 @@ function Flow() {
     if (!out) return;
     setBusy(true);
     try {
-      const r = await assemblyApi.start({ station_barcode: station || undefined, inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })), output_sku_code: out.code, notes: purpose.trim() }, api.newKey());
+      const r = await assemblyApi.start({ station_barcode: station || undefined, inputs: lines.map((l) => ({ lpn_code: l.lpn_code, sku_code: l.sku_code, qty: Number(l.qty) })), output_sku_code: out.code, notes: purpose.trim(), for_order_number: forOrder.trim() || undefined }, api.newKey());
       setStarted(r.data);
       wm.ok(r.replayed ? 'YA REGISTRADO' : `ARMADO ${r.data.code} ABIERTO · ${lines.length} TARIMA(S) EN LA ESTACIÓN`);
       void qc.invalidateQueries({ queryKey: ['assembly', 'open'] });
@@ -153,7 +155,7 @@ function Flow() {
     if (!open) return;
     setBusy(true);
     try {
-      const r = await assemblyApi.finish(open.id, { lot: lot || undefined, expiry_date: expiry || undefined, pallets: palletsPayload(), scrap: Number(scrap) > 0 ? { qty: Number(scrap), reason } : undefined, notes: reason && Number(scrap) <= 0 && defectiveTotal > 0 ? `Defectuosas: ${reason}` : undefined }, api.newKey());
+      const r = await assemblyApi.finish(open.id, { lot: lot || undefined, expiry_date: expiry || undefined, pallets: palletsPayload(), scrap: Number(scrap) > 0 ? { qty: Number(scrap), reason } : undefined, notes: reason && Number(scrap) <= 0 && defectiveTotal > 0 ? `Defectuosas: ${reason}` : undefined, for_order_number: forOrder.trim() || undefined }, api.newKey());
       setResult(r.data);
       wm.ok(r.replayed ? 'YA REGISTRADO' : `ARMADO ${r.data.code} CONFIRMADO · ${r.data.produced.length} TARIMAS NUEVAS`);
       void qc.invalidateQueries({ queryKey: ['assembly', 'open'] });
@@ -207,6 +209,7 @@ function Flow() {
           output: { sku_code: out.code, lot: lot || undefined, expiry_date: expiry || undefined, pallets: palletsPayload() },
           scrap: Number(scrap) > 0 ? { qty: Number(scrap), reason } : undefined,
           notes: purpose.trim(),
+          for_order_number: forOrder.trim() || undefined,
         },
         api.newKey(),
       );
@@ -230,6 +233,7 @@ function Flow() {
   const reset = () => {
     setStep('HOME');
     setFlow('ONESHOT');
+    setForOrder('');
     setOpen(null);
     setStarted(null);
     setLines([]);
@@ -450,6 +454,12 @@ function Flow() {
           <Num label="Cajas en todas" value={pallets.every((p) => p.cases === pallets[0]!.cases) ? pallets[0]!.cases : ''} onChange={(v) => setPallets((rows) => rows.map((p) => ({ ...p, cases: v })))} testId="cases" />
           <Num label="Piezas por caja" value={ppc} onChange={setPpc} testId="ppc" />
         </div>
+        {flow === 'FINISH' && (
+          <label className="mt-3 block">
+            <div className="mb-1 text-xs font-bold uppercase text-slate-400">¿Es para un pedido? Número (opcional)</div>
+            <input value={forOrder} onChange={(e) => setForOrder(e.target.value.toUpperCase())} placeholder="Ej. 7038676788" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-2 font-mono text-lg text-white" data-testid="asm-finish-for-order" />
+          </label>
+        )}
         <div className="mt-3 rounded-2xl bg-slate-900 p-3" data-testid="pallet-rows">
           <div className="mb-1 text-xs font-bold uppercase text-slate-400">Por tarima: cajas completas · piezas en la caja incompleta (si hay) · defectuosas</div>
           <div className="grid gap-2">
@@ -564,6 +574,11 @@ function Flow() {
           <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={3} placeholder="Ej.: pedido de Walmart sale mañana · reponer picking de sartén 20 cm" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-xl text-white" data-testid="asm-purpose" />
           <div className="mt-1 text-xs text-slate-400">Mínimo 5 letras. Queda en la orden y en la auditoría.</div>
         </label>
+        <label className="mt-3 block">
+          <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-300">¿Es para un pedido? Número (opcional)</div>
+          <input value={forOrder} onChange={(e) => setForOrder(e.target.value.toUpperCase())} placeholder="Ej. 7038676788" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 font-mono text-xl text-white" data-testid="asm-for-order" />
+          <div className="mt-1 text-xs text-slate-400">Con pedido: las tarimas salen ya surtidas para ese pedido (van a su carril de staging, sin acomodo). Sin pedido: van a existencia con tarea de acomodo.</div>
+        </label>
         <BigButton tone="primary" className="mt-3" disabled={purpose.trim().length < 5} onClick={() => setStep(flow === 'START' ? 'CONFIRM_START' : 'CONFIRM')} testId="purpose-ok">
           Continuar
         </BigButton>
@@ -584,6 +599,7 @@ function Flow() {
           ))}
           <div className="rounded bg-emerald-900/60 px-3 py-2 text-emerald-100">Producto que va a salir: {out.code} · {out.description}</div>
           <div className="rounded bg-slate-800 px-3 py-2 text-slate-200">Para qué: {purpose}</div>
+          {forOrder.trim() && <div className="rounded bg-violet-900/60 px-3 py-2 text-violet-100">Para el pedido {forOrder.trim()}: las tarimas saldrán surtidas a su carril</div>}
         </div>
         <div className="mt-2 text-sm text-slate-300">Las tarimas quedan apartadas en la estación (nadie las puede surtir). Cuando terminen de armar, entras a "Armados en proceso" y confirmas tarimas y defectuosas.</div>
         <BigButton tone="success" className="mt-3" onClick={submitStart} disabled={busy} testId="confirm-start">
@@ -651,6 +667,7 @@ function Flow() {
           </div>
           {scrapN > 0 && <div className="rounded bg-amber-900/60 px-3 py-2 text-amber-100">Merma {fmtQty(scrapN)} pzas · {reason}</div>}
           <div className="rounded bg-slate-800 px-3 py-2 text-slate-200">Para qué: {purpose}</div>
+          {forOrder.trim() && <div className="rounded bg-violet-900/60 px-3 py-2 text-violet-100">Para el pedido {forOrder.trim()}: las tarimas saldrán surtidas a su carril</div>}
         </div>
         <BigButton tone="success" className="mt-3" onClick={submit} disabled={busy} testId="confirm">
           Registrar armado
@@ -685,7 +702,13 @@ function Flow() {
           ))}
         </div>
         {result.warnings.length > 0 && <div className="mt-3 rounded-lg bg-amber-900/60 p-3 text-amber-200">{result.warnings.join(' · ')}</div>}
-        <div className="mt-3 text-sm text-slate-300">Las tarimas nuevas ya tienen tarea de acomodo: ve a Ubicar, escanea cada LPN y llévalo a donde te indique.</div>
+        {result.for_order ? (
+          <div className="mt-3 rounded-2xl bg-violet-900/60 p-3 text-violet-100" data-testid="asm-for-order-done">
+            Tarimas surtidas para el pedido <b>{result.for_order.order_number}</b>. Pega las etiquetas y llévalas al carril de staging <b>{result.for_order.staging ?? '(sin carril libre: escanea uno en Staging)'}</b>.
+          </div>
+        ) : (
+          <div className="mt-3 text-sm text-slate-300">Las tarimas nuevas ya tienen tarea de acomodo: ve a Ubicar, escanea cada LPN y llévalo a donde te indique.</div>
+        )}
         <BigButton tone="primary" className="mt-3" onClick={reset} testId="again">
           Otro armado
         </BigButton>
@@ -732,7 +755,7 @@ function PalletCard({ lpn, detail, taskId, destination, placed, busy, setBusy, o
       <div className="font-mono text-2xl font-black" data-testid="new-lpn">{lpn}</div>
       <div className="text-sm text-slate-300">{detail}</div>
       <div className="mt-1 text-sm">
-        <span className="text-slate-400">{placed ? 'Ubicada en' : 'Destino'}: </span>
+        <span className="text-slate-400">{placed ? 'Ubicada en' : taskId ? 'Destino' : 'Carril'}: </span>
         <span className="font-mono text-lg font-black text-violet-300" data-testid="pallet-destination">{destination ?? 'sin destino'}</span>
       </div>
       {opts && (

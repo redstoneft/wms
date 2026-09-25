@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zAllocateOrder, zCancelOrder, zCreateOrder, zUuid } from '@wms/shared';
+import { zAllocateOrder, zCancelOrder, zCreateOrder, zForceDeliver, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { trainingWhere } from '../../lib/training-scope.js';
 import * as svc from './service.js';
@@ -64,6 +64,10 @@ export async function orderRoutes(app: FastifyInstance) {
     return withTx((tx) => svc.allocateOrder(tx, req.actor!, body));
   });
 
+  app.post('/orders/force-deliver', { preHandler: app.requirePermission('orders.force_deliver') }, async (req) => {
+    const body = zForceDeliver.parse(req.body);
+    return withTx((tx) => svc.forceDeliver(tx, req.actor!, body));
+  });
   app.post('/orders/cancel', { preHandler: app.requirePermission('orders.manage') }, async (req) => {
     const body = zCancelOrder.extend({ authorization_id: zUuid.optional() }).parse(req.body);
     return withTx((tx) => svc.cancelOrder(tx, req.actor!, body));

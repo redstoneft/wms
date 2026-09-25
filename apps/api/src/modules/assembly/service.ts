@@ -10,16 +10,28 @@ import { NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import type { InventoryStatus } from '@wms/shared';
-import { changeStatus, createInventory, createLpn, lockLocation, lockLocationByBarcode, lockLpn, lockLpnByCode, lpnContents, moveLpn, removeInventory, setLpnStatus, type LocationRow } from '../../inventory/ledger.js';
+import { changeStatus, createInventory, createLpn, lockLocation, lockLocationByBarcode, lockLpn, lockLpnByCode, lpnContents, moveLpn, removeInventory, setLpnStatus, type LocationRow, type LpnRow } from '../../inventory/ledger.js';
 import { createIncident } from '../incidents/service.js';
 import { createPutawayTask } from '../putaway/service.js';
+import { bookProducedPallets } from '../picking/service.js';
 
 const ORDER_INCLUDE = {
   station: { select: { id: true, code: true, barcode: true } },
   output_sku: { select: { id: true, code: true, description: true, gtin: true } },
   inputs: { include: { lpn: { select: { code: true, status: true } }, sku: { select: { code: true, description: true } } } },
-  outputs: { include: { lpn: { select: { code: true, status: true, current_location_id: true } } } },
+  outputs: { include: { lpn: { select: { code: true, status: true, current_location_id: true, destination: true } } } },
+  for_order: { select: { id: true, order_number: true, status: true, staging_assignments: { where: { released_at: null }, select: { location: { select: { code: true } } } } } },
 } as const;
+
+/** "para el pedido X": the order the finished pallets are produced for (must be open for picking). */
+async function resolveForOrder(tx: Tx, number: string | undefined) {
+  const n = number?.trim();
+  if (!n) return null;
+  const o = await tx.orders.findFirst({ where: { order_number: { equals: n, mode: 'insensitive' } }, select: { id: true, order_number: true, status: true } });
+  if (!o) throw new RuleError('ORDER_NOT_FOUND', `NO EXISTE EL PEDIDO ${n}`);
+  if (['STAGED', 'VERIFIED', 'LOADING', 'LOADED', 'SHIPPED', 'CANCELLED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `EL PEDIDO ${o.order_number} ESTÁ ${o.status}: ya no se le pueden agregar tarimas`);
+  return o;
+}
 
 /** `sku_code` may be the WMS code or any alias barcode (SAE key, GTIN) — same rule as the imports. */
 async function resolveSku(tx: Tx, code: string) {
@@ -54,6 +66,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
   }
   if (mode === 'ASSEMBLY' && inputSkus.has(outSku.id)) throw new RuleError('MIXED_SAME_SKU', 'The finished product cannot also be one of several components; a same-SKU repack takes a single input SKU');
 
+  const forOrder = await resolveForOrder(tx, input.for_order_number);
   const code = (await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('ASM', 'assembly_seq') AS n`)[0]!.n;
   const order = await tx.assembly_orders.create({
     data: {
@@ -66,6 +79,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
       scrap_qty: scrapQty,
       scrap_reason: input.scrap?.reason ?? (scrapQty > 0n ? 'Piezas defectuosas en el armado' : null),
       notes: input.notes ?? null,
+      for_order_id: forOrder?.id ?? null,
       mode,
       created_by: ctx.userId,
       started_at: new Date(),
@@ -117,8 +131,8 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
     consumed.push({ lpn: lpn.code, sku: sku.code, qty: line.qty.toString(), lpn_status: status });
   }
 
-  // 2) produce finished pallets at the station
-  const { produced, warnings } = await produceOutputs(tx, ctx, { id: order.id, code }, station, outSku.id, input.output.pallets, input.output.lot ?? null, input.output.expiry_date ?? null);
+  // 2) produce finished pallets at the station (for an order: outbound pallets booked on it, no put-away)
+  const { produced, warnings, for_order } = await produceOutputs(tx, ctx, { id: order.id, code }, station, outSku.id, input.output.pallets, input.output.lot ?? null, input.output.expiry_date ?? null, forOrder);
 
   // 3) scrap is a loss: it leaves a trace as an incident on the order
   let incidentId: string | null = null;
@@ -146,7 +160,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
   });
 
   const full = await tx.assembly_orders.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
-  return { ...full, consumed, produced, warnings };
+  return { ...full, consumed, produced, warnings, for_order };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -174,6 +188,7 @@ async function resolveStation(tx: Tx, barcode: string | undefined, firstLpnCode?
 }
 
 export async function startAssembly(tx: Tx, ctx: ActorContext, input: AssemblyStartInput) {
+  const forOrder = await resolveForOrder(tx, input.for_order_number);
   const station = await resolveStation(tx, input.station_barcode, input.inputs[0]?.lpn_code);
   const outSku = await resolveSku(tx, input.output_sku_code);
   if (!outSku.is_active) throw new RuleError('SKU_INACTIVE', `SKU ${outSku.code} is inactive`);
@@ -185,7 +200,7 @@ export async function startAssembly(tx: Tx, ctx: ActorContext, input: AssemblySt
 
   const code = (await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('ASM', 'assembly_seq') AS n`)[0]!.n;
   const order = await tx.assembly_orders.create({
-    data: { code, warehouse_id: station.warehouse_id, station_location_id: station.id, output_sku_id: outSku.id, output_qty: 0n, consumed_qty: consumedQty, notes: input.notes, mode, status: 'IN_PROGRESS', created_by: ctx.userId, started_at: new Date() },
+    data: { code, warehouse_id: station.warehouse_id, station_location_id: station.id, output_sku_id: outSku.id, output_qty: 0n, consumed_qty: consumedQty, notes: input.notes, mode, status: 'IN_PROGRESS', for_order_id: forOrder?.id ?? null, created_by: ctx.userId, started_at: new Date() },
   });
 
   const moved: { lpn: string; sku: string; qty: string; from: string | null; blocked: string }[] = [];
@@ -226,6 +241,7 @@ export async function finishAssembly(tx: Tx, ctx: ActorContext, id: string, inpu
   const order = await tx.assembly_orders.findUniqueOrThrow({ where: { id }, include: { inputs: true, output_sku: true } });
   const station = await lockLocation(tx, order.station_location_id);
   const outSku = order.output_sku;
+  const forOrder = input.for_order_number?.trim() ? await resolveForOrder(tx, input.for_order_number) : order.for_order_id ? await resolveForOrder(tx, (await tx.orders.findUniqueOrThrow({ where: { id: order.for_order_id }, select: { order_number: true } })).order_number) : null;
   if (outSku.requires_lot && !input.lot) throw new RuleError('LOT_REQUIRED', `SKU ${outSku.code} requires a lot`);
   if (outSku.requires_expiry && !input.expiry_date) throw new RuleError('EXPIRY_REQUIRED', `SKU ${outSku.code} requires an expiry date`);
   const outputQty = input.pallets.reduce((acc, p) => acc + palletQty(p), 0n);
@@ -262,8 +278,8 @@ export async function finishAssembly(tx: Tx, ctx: ActorContext, id: string, inpu
     consumed.push({ lpn: lpn.code, sku: skuCode, qty: line.qty.toString(), lpn_status: status });
   }
 
-  // 2) finished pallets at the station, each with its put-away task
-  const { produced, warnings } = await produceOutputs(tx, ctx, { id: order.id, code: order.code }, station, outSku.id, input.pallets, input.lot ?? null, input.expiry_date ?? null);
+  // 2) finished pallets at the station: put-away task each, or booked on the order they were made for
+  const { produced, warnings, for_order } = await produceOutputs(tx, ctx, { id: order.id, code: order.code }, station, outSku.id, input.pallets, input.lot ?? null, input.expiry_date ?? null, forOrder);
 
   // 3) defective pieces
   let incidentId: string | null = null;
@@ -272,10 +288,10 @@ export async function finishAssembly(tx: Tx, ctx: ActorContext, id: string, inpu
     const inc = await createIncident(tx, ctx, { incident_type: 'DAMAGED', severity: 'LOW', title: `Defectuosas en armado ${order.code}: ${scrapQty} pzas`, description: `${scrapReason ?? ''}${perPallet ? ` · por tarima: ${perPallet}` : ''}`.trim(), entity_type: 'assembly_order', entity_id: order.id, sku_id: order.inputs[0]?.sku_id ?? null, location_id: station.id, qty: scrapQty });
     incidentId = inc.id;
   }
-  await tx.assembly_orders.update({ where: { id: order.id }, data: { status: 'COMPLETED', output_qty: outputQty, scrap_qty: scrapQty, scrap_reason: scrapReason, incident_id: incidentId, completed_at: new Date(), completed_by: ctx.userId, notes: input.notes ? `${order.notes ?? ''}\n${input.notes}`.trim() : order.notes } });
+  await tx.assembly_orders.update({ where: { id: order.id }, data: { status: 'COMPLETED', output_qty: outputQty, scrap_qty: scrapQty, scrap_reason: scrapReason, incident_id: incidentId, for_order_id: forOrder?.id ?? null, completed_at: new Date(), completed_by: ctx.userId, notes: input.notes ? `${order.notes ?? ''}\n${input.notes}`.trim() : order.notes } });
   await audit(tx, ctx, { action: 'assembly.completed', entity_type: 'assembly_order', entity_id: order.id, after: { code: order.code, mode: order.mode, station: station.code, output_sku: outSku.code, output_qty: outputQty.toString(), consumed_qty: consumedQty.toString(), scrap_qty: scrapQty.toString(), consumed, produced: produced.map((p) => p.lpn), incident_id: incidentId, two_phase: true } });
   const full = await tx.assembly_orders.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
-  return { ...full, consumed, produced, warnings };
+  return { ...full, consumed, produced, warnings, for_order };
 }
 
 export async function cancelAssembly(tx: Tx, ctx: ActorContext, id: string, reason: string) {
@@ -307,15 +323,27 @@ type PalletSpec = { cases: number; pieces_per_case: number; partial_pieces?: num
 export const palletQty = (p: PalletSpec) => BigInt(p.cases) * BigInt(p.pieces_per_case) + BigInt(p.partial_pieces ?? 0);
 export const palletsDefective = (pallets: PalletSpec[]) => pallets.reduce((a, p) => a + BigInt(p.defective ?? 0), 0n);
 
-async function produceOutputs(tx: Tx, ctx: ActorContext, order: { id: string; code: string }, station: LocationRow, outSkuId: string, pallets: PalletSpec[], lot: string | null, expiry: string | null) {
+async function produceOutputs(tx: Tx, ctx: ActorContext, order: { id: string; code: string }, station: LocationRow, outSkuId: string, pallets: PalletSpec[], lot: string | null, expiry: string | null, forOrder: { id: string; order_number: string } | null = null) {
   const produced: { lpn: string; cases: number; pieces_per_case: number; partial_pieces: number; defective: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[] = [];
   const warnings: string[] = [];
+  const born: { lpn: LpnRow; qty: bigint }[] = [];
   for (const p of pallets) {
     const partial = p.partial_pieces ?? 0;
     const qty = palletQty(p);
+    const note = `${p.cases} cajas × ${p.pieces_per_case} pzas${partial > 0 ? ` + 1 caja con ${partial}` : ''}${(p.defective ?? 0) > 0 ? ` · ${p.defective} defectuosas` : ''}`;
+    if (forOrder) {
+      // straight for the order: an outbound pallet in PICKING at the station, no put-away
+      const lpn = await createLpn(tx, ctx, { warehouse_id: station.warehouse_id, lpn_type: 'OUTBOUND', location_id: station.id, lot, expiry_date: expiry, cases_count: p.cases + (partial > 0 ? 1 : 0), order_id: forOrder.id });
+      await setLpnStatus(tx, lpn.id, 'PICKING');
+      await createInventory(tx, ctx, { movement_type: 'ASSEMBLY_IN', to_lpn: lpn, sku_id: outSkuId, qty, uom_code: partial > 0 ? 'PIECE' : 'CASE', uom_qty: partial > 0 ? qty : BigInt(p.cases), status: 'PICKING', location_id: station.id, order_id: forOrder.id, reference_type: 'assembly_order', reference_id: order.id, reason: `Armado ${order.code} para pedido ${forOrder.order_number}`, note });
+      await tx.assembly_outputs.create({ data: { order_id: order.id, lpn_id: lpn.id, cases: p.cases, pieces_per_case: p.pieces_per_case, partial_pieces: partial, defective_qty: BigInt(p.defective ?? 0), qty, putaway_task_id: null } });
+      born.push({ lpn: { ...lpn, status: 'PICKING' }, qty });
+      produced.push({ lpn: lpn.code, cases: p.cases, pieces_per_case: p.pieces_per_case, partial_pieces: partial, defective: p.defective ?? 0, qty: qty.toString(), putaway_task_id: null, suggested_location: null });
+      continue;
+    }
     const lpn = await createLpn(tx, ctx, { warehouse_id: station.warehouse_id, lpn_type: 'STORAGE', location_id: station.id, lot, expiry_date: expiry, cases_count: p.cases + (partial > 0 ? 1 : 0) });
     await setLpnStatus(tx, lpn.id, 'STORED');
-    await createInventory(tx, ctx, { movement_type: 'ASSEMBLY_IN', to_lpn: lpn, sku_id: outSkuId, qty, uom_code: partial > 0 ? 'PIECE' : 'CASE', uom_qty: partial > 0 ? qty : BigInt(p.cases), status: 'AVAILABLE', location_id: station.id, reference_type: 'assembly_order', reference_id: order.id, reason: `Armado ${order.code}`, note: `${p.cases} cajas × ${p.pieces_per_case} pzas${partial > 0 ? ` + 1 caja con ${partial}` : ''}${(p.defective ?? 0) > 0 ? ` · ${p.defective} defectuosas` : ''}` });
+    await createInventory(tx, ctx, { movement_type: 'ASSEMBLY_IN', to_lpn: lpn, sku_id: outSkuId, qty, uom_code: partial > 0 ? 'PIECE' : 'CASE', uom_qty: partial > 0 ? qty : BigInt(p.cases), status: 'AVAILABLE', location_id: station.id, reference_type: 'assembly_order', reference_id: order.id, reason: `Armado ${order.code}`, note });
     let taskId: string | null = null;
     let suggested: string | null = null;
     try {
@@ -328,7 +356,14 @@ async function produceOutputs(tx: Tx, ctx: ActorContext, order: { id: string; co
     await tx.assembly_outputs.create({ data: { order_id: order.id, lpn_id: lpn.id, cases: p.cases, pieces_per_case: p.pieces_per_case, partial_pieces: partial, defective_qty: BigInt(p.defective ?? 0), qty, putaway_task_id: taskId } });
     produced.push({ lpn: lpn.code, cases: p.cases, pieces_per_case: p.pieces_per_case, partial_pieces: partial, defective: p.defective ?? 0, qty: qty.toString(), putaway_task_id: taskId, suggested_location: suggested });
   }
-  return { produced, warnings };
+  let for_order: { order_number: string; staging: string | null; pick_task_id: string } | null = null;
+  if (forOrder && born.length) {
+    const booked = await bookProducedPallets(tx, ctx, forOrder.id, outSkuId, born, station.id, `Armado ${order.code}`);
+    for_order = { order_number: booked.order_number, staging: booked.staging, pick_task_id: booked.pick_task_id };
+    // the order's lane is the pallets' destination: shown on the handheld and printed on the label
+    for (const p of produced) p.suggested_location = booked.staging;
+  }
+  return { produced, warnings, for_order };
 }
 
 export async function listAssemblies(tx: Tx, q: { limit: number; sku?: string; status?: string; include_training?: boolean }) {

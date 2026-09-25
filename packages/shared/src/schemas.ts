@@ -352,6 +352,8 @@ export const zAssemblyComplete = z.object({
   scrap: z.object({ qty: zQty, reason: zReason }).optional(),
   /** "para qué": why this assembly is being done (mandatory: every self-started task states its purpose) */
   notes: z.string().trim().min(5).max(2000),
+  /** produced straight for this order: the pallets are outbound and go to its staging lane (no put-away) */
+  for_order_number: z.string().trim().max(60).optional(),
 });
 
 /** Phase 1 of an assembly: the components are taken to the station and blocked; the order stays open until confirmed. */
@@ -364,6 +366,7 @@ export const zAssemblyStart = z.object({
     .max(50),
   output_sku_code: zCode,
   notes: z.string().trim().min(5).max(2000),
+  for_order_number: z.string().trim().max(60).optional(),
 });
 /** Phase 2: what came out (pallets, defective pieces) — the inputs of the open order are consumed here. */
 export const zAssemblyFinish = z.object({
@@ -372,6 +375,7 @@ export const zAssemblyFinish = z.object({
   pallets: z.array(zAssemblyPallet).min(1).max(50),
   scrap: z.object({ qty: zQty, reason: zReason }).optional(),
   notes: z.string().trim().max(2000).optional(),
+  for_order_number: z.string().trim().max(60).optional(),
 });
 export type AssemblyStartInput = z.infer<typeof zAssemblyStart>;
 export type AssemblyFinishInput = z.infer<typeof zAssemblyFinish>;
@@ -505,6 +509,8 @@ export const zAllocateOrder = z.object({
   allow_partial: z.boolean().default(false),
 });
 export const zCancelOrder = z.object({ order_id: zUuid, reason: zReason });
+/** Admin: the order left the warehouse without following the flow; inventory is shipped from wherever it was. */
+export const zForceDeliver = z.object({ order_id: zUuid, reason: zReason });
 
 // ---- picking ----
 export const zPickScan = z
@@ -519,6 +525,19 @@ export const zPickScan = z
   .refine((v) => v.step !== 'QTY' || (v.qty !== undefined && v.uom_code !== undefined), { message: 'qty and uom_code are required for the QTY step', path: ['uom_code'] })
   .refine((v) => v.step === 'QTY' || (v.scanned !== undefined && v.scanned.length > 0), { message: 'scanned is required', path: ['scanned'] });
 export const zPickShort = z.object({ pick_task_id: zUuid, line_id: zUuid, reason: zReason });
+/** The picker closes the outbound pallet being filled (it is full / goes elsewhere): the next pieces start a new one. */
+export const zClosePallet = z.object({ pick_task_id: zUuid, destination: z.string().trim().max(120).optional() });
+/** Delivery destination (CEDIS / store) of one outbound pallet; empty clears it. */
+export const zPalletDestination = z.object({ lpn_code: z.string().trim().min(1).max(30), destination: z.string().trim().max(120) });
+/** Part of an outbound pallet moves to another pallet of the same order (new one, or an existing one scanned). */
+export const zSplitPallet = z.object({
+  from_lpn_code: z.string().trim().min(1).max(30),
+  sku_code: z.string().trim().min(1).max(64),
+  qty: zQty,
+  uom_code: zUom.default('PIECE'),
+  to_lpn_code: z.string().trim().max(30).optional(),
+  destination: z.string().trim().max(120).optional(),
+});
 export const zStageLpn = z.object({
   lpn_code: z.string().trim().min(1).max(30),
   staging_location_barcode: zBarcode,

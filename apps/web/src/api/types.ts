@@ -731,11 +731,22 @@ export interface PickLine {
   sku_description: string;
   uoms: SkuUom[] | null;
 }
+/** One outbound pallet of an order: what it holds, where it is delivered, and whether it is still being filled. */
+export interface OutboundPallet {
+  lpn_code: string;
+  status: string;
+  destination: string | null;
+  location: string | null;
+  qty: Qty;
+  skus: string[];
+  open: boolean;
+}
 export interface PickTaskView {
   task: { id: Uuid; status: string; mode: 'ALLOCATED' | 'FREE'; purpose: string | null; assigned_to: Uuid | null; assigned_username: string | null; started_at: Iso | null; completed_at: Iso | null; outbound_lpn: string | null };
   order: { id: Uuid; order_number: string; customer: string; destination: string | null; status: OrderStatus };
   staging: { id: Uuid; code: string; barcode: string } | null;
   lines: PickLine[];
+  pallets: OutboundPallet[];
 }
 export interface PickScanResult {
   ok: true;

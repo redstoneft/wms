@@ -15,6 +15,8 @@ export interface AssemblyInput {
   output: { sku_code: string; lot?: string; expiry_date?: string; pallets: AssemblyPalletInput[] };
   scrap?: { qty: number | string; reason: string };
   notes?: string;
+  /** produced straight for this order: outbound pallets, no put-away */
+  for_order_number?: string;
 }
 export interface AssemblyOrder {
   id: string;
@@ -34,12 +36,15 @@ export interface AssemblyOrder {
   station: { id: string; code: string; barcode: string };
   output_sku: { id: string; code: string; description: string; gtin: string | null };
   inputs: { id: string; qty: string; lpn: { code: string; status: string }; sku: { code: string; description: string } }[];
+  for_order?: { id: string; order_number: string; status: string; staging_assignments: { location: { code: string } }[] } | null;
   outputs: { id: string; cases: number; pieces_per_case: number; partial_pieces?: number; defective_qty?: string; qty: string; putaway_task_id: string | null; lpn: { code: string; status: string }; location?: string | null; suggested_location?: string | null; putaway_status?: string | null }[];
 }
 export interface AssemblyResult extends AssemblyOrder {
   consumed: { lpn: string; sku: string; qty: string; lpn_status: string }[];
   produced: { lpn: string; cases: number; pieces_per_case: number; partial_pieces?: number; defective?: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[];
   warnings: string[];
+  /** when produced for an order: its number and staging lane */
+  for_order: { order_number: string; staging: string | null; pick_task_id: string } | null;
 }
 
 export interface AssemblyStartInput {
@@ -47,6 +52,7 @@ export interface AssemblyStartInput {
   inputs: { lpn_code: string; sku_code: string; qty: number | string }[];
   output_sku_code: string;
   notes: string;
+  for_order_number?: string;
 }
 export interface AssemblyFinishInput {
   lot?: string;
@@ -54,6 +60,7 @@ export interface AssemblyFinishInput {
   pallets: AssemblyPalletInput[];
   scrap?: { qty: number | string; reason: string };
   notes?: string;
+  for_order_number?: string;
 }
 export const assemblyApi = {
   /** idempotent: everything at once */

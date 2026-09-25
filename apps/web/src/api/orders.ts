@@ -1,6 +1,6 @@
 // orders, picking, staging, verification
 import { api } from './client';
-import type { AllocateResult, Order, OrderDetail, OrderListItem, Paged, PendingVerificationOrder, PickScanResult, PickTaskRow, PickTaskView, StagingRow, VerificationRow, VerificationView } from './types';
+import type { OutboundPallet, AllocateResult, Order, OrderDetail, OrderListItem, Paged, PendingVerificationOrder, PickScanResult, PickTaskRow, PickTaskView, StagingRow, VerificationRow, VerificationView } from './types';
 
 export const ordersApi = {
   list: (q?: { status?: string; q?: string; customer_id?: string; limit?: number; offset?: number }) => api.get<Paged<OrderListItem>>('/orders', q),
@@ -9,6 +9,8 @@ export const ordersApi = {
   accept: (id: string) => api.post<Order>(`/orders/${id}/accept`),
   allocate: (body: { order_id: string; strategy?: string; allow_partial: boolean }) => api.post<AllocateResult>('/orders/allocate', body),
   cancel: (body: { order_id: string; reason: string; authorization_id?: string }) => api.post<{ order_id: string; status: string; deallocated: string }>('/orders/cancel', body),
+  /** admin: the order left without following the flow; inventory is shipped from wherever it was */
+  forceDeliver: (body: { order_id: string; reason: string }) => api.post<{ order_id: string; status: string; shipped: { lpn: string; sku: string; qty: string; from: string }[]; missing: { sku: string; qty: string }[]; incident_id: string }>('/orders/force-deliver', body),
 };
 
 export const pickingApi = {
@@ -33,6 +35,12 @@ export const pickingApi = {
   stage: (body: { lpn_code: string; staging_location_barcode: string }, key: string) =>
     api.postIdem<{ lpn_code: string; location: string; order_status: string | null; movements: string[] }>('/staging/scan', body, key),
   staging: () => api.get<StagingRow[]>('/staging'),
+  /** outbound pallets: close the one being filled (full / other destination), set a destination, split, look one up */
+  closePallet: (body: { pick_task_id: string; destination?: string }) => api.post<{ lpn_code: string; qty: string; destination: string | null; pallets: OutboundPallet[] }>('/picking/close-pallet', body),
+  palletDestination: (body: { lpn_code: string; destination: string }) => api.post<{ lpn_code: string; destination: string | null; pallets: OutboundPallet[] }>('/picking/pallet-destination', body),
+  splitPallet: (body: { from_lpn_code: string; sku_code: string; qty: string; uom_code?: string; to_lpn_code?: string; destination?: string }, key: string) =>
+    api.postIdem<{ from_lpn: string; from_left: string; to_lpn: string; to_qty: string; created: boolean; sku: string; qty: string; destination: string | null; pallets: OutboundPallet[] }>('/picking/split-pallet', body, key),
+  pallet: (code: string) => api.get<{ found: false; code: string } | { found: true; code: string; status: string; destination: string | null; location: string | null; order: { order_number: string; customer: string; destination: string | null } | null; contents: { sku_code: string; description: string; status: string; qty: string }[]; pallets: OutboundPallet[] }>(`/picking/pallets/${encodeURIComponent(code)}`),
 };
 
 export const verificationApi = {

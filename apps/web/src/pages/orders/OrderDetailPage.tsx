@@ -51,6 +51,16 @@ export default function OrderDetailPage() {
     },
     onError: (e) => toast.error('No se pudo crear la tarea', e),
   });
+  const [force, setForce] = useState<{ open: boolean; reason: string }>({ open: false, reason: '' });
+  const doForce = useMutation({
+    mutationFn: () => ordersApi.forceDeliver({ order_id: id, reason: force.reason }),
+    onSuccess: (r) => {
+      toast.success('Pedido marcado como entregado', `${r.shipped.length} movimiento(s) de salida${r.missing.length ? ` · sin existencia: ${r.missing.map((m) => `${m.sku} ${fmtQty(m.qty)}`).join(', ')}` : ''}`);
+      setForce({ open: false, reason: '' });
+      refresh();
+    },
+    onError: (e) => toast.error('No se pudo marcar como entregado', e),
+  });
   const [cancel, setCancel] = useState<{ open: boolean; reason: string; auth: string }>({ open: false, reason: '', auth: '' });
   const doCancel = useMutation({
     mutationFn: () => ordersApi.cancel({ order_id: id, reason: cancel.reason, authorization_id: cancel.auth || undefined }),
@@ -91,6 +101,11 @@ export default function OrderDetailPage() {
             {can('orders.manage') && !['SHIPPED', 'LOADED', 'LOADING', 'CANCELLED'].includes(o.status) && (
               <Button variant="danger" onClick={() => setCancel({ open: true, reason: '', auth: '' })}>
                 Cancelar pedido
+              </Button>
+            )}
+            {can('orders.force_deliver') && !['SHIPPED', 'CANCELLED'].includes(o.status) && (
+              <Button variant="secondary" onClick={() => setForce({ open: true, reason: '' })}>
+                Marcar como entregado (fuera de flujo)
               </Button>
             )}
             <Link to={`/labels?type=ORDER&id=${o.order_number}`} className="text-sm text-sky-700 underline">
@@ -203,6 +218,16 @@ export default function OrderDetailPage() {
         </Field>
         <p className="mt-2 text-xs text-slate-500">Se generará la ruta por secuencia de picking y se reservará un carril de staging.</p>
       </Modal>
+      <ConfirmDialog open={force.open} onClose={() => setForce({ open: false, reason: '' })} onConfirm={() => doForce.mutate()} title={`Marcar ${o.order_number} como entregado`} danger loading={doForce.isPending} confirmLabel="Marcar como entregado">
+        <div className="grid gap-3">
+          <Alert tone="warn">
+            Úsalo solo cuando el pedido ya salió sin seguir el flujo (sin staging, verificación o carga). El inventario se descuenta como embarcado desde donde esté: lo surtido, lo asignado y, si falta, de la existencia disponible. Lo que no haya en existencia queda registrado en una incidencia. El pedido pasa a SHIPPED y se libera su carril.
+          </Alert>
+          <Field label="Motivo (mín. 3)" required>
+            <Textarea value={force.reason} onChange={(e) => setForce({ ...force, reason: e.target.value })} />
+          </Field>
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog open={cancel.open} onClose={() => setCancel({ open: false, reason: '', auth: '' })} onConfirm={() => doCancel.mutate()} title={`Cancelar pedido ${o.order_number}`} danger loading={doCancel.isPending} confirmLabel="Cancelar pedido">
         <div className="grid gap-3">
           {needsAuth && can('exceptions.authorize') && <Alert tone="info">El pedido está en surtido/staging. Como supervisor puedes cancelarlo con solo el motivo (queda auditado a tu nombre). Los pallets surtidos regresan a inventario disponible con tarea de put-away.</Alert>}

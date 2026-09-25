@@ -560,6 +560,7 @@ model lpns {
   lot                 String?   @db.VarChar(60)
   expiry_date         DateTime? @db.Date
   parent_lpn_id       String?   @db.Uuid // when split from another pallet
+  destination         String?   @db.VarChar(120) // outbound: where this pallet is delivered (CEDIS / store), printed on the label
   version             Int       @default(1) // optimistic concurrency
   created_at          DateTime  @default(now()) @db.Timestamptz(6)
   created_by          String?   @db.Uuid
@@ -816,6 +817,7 @@ model orders {
   created_by    String?   @db.Uuid
   updated_at    DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
+  assemblies assembly_orders[]
   customer  customers  @relation(fields: [customer_id], references: [id])
   shipment  shipments? @relation(fields: [shipment_id], references: [id])
   lines     order_lines[]
@@ -1195,6 +1197,7 @@ model assembly_orders {
   scrap_qty           BigInt   @default(0)
   scrap_reason        String?
   incident_id         String?  @db.Uuid
+  for_order_id        String?  @db.Uuid // produced straight for this order: the pallets are outbound (PICKING), no put-away
   notes               String?
   mode                String   @default("ASSEMBLY") @db.VarChar(10) // ASSEMBLY (component → other SKU) | REPACK (same SKU, new packaging)
   status              String   @default("COMPLETED") @db.VarChar(20) // IN_PROGRESS (inputs at the station, waiting to be confirmed) | COMPLETED | CANCELLED
@@ -1207,6 +1210,7 @@ model assembly_orders {
   warehouse  warehouses @relation(fields: [warehouse_id], references: [id])
   station    locations  @relation(fields: [station_location_id], references: [id])
   output_sku skus       @relation(fields: [output_sku_id], references: [id])
+  for_order  orders?    @relation(fields: [for_order_id], references: [id])
   inputs     assembly_inputs[]
   outputs    assembly_outputs[]
 

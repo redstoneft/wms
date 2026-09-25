@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zPickScan, zPickShort, zStageLpn, zUuid, zFreePickScan, zReason } from '@wms/shared';
+import { zPickScan, zPickShort, zStageLpn, zUuid, zFreePickScan, zReason, zClosePallet, zPalletDestination, zSplitPallet } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { includeTraining } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
@@ -56,6 +56,27 @@ export async function pickingRoutes(app: FastifyInstance) {
     const id = zUuid.parse((req.params as { id: string }).id);
     const body = z.object({ reason: zReason }).parse(req.body);
     return withTx((tx) => svc.cancelFreeTask(tx, req.actor!, id, body.reason));
+  });
+  /** Outbound pallets: close the one being filled (full / other destination), set a pallet's destination, split a pallet. */
+  app.post('/picking/close-pallet', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const body = zClosePallet.parse(req.body);
+    return withTx((tx) => svc.closePallet(tx, req.actor!, body));
+  });
+  app.post('/picking/pallet-destination', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const body = zPalletDestination.parse(req.body);
+    return withTx((tx) => svc.setPalletDestination(tx, req.actor!, body));
+  });
+  app.post('/picking/split-pallet', { preHandler: app.requirePermission('picking.execute') }, async (req, reply) => {
+    const body = zSplitPallet.parse(req.body);
+    const r = await runIdempotent(req.actor!, fingerprint('POST', '/picking/split-pallet', body), async (tx) => ({ status: 200, body: await svc.splitPallet(tx, req.actor!, { ...body, qty: BigInt(body.qty) }) }));
+    if (r.replayed) reply.header('Idempotent-Replayed', 'true');
+    return r.body;
+  });
+  app.get('/picking/pallets/:lpn', { preHandler: app.requirePermission('picking.execute') }, async (req) => {
+    const code = (req.params as { lpn: string }).lpn.trim().toUpperCase();
+    const lpn = await db.lpns.findUnique({ where: { code }, include: { current_location: { select: { code: true } }, order: { select: { order_number: true, destination: true, customer: { select: { name: true } } } }, balances: { where: { qty: { gt: 0n } }, include: { sku: { select: { code: true, description: true } } } } } });
+    if (!lpn) return { found: false as const, code };
+    return { found: true as const, code: lpn.code, status: lpn.status, destination: lpn.destination, location: lpn.current_location?.code ?? null, order: lpn.order ? { order_number: lpn.order.order_number, customer: lpn.order.customer.name, destination: lpn.order.destination } : null, contents: lpn.balances.map((b) => ({ sku_code: b.sku.code, description: b.sku.description, status: b.status, qty: b.qty.toString() })), pallets: lpn.order_id ? await svc.outboundPallets(db as never, lpn.order_id, null) : [] };
   });
   /** Choosing the pallet: other pallets holding the line's product, and moving the line to one of them. */
   app.get('/picking/tasks/:id/lines/:lineId/candidates', { preHandler: app.requirePermission('picking.execute') }, async (req) => {

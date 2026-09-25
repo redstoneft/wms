@@ -15,7 +15,7 @@ export async function buildLabelModel(tx: Tx, labelType: LabelType, entityId: st
     case 'LPN': {
       const lpn = await tx.lpns.findFirst({
         where: { OR: [{ id: isUuid(entityId) ? entityId : undefined }, { code: entityId.toUpperCase() }] },
-        include: { receipt: true, container: true, supplier: true, balances: { include: { sku: true } }, current_location: true },
+        include: { receipt: true, container: true, supplier: true, balances: { include: { sku: true } }, current_location: true, order: { include: { customer: true, staging_assignments: { where: { released_at: null }, include: { location: true } } } } },
       });
       if (!lpn) throw new NotFoundError('LPN', entityId);
       const skuLines = lpn.balances
@@ -25,7 +25,11 @@ export async function buildLabelModel(tx: Tx, labelType: LabelType, entityId: st
       if (skuLines.length === 1 && skuLines[0]) skuLines[0].cases = cases;
       // where the pallet is going (pending put-away): printed so the label already shows its rack position
       const pending = await tx.putaway_tasks.findFirst({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, select: { suggested_location_id: true }, orderBy: { created_at: 'desc' } });
-      const destino = pending?.suggested_location_id ? (await tx.locations.findUnique({ where: { id: pending.suggested_location_id }, select: { code: true } }))?.code ?? null : null;
+      let destino = pending?.suggested_location_id ? (await tx.locations.findUnique({ where: { id: pending.suggested_location_id }, select: { code: true } }))?.code ?? null : null;
+      // outbound pallet: the order, its customer and where this pallet is delivered (its own destination, else the order's)
+      const outbound = lpn.order && ['PICKING', 'STAGED', 'LOADED', 'SHIPPED'].includes(lpn.status) ? lpn.order : null;
+      const entrega = outbound ? lpn.destination ?? outbound.destination ?? null : null;
+      if (outbound && !destino) destino = outbound.staging_assignments[0]?.location.code ?? null;
       const m: LpnLabelModel = {
         label_type: 'LPN',
         title: lpn.code,
@@ -37,12 +41,14 @@ export async function buildLabelModel(tx: Tx, labelType: LabelType, entityId: st
           { label: 'CONTENEDOR', value: lpn.container?.container_number ?? '-' },
           { label: 'PROVEEDOR', value: lpn.supplier?.name ?? '-' },
           { label: 'CAJAS', value: cases || '-' },
+          ...(outbound ? [{ label: 'PEDIDO', value: outbound.order_number }, { label: 'CLIENTE', value: outbound.customer.name.slice(0, 28) }] : []),
+          ...(entrega ? [{ label: 'ENTREGA', value: entrega.slice(0, 40) }] : []),
           ...(destino ? [{ label: 'DESTINO', value: destino }] : []),
           ...(lpn.lot ? [{ label: 'LOTE', value: lpn.lot }] : []),
           ...(lpn.expiry_date ? [{ label: 'CADUCIDAD', value: lpn.expiry_date.toISOString().slice(0, 10) }] : []),
         ],
         sku_lines: skuLines,
-        footer: `${skuLines.length} SKU(s) · ${lpn.current_location?.code ?? 'sin ubicar'}${destino ? ` → DESTINO ${destino}` : ''}`,
+        footer: outbound ? `PEDIDO ${outbound.order_number}${entrega ? ` → ${entrega}` : ''}${destino ? ` · carril ${destino}` : ''}` : `${skuLines.length} SKU(s) · ${lpn.current_location?.code ?? 'sin ubicar'}${destino ? ` → DESTINO ${destino}` : ''}`,
       };
       // empty fields ('-') only push the useful ones into a cramped second column
       m.lines = m.lines.filter((l) => l.value !== '-');
