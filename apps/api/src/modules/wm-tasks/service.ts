@@ -13,7 +13,7 @@ import { adjustInventory } from '../inventory/service.js';
 import { finishCounting, submitCount } from '../counts/service.js';
 import { createCountTask } from '../counts/service.js';
 import { resolveImportSku } from '../imports/service.js';
-import { acceptOrder, allocateOrder, createOrder } from '../orders/service.js';
+import { freeOrderNumber, acceptOrder, allocateOrder, createOrder } from '../orders/service.js';
 import { createPickTask } from '../picking/service.js';
 import { createPutawayTask } from '../putaway/service.js';
 
@@ -91,7 +91,7 @@ export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskI
 /** A manual order captured on the handheld (products scanned, quantities typed). Accepted right away; optionally picked now. */
 export async function createHandheldOrder(tx: Tx, ctx: ActorContext, input: HandheldOrderInput) {
   const number = input.order_number.trim().toUpperCase();
-  if (await tx.orders.findFirst({ where: { order_number: { equals: number, mode: 'insensitive' } } })) throw new RuleError('ORDER_EXISTS', `Order ${number} already exists`);
+  await freeOrderNumber(tx, ctx, number); // a cancelled order with this number is renamed and the number reused
   // several scans of the same product collapse into one line
   const merged = new Map<string, { sku_code: string; qty: bigint; uom_code: HandheldOrderInput['lines'][number]['uom_code'] }>();
   for (const l of input.lines) {

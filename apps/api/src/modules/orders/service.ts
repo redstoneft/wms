@@ -22,10 +22,25 @@ export interface CreateOrderInput {
   lines: { sku_code: string; qty: bigint; uom_code: UomCode }[];
 }
 
+/**
+ * A number can be captured again after its order was cancelled: the cancelled record keeps its history under
+ * "<number> ~CANCELADO-n" and the number is free. A live order with that number still blocks.
+ */
+export async function freeOrderNumber(tx: Tx, ctx: ActorContext, number: string): Promise<void> {
+  const existing = await tx.orders.findFirst({ where: { order_number: { equals: number, mode: 'insensitive' } } });
+  if (!existing) return;
+  if (existing.status !== 'CANCELLED') throw new ConflictError('ORDER_EXISTS', `El pedido ${number} ya existe (estado ${existing.status}); cancélalo primero o usa otro número`, { status: existing.status });
+  let n = 1;
+  let renamed = `${number} ~CANCELADO-${n}`;
+  while (await tx.orders.findFirst({ where: { order_number: { equals: renamed, mode: 'insensitive' } }, select: { id: true } })) renamed = `${number} ~CANCELADO-${++n}`;
+  await tx.orders.update({ where: { id: existing.id }, data: { order_number: renamed, version: { increment: 1 } } });
+  await audit(tx, ctx, { action: 'order.number_released', entity_type: 'order', entity_id: existing.id, before: { order_number: number }, after: { order_number: renamed }, reason: 'El número se vuelve a capturar; el pedido cancelado conserva su historial' });
+}
+
 export async function createOrder(tx: Tx, ctx: ActorContext, input: CreateOrderInput) {
   const customer = await tx.customers.findUnique({ where: { code: input.customer_code } });
   if (!customer) throw new NotFoundError('customer', input.customer_code);
-  if (await tx.orders.findUnique({ where: { order_number: input.order_number } })) throw new ConflictError('ORDER_EXISTS', `Order ${input.order_number} already exists`);
+  await freeOrderNumber(tx, ctx, input.order_number);
   const lines = [];
   const seen = new Map<string, number>();
   let n = 1;

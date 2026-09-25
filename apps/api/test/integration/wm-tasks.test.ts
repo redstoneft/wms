@@ -256,7 +256,7 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect(auto.status, JSON.stringify(auto.body)).toBe(201);
     expect(auto.body.dock).toBe(f.dock.code);
     const noRef = await rc.post('/wm/tasks', { kind: 'COUNT', purpose: 'sin referencia' });
-    expect(noRef.status).toBe(422);
+    expect(noRef.status).toBe(409);
 
     // supervisor: the pallet really holds 50 of sku0 (system 60) and 5 of sku1 (system 0)
     const mixed = await storedPallet(f, 0, f.reserve[11]!.id, 60n);
@@ -370,5 +370,21 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const ol = await sql<{ picked_qty: bigint; allocated_qty: bigint }>(`SELECT picked_qty, allocated_qty FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_number = '${number}'`);
     expect(ol[0]).toMatchObject({ picked_qty: 30n, allocated_qty: 0n });
     await expectReconciled();
+  });
+
+  it('a cancelled order number can be captured again on the handheld (the cancelled record keeps its history renamed)', async () => {
+    const number = `PED-REUSE-${f.tag}`;
+    const o = await sup.post('/orders', { order_number: number, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 1 }] });
+    expect(o.status).toBe(201);
+    const dup = await picker.post('/wm/orders', { order_number: number, customer_code: f.customer.code, purpose: 'repetido', lines: [{ sku_code: f.skus[0]!.code, qty: 1 }] });
+    expect(dup.status).toBe(409);
+    expect(dup.body.error).toBe('ORDER_EXISTS');
+    expect((await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'captura equivocada' })).status).toBe(200);
+    const again = await picker.post('/wm/orders', { order_number: number, customer_code: f.customer.code, purpose: 'ahora sí', lines: [{ sku_code: f.skus[0]!.code, qty: 2 }] });
+    expect(again.status, JSON.stringify(again.body)).toBe(201);
+    const rows = await sql<{ order_number: string; status: string }>(`SELECT order_number, status FROM orders WHERE order_number ILIKE '${number}%' ORDER BY created_at`);
+    expect(rows.map((r) => r.status)).toEqual(['CANCELLED', 'ACCEPTED']);
+    expect(rows[0]!.order_number).toBe(`${number} ~CANCELADO-1`);
+    expect(rows[1]!.order_number).toBe(number);
   });
 });
