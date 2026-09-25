@@ -178,8 +178,10 @@ export default function PrintStationPage() {
       await writeToZebra(device, FORCE_ZPL + TEST_LABEL);
       say('Etiqueta de prueba enviada a la Zebra');
     } catch (e) {
-      setError(errText(e));
-      say(`Prueba falló: ${errText(e)}`, false);
+      const raw = errText(e);
+      const m = /claim interface|Access denied|already open|in use/i.test(raw) ? `La Zebra está ocupada por otro programa (app de etiquetas SAE u otra ventana de esta estación). Ciérralo e intenta de nuevo. (${raw})` : raw;
+      setError(m);
+      say(`Prueba falló: ${m}`, false);
     }
   };
   const saveToken = () => {
@@ -217,10 +219,20 @@ export default function PrintStationPage() {
                 say(`IMPRESA ${job.label_type} ${job.entity}${job.is_reprint ? ' (reimpresión)' : ''}`);
                 setError(null);
               } catch (e) {
-                const m = errText(e);
-                await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, error: m } }).catch(() => undefined);
-                say(`ERROR ${job.label_type} ${job.entity}: ${m}`, false);
-                setError(m);
+                const raw = errText(e);
+                const busy = /claim interface|Access denied|already open|in use|NetworkError|Unable to open|Failed to open/i.test(raw);
+                if (busy) {
+                  // another program has the Zebra (the SAE label app, or a second copy of this station): keep the label queued and retry
+                  await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, retry: true, error: raw } }).catch(() => undefined);
+                  const m = `La Zebra está ocupada por otro programa (por ejemplo la app de etiquetas SAE, u otra ventana de esta estación). Ciérralo; la etiqueta ${job.entity} sigue en cola y se reintenta sola.`;
+                  say(`OCUPADA ${job.label_type} ${job.entity}: se reintenta`, false);
+                  setError(m);
+                  await sleep(5000);
+                  break;
+                }
+                await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, error: raw } }).catch(() => undefined);
+                say(`ERROR ${job.label_type} ${job.entity}: ${raw}`, false);
+                setError(raw);
               }
             }
             const p = await agent<{ printer: string; name: string; queued: number }>(token, '/ping');

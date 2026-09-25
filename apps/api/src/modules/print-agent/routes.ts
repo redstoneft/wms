@@ -42,10 +42,15 @@ async function claimJobs(p: { id: string; code: string }, limit: number) {
   });
 }
 
-async function reportJob(printerId: string, id: string, body: { ok: boolean; error?: string }) {
+async function reportJob(printerId: string, id: string, body: { ok: boolean; error?: string; retry?: boolean }) {
   const job = await getDb().label_prints.findFirst({ where: { id, printer_id: printerId } });
   if (!job) throw new NotFoundError('print job', id);
   if (job.status === 'SENT') return { id, status: 'SENT' };
+  if (!body.ok && body.retry) {
+    // the printer was busy (another app holds the USB interface): back to the queue, the station tries again
+    await getDb().label_prints.update({ where: { id }, data: { status: 'QUEUED', claimed_at: null, error: (body.error ?? 'printer busy').slice(0, 500) } });
+    return { id, status: 'QUEUED' };
+  }
   const status = body.ok ? 'SENT' : 'FAILED';
   await getDb().label_prints.update({ where: { id }, data: { status, error: body.ok ? null : (body.error ?? 'agent error').slice(0, 500), sent_at: body.ok ? new Date() : null } });
   return { id, status };
@@ -63,7 +68,7 @@ async function claimJobsWait(p: { id: string; code: string }, q: { limit: number
     await new Promise((res) => setTimeout(res, 1000));
   }
 }
-const zResult = z.object({ ok: z.boolean(), error: z.string().trim().max(500).optional() });
+const zResult = z.object({ ok: z.boolean(), error: z.string().trim().max(500).optional(), retry: z.boolean().default(false) });
 
 export async function printAgentRoutes(app: FastifyInstance) {
   // ---- token-authenticated (python station on the printer PC)
