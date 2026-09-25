@@ -188,7 +188,8 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
 
 /** The station: the scanned one, or (no scan) the warehouse's assembly area — zone ARM, else its first floor area. */
 async function resolveStation(tx: Tx, barcode: string | undefined, firstLpnCode?: string): Promise<LocationRow> {
-  if (!barcode) {
+  // nothing scanned (or a stray keystroke like "1"): use the warehouse's assembly station
+  if (!barcode || barcode.trim().length < 3) {
     const lpn = firstLpnCode ? await tx.lpns.findUnique({ where: { code: firstLpnCode.trim().toUpperCase() }, select: { warehouse_id: true } }) : null;
     const wh = lpn?.warehouse_id ?? (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } }))?.id ?? null;
     if (!wh) throw new RuleError('NO_STATION', 'No hay estación de armado configurada');
