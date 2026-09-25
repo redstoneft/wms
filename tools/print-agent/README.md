@@ -30,3 +30,7 @@ Descarga `reparar_impresora.bat` desde Datos maestros → Impresoras → Generar
 ## Una sola estación para el WMS y la app de etiquetas SAE
 
 Desde la v2.0 la estación Python (`wms_print_agent.py`) también expone el servicio local `http://127.0.0.1:9101` con la misma interfaz que `EstacionZebra.exe` (`/estado`, `/imprimir`, `/impresora`). La app web de etiquetas SAE la detecta sola y le manda sus etiquetas; el WMS imprime por el mismo proceso y el mismo driver de Windows, con un candado que serializa ambos. Con `estacion_wms.bat` (descargado de Impresoras → Generar token) basta: si hay Python corre este programa; si no, abre la estación del navegador.
+
+## En segundo plano, sin ventana
+
+`estacion_wms.bat` (con Python) deja la estación corriendo oculta con `pythonw` desde `%LOCALAPPDATA%\wms-print\` y pone en la carpeta Inicio un lanzador que la arranca al iniciar sesión. Solo corre una copia por PC (puerto de guardia 9199). Todo lo que imprimiría en consola va a `estacion.log` (rota a 2 MB). `detener_estacion.bat` la detiene; volver a ejecutar `estacion_wms.bat` la reinicia y actualiza el script desde el WMS.

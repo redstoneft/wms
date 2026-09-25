@@ -77,10 +77,12 @@ def list_printers():
 
 
 def autodetect_zebra():
-    for p in list_printers():
-        pl = p.lower()
-        if "zebra" in pl or "zdesigner" in pl or "gk420" in pl or "zd4" in pl or "zt2" in pl or "zt4" in pl:
-            return p
+    """Prefiere la cola del driver oficial (ZDesigner, la misma que usa ZebraDesigner) sobre la generica 'ZEBRA'."""
+    printers = list_printers()
+    for pref in ("zdesigner", "gk420", "zd4", "zt2", "zt4", "zebra"):
+        for p in printers:
+            if pref in p.lower():
+                return p
     return ""
 
 
@@ -256,8 +258,45 @@ def start_local_service():
     print(f"  Servicio local para la app de etiquetas SAE: http://127.0.0.1:{LOCAL_PORT}")
 
 
+GUARD_PORT = int(os.environ.get("WMS_GUARD_PORT", "9199"))
+_guard_socket = None
+
+
+def setup_logging():
+    """Sin consola (pythonw / en segundo plano): todo lo que se imprime va a estacion.log junto al script."""
+    if sys.stdout is not None and sys.stdout.isatty() and os.environ.get("WMS_LOG") != "1":
+        return
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "estacion.log")
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > 2_000_000:
+            os.replace(path, path + ".1")
+        f = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        sys.stdout = f
+        sys.stderr = f
+        print(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} inicio (sin ventana) =====")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def single_instance():
+    """Solo una estacion por PC: un puerto de guardia; si esta ocupado, ya hay otra corriendo."""
+    global _guard_socket
+    try:
+        _guard_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _guard_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        _guard_socket.bind(("127.0.0.1", GUARD_PORT))
+        _guard_socket.listen(1)
+        return True
+    except OSError:
+        print("Ya hay otra estacion de impresion WMS corriendo en esta PC; esta copia se cierra.")
+        return False
+
+
 def main():
     global PRINTER_NAME
+    setup_logging()
+    if not single_instance():
+        sys.exit(3)
     print("=" * 70)
     print("ESTACION DE IMPRESION WMS")
     print(f"  WMS: {WMS_URL}")
