@@ -1260,3 +1260,32 @@ model training_progress {
 
   @@id([user_id, step])
 }
+
+// ------------------------------------------------------------------
+// Delivery calendar (whiteboard → handheld + TV board)
+// ------------------------------------------------------------------
+model delivery_appointments {
+  id            String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  title         String    @db.VarChar(120)
+  customer_id   String?   @db.Uuid
+  order_id      String?   @db.Uuid
+  delivery_date DateTime  @db.Date
+  delivery_time String?   @db.VarChar(5)
+  notes         String?
+  status        String    @default("PLANNED") @db.VarChar(20) // PLANNED | DONE | CANCELLED
+  created_by    String    @db.Uuid
+  updated_by    String?   @db.Uuid
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([delivery_date])
+}
+
+model delivery_boards {
+  id         String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  name       String    @db.VarChar(80)
+  token_hash String    @unique @db.VarChar(64)
+  created_by String    @db.Uuid
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_at DateTime? @db.Timestamptz(6)
+}

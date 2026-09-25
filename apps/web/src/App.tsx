@@ -49,6 +49,8 @@ const WmLookupPage = lazy(() => import('./wm/WmLookupPage'));
 const WmNewOrderPage = lazy(() => import('./wm/WmNewOrderPage'));
 const WmRecountPage = lazy(() => import('./wm/WmRecountPage'));
 const WmReturnPage = lazy(() => import('./wm/WmReturnPage'));
+const WmDeliveriesPage = lazy(() => import('./wm/WmDeliveriesPage'));
+const BoardPage = lazy(() => import('./pages/BoardPage'));
 const WmTrainingPage = lazy(() => import('./wm/WmTrainingPage'));
 const WmReplenishPage = lazy(() => import('./wm/WmReplenishPage'));
 const WmCountPage = lazy(() => import('./wm/WmCountPage'));
@@ -125,6 +127,8 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         {/* WebUSB print station on the printer PC: authenticated with the printer's station token, not a user session */}
         <Route path="/print-station" element={<Suspense fallback={<FullSpinner />}><PrintStationPage /></Suspense>} />
+        {/* TV board: read-only link token, no session */}
+        <Route path="/board" element={<Suspense fallback={<FullSpinner />}><BoardPage /></Suspense>} />
         <Route
           path="/mfa"
           element={
@@ -177,6 +181,7 @@ export default function App() {
         <Route path="/wm/new-order" element={<Wm perms={['tasks.self_create']}><WmNewOrderPage /></Wm>} />
         <Route path="/wm/recount" element={<Wm perms={['tasks.self_create']}><WmRecountPage /></Wm>} />
         <Route path="/wm/return" element={<Wm perms={['returns.manage']}><WmReturnPage /></Wm>} />
+        <Route path="/wm/deliveries" element={<Wm perms={['deliveries.manage']}><WmDeliveriesPage /></Wm>} />
         <Route path="/wm/training" element={<Wm perms={[]}><WmTrainingPage /></Wm>} />
         <Route path="/wm/replenish" element={<Wm perms={['replenishment.execute']}><WmReplenishPage /></Wm>} />
         <Route path="/wm/count" element={<Wm perms={['counts.execute']}><WmCountPage /></Wm>} />

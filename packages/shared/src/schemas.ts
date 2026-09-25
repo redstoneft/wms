@@ -634,6 +634,18 @@ export const zInlineAuthorize = z.object({
   reason: zReason,
 });
 
+// ---- delivery calendar (whiteboard → handheld + TV board) ----
+export const zDelivery = z.object({
+  title: z.string().trim().min(1).max(120),
+  customer_code: zCode.optional(),
+  order_number: z.string().trim().max(60).optional(),
+  delivery_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d), 'Fecha inválida'),
+  delivery_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM').optional(),
+  notes: z.string().trim().max(500).optional(),
+});
+export const zDeliveryUpdate = zDelivery.partial().extend({ status: z.enum(['PLANNED', 'DONE', 'CANCELLED']).optional() });
+export type DeliveryInput = z.infer<typeof zDelivery>;
+
 // ---- settings ----
 export const zSettings = z.object({
   allocation_strategy: z.enum(ALLOCATION_STRATEGIES).optional(),

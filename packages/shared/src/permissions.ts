@@ -23,6 +23,7 @@ export const PERMISSIONS = {
   'lpn.read': 'View LPNs and their history',
   'labels.print': 'Print labels',
   'labels.reprint': 'Reprint labels (audited)',
+  'deliveries.manage': 'Keep the delivery calendar (whiteboard) and open the TV board',
   // storage
   'putaway.execute': 'Execute directed put-away',
   'putaway.override': 'Override the suggested put-away location (supervisor)',
@@ -70,6 +71,7 @@ const OPERATOR_COMMON: Permission[] = [
   'labels.print',
   'labels.reprint', // a damaged or lost pallet label is reprinted on the floor (reason required, audited)
   'returns.manage', // quick returns from the handheld: a couple of pieces straight onto the pallet that holds the product
+  'deliveries.manage', // the delivery calendar (whiteboard) is kept from the handheld
   'inventory.read',
   'lpn.read',
   'incidents.read',

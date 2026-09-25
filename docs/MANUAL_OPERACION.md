@@ -36,6 +36,14 @@ Para las devoluciones de una o pocas piezas que llegan al almacén: van **direct
 
 Cada devolución rápida genera un folio `RET-…` ya cerrado, visible en oficina en *Devoluciones* (sin cliente si no se capturó), con el movimiento y la auditoría a nombre de quien la registró. Si no hay ninguna tarima guardada con ese producto, recíbala por *Recibir* como un pallet nuevo.
 
+## CALENDARIO DE ENTREGAS (pizarrón en la TV)
+
+Sustituye al pizarrón de la puerta: `Almacén → Entregas`.
+
+1. **Nueva entrega**: cliente (se puede escribir libre o elegir del catálogo), fecha, hora opcional y notas (naves, sucursales, horarios: "Nave 1 5:00pm · Sta. Bárbara 8:00am"). Cualquier usuario del almacén puede capturar y editar.
+2. La lista muestra las entregas por día (HOY / MAÑANA / ATRASADA). Botones **Entregado**, **Editar** y **Quitar**.
+3. **Ver en TV**: un supervisor genera el **enlace del tablero** (una sola vez) y se abre en el navegador de la TV o de la computadora conectada a ella, en pantalla completa. El tablero se actualiza solo cada 30 segundos y no pide usuario: el enlace es de solo lectura y solo muestra el calendario. Si el enlace se filtra, se revoca y se genera otro. Para proyectar desde el handheld: abrir el tablero ahí y usar "Transmitir pantalla" de Android.
+
 ## PUT-AWAY (ubicar pallets)
 
 1. `Almacén → Ubicar`. Escanee el **LPN** del pallet.

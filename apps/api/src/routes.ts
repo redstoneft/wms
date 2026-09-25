@@ -20,6 +20,7 @@ import { verificationRoutes } from './modules/verification/routes.js';
 import { shipmentRoutes } from './modules/shipments/routes.js';
 import { incidentRoutes } from './modules/incidents/routes.js';
 import { returnRoutes } from './modules/returns/routes.js';
+import { deliveryRoutes } from './modules/deliveries/routes.js';
 import { labelRoutes } from './modules/labels/routes.js';
 import { importRoutes } from './modules/imports/routes.js';
 import { dashboardRoutes } from './modules/dashboard/routes.js';
@@ -54,6 +55,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(shipmentRoutes);
       await api.register(incidentRoutes);
       await api.register(returnRoutes);
+      await api.register(deliveryRoutes);
       await api.register(labelRoutes);
       await api.register(importRoutes);
       await api.register(dashboardRoutes);
