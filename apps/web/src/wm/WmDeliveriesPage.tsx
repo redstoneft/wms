@@ -71,6 +71,23 @@ function Flow() {
       setBusy(false);
     }
   };
+  const downloadRoku = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch('/api/deliveries/board-roku', { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'wms-client', 'Content-Type': 'application/json' }, body: '{}' });
+      if (!r.ok) throw new Error(r.status === 403 ? 'Solo un supervisor puede generar el tablero para Roku' : `HTTP ${r.status}`);
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'tablero_roku.zip';
+      a.click();
+      wm.ok('TABLERO PARA ROKU DESCARGADO');
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   const makeLink = async () => {
     setBusy(true);
     try {
@@ -167,6 +184,22 @@ function Flow() {
             </a>
           </div>
         )}
+        <div className="mt-4 rounded-2xl bg-slate-900 p-3 text-sm text-slate-200" data-testid="roku-help">
+          <div className="font-semibold uppercase tracking-wide text-slate-300">¿La TV es Roku?</div>
+          <p className="mt-1">Roku no tiene navegador, pero sí acepta una app propia. Descarga el tablero como app de Roku (trae su enlace adentro) e instálala una vez:</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5">
+            <li>En el Roku, con el control: Inicio ×3, Arriba ×2, Derecha, Izquierda, Derecha, Izquierda, Derecha. Activa el <b>modo desarrollador</b>, ponle una contraseña y anota la dirección IP que muestra. Reinicia.</li>
+            <li>En una computadora de la misma red abre <span className="font-mono">http://LA-IP-DEL-ROKU</span> (usuario <span className="font-mono">rokudev</span> y esa contraseña) → Upload → elige <span className="font-mono">tablero_roku.zip</span> → Install. La app aparece al final de la lista de canales como "Tablero de entregas WMS".</li>
+            <li>En el Roku: Configuración → Protector de pantalla → tiempo de espera <b>Desactivado</b>; Sistema → Energía → apagado automático <b>desactivado</b>. Abre la app y déjala.</li>
+          </ol>
+          {can('orders.manage') ? (
+            <BigButton tone="primary" className="mt-3" onClick={downloadRoku} disabled={busy} testId="board-roku">
+              Descargar app para Roku (tablero_roku.zip)
+            </BigButton>
+          ) : (
+            <div className="mt-2 text-amber-300">La app para Roku la genera un supervisor desde esta pantalla.</div>
+          )}
+        </div>
         <BigButton tone="neutral" className="mt-3" onClick={() => setMode('LIST')}>
           Regresar
         </BigButton>

@@ -15,6 +15,50 @@ Say "==============================================================="
 Say "REPARACION DE LA IMPRESORA ZEBRA PARA EL WMS"
 Say "==============================================================="
 
+# ---------- 0. Zebra en WinUSB (Zadig / WebUSB) -> regresar al driver de impresora de Windows ----------
+# Las apps por WebUSB cambian el driver de la Zebra a WinUSB; con eso la cola de Windows (y la estacion de SAE
+# etiquetas, que imprime por el driver) dejan de funcionar. Aqui se quita ese driver y Windows vuelve a usar
+# "Compatibilidad con impresoras USB" (usbprint), que comparten todas las apps.
+Say ""; Say "0) Driver USB de la Zebra..."
+$zebraUsb = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^USB\\VID_0A5F' })
+if ($zebraUsb.Count -eq 0) { Warn "   No veo la Zebra conectada por USB (VID 0A5F). Conectala y enciendela; continuo con lo demas." }
+foreach ($d in $zebraUsb) {
+  $svc = ''; $inf = ''
+  try { $svc = [string](Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 'DEVPKEY_Device_Service' -ErrorAction Stop).Data } catch {}
+  try { $inf = [string](Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 'DEVPKEY_Device_DriverInfPath' -ErrorAction Stop).Data } catch {}
+  Say ("   - {0}  servicio={1}  inf={2}" -f $d.FriendlyName, $svc, $inf)
+  if ($svc -match '^(usbprint)$') { Good "   La Zebra ya usa el driver de impresora de Windows (usbprint)."; continue }
+  if ($svc -match 'WinUSB|libusb' -or $inf -match '^oem\d+\.inf$') {
+    Warn "   La Zebra esta con el driver WinUSB (WebUSB/Zadig). Regresandola al driver de impresora de Windows..."
+    # 1) quitar del almacen de drivers el paquete que la ata a WinUSB (el de Zadig/libwdi o el que la instalo)
+    $enum = (& pnputil /enum-drivers) -join "`n"
+    $blocks = $enum -split "(?m)^\s*$"
+    foreach ($b in $blocks) {
+      $pub = ''; if ($b -match '(?im)^(Published Name|Nombre publicado)\s*:\s*(\S+)') { $pub = $Matches[2] }
+      if (-not $pub) { continue }
+      $isZadig = ($b -match '(?im)^(Provider Name|Nombre del proveedor)\s*:\s*(libwdi|Zadig)') -or ($b -match '(?i)winusb') -or ($b -match '(?i)zebra|ZTC|GK420') -or ($inf -and ($pub -ieq $inf))
+      $isUsbprint = ($b -match '(?i)usbprint\.inf')
+      if ($isZadig -and -not $isUsbprint) {
+        Say "     quitando driver $pub del almacen..."
+        & pnputil /delete-driver $pub /uninstall /force | Out-Null
+      }
+    }
+    # 2) quitar el dispositivo y volver a detectarlo: Windows le pone usbprint
+    & pnputil /remove-device "$($d.InstanceId)" | Out-Null
+    Start-Sleep -Seconds 3
+    & pnputil /scan-devices | Out-Null
+    Start-Sleep -Seconds 8
+    $again = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^USB\\VID_0A5F' } | Select-Object -First 1
+    $svc2 = ''
+    if ($again) { try { $svc2 = [string](Get-PnpDeviceProperty -InstanceId $again.InstanceId -KeyName 'DEVPKEY_Device_Service' -ErrorAction Stop).Data } catch {} }
+    if ($svc2 -match 'usbprint') { Good "   Listo: la Zebra vuelve a usar el driver de impresora de Windows." }
+    else {
+      Warn "   Windows aun no la reasigno (servicio='$svc2'). Desconecta el cable USB de la Zebra, espera 5 segundos, conectalo y vuelve a correr este archivo."
+      if ($svc2 -match 'WinUSB') { Bad "   Sigue en WinUSB: en Administrador de dispositivos -> la Zebra -> Actualizar controlador -> Elegir de una lista -> 'Compatibilidad con impresoras USB'." }
+    }
+  } else { Warn "   Driver desconocido ('$svc'); continuo." }
+}
+
 # ---------- 1. Dispositivos USB ----------
 Say ""; Say "1) Buscando la Zebra en el USB..."
 $dev = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
@@ -146,6 +190,6 @@ if ($ready -and (Test-Path $bat)) {
 
 Say ""
 Say "==============================================================="
-if ($ready) { Say "Si salio la etiqueta PRUEBA WMS: ejecuta run_agent.bat y listo." }
+if ($ready) { Say "Si salio la etiqueta PRUEBA WMS: la Zebra ya imprime por Windows. Abre EstacionZebra.exe (SAE etiquetas) y estacion_wms.bat: las dos apps la comparten." }
 Say "Si no salio: toma foto de esta ventana y mandala." 
 Say "==============================================================="

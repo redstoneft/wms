@@ -1,5 +1,6 @@
 // Delivery calendar: kept from the handheld by any operator; a read-only board link feeds the TV without a session.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import JSZip from 'jszip';
 import { closeApp, getApp, makeFixture, userWithRoles, type Client, type Fixture } from '../helpers.js';
 
 let f: Fixture;
@@ -57,5 +58,23 @@ describe('delivery calendar', () => {
     await sup.del(`/deliveries/board-links/${link.body.id}`);
     const revoked = await a.inject({ method: 'GET', url: `/api/board/deliveries?k=${link.body.token}` });
     expect(revoked.statusCode).toBe(403);
+  });
+
+  it('the Roku channel zip carries a working board link in its manifest', async () => {
+    const a = await getApp();
+    const r = await a.inject({ method: 'POST', url: '/api/deliveries/board-roku', headers: { cookie: sup.cookie, 'x-requested-with': 'wms-client', 'content-type': 'application/json' }, payload: '{}' });
+    expect(r.statusCode, r.body.slice(0, 200)).toBe(200);
+    expect(String(r.headers['content-type'])).toContain('application/zip');
+    const zip = await JSZip.loadAsync(r.rawPayload);
+    const manifest = await zip.file('manifest')!.async('string');
+    expect(manifest).toContain('title=Tablero de entregas WMS');
+    const url = /board_url=(\S+)/.exec(manifest)![1]!;
+    expect(zip.file('source/main.brs')).toBeTruthy();
+    expect(zip.file('components/BoardScene.brs')).toBeTruthy();
+    expect(zip.file('images/splash_hd.png')).toBeTruthy();
+    const path = url.slice(url.indexOf('/api/'));
+    const feed = await a.inject({ method: 'GET', url: path });
+    expect(feed.statusCode).toBe(200);
+    expect(feed.json().board).toBe('Roku TV');
   });
 });

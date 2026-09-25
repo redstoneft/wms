@@ -22,7 +22,7 @@ Al verificar el código TOTP el usuario puede marcar **"Recordar este dispositiv
 ## Protección de la API
 * **CSRF**: cabecera obligatoria `X-Requested-With: wms-client` en toda mutación (fuerza preflight CORS) + verificación de `Origin`/`Referer` contra `ALLOWED_ORIGINS` + cookie `SameSite=Strict`.
 * **CORS** restringido a `ALLOWED_ORIGINS` con credenciales.
-* **Cabeceras** vía `@fastify/helmet` (CSP la fija nginx en el frontend).
+* **Cabeceras** vía `@fastify/helmet` (CSP la fija nginx en el frontend: `apps/web/nginx-security-headers.conf`, incluido en el `server` y en cada `location` con `add_header`, porque un `add_header` en un location descarta los heredados).
 * **Validación** de todo input con zod (cuerpos, query, params); cantidades solo enteros positivos con límite superior; códigos/barcodes con alfabeto restringido; bytes NUL rechazados (hallazgo de fuzzing). Body máximo 5 MB; uploads 20 MB con validación de MIME **y** magic bytes; los archivos se guardan con nombre content-addressed, nunca con el nombre original.
 * **SQL**: Prisma parametriza todo; el SQL crudo usa exclusivamente parámetros (`$queryRaw` con template tags). Los tests de seguridad ejecutan cargas de inyección clásicas en búsquedas, barcodes y códigos LPN.
 * **Idempotencia obligatoria**: los 13 endpoints que producen movimientos rechazan con `400 IDEMPOTENCY_KEY_REQUIRED` cualquier petición sin `Idempotency-Key`; un reintento nunca puede duplicar un escaneo.
