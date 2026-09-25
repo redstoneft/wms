@@ -159,7 +159,7 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect(task[0]!.mode).toBe('ALLOCATED');
     expect(task[0]!.purpose).toBe('pedido de mostrador, pasa hoy');
     const dup = await picker.post('/wm/orders', { order_number: number, customer_code: f.customer.code, purpose: 'otra vez', lines: [{ sku_code: f.skus[0]!.code, qty: 1 }] });
-    expect(dup.status).toBe(422);
+    expect(dup.status).toBe(409); // a live order with that number: conflict (a cancelled one would free the number)
     // saved for later: accepted, no task
     const later = await picker.post('/wm/orders', { order_number: `${number}-B`, customer_code: f.customer.code, purpose: 'para mañana', lines: [{ sku_code: f.skus[0]!.code, qty: 1 }], start_now: false });
     expect(later.status).toBe(201);
@@ -256,7 +256,7 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect(auto.status, JSON.stringify(auto.body)).toBe(201);
     expect(auto.body.dock).toBe(f.dock.code);
     const noRef = await rc.post('/wm/tasks', { kind: 'COUNT', purpose: 'sin referencia' });
-    expect(noRef.status).toBe(409);
+    expect(noRef.status).toBe(422);
 
     // supervisor: the pallet really holds 50 of sku0 (system 60) and 5 of sku1 (system 0)
     const mixed = await storedPallet(f, 0, f.reserve[11]!.id, 60n);
