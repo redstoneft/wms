@@ -55,3 +55,13 @@ Configuración, una sola vez, en Chrome o Edge de esa PC:
 3. **Imprimir prueba** para confirmar. Desde ese momento la estación ya está imprimiendo la cola (no hay botón de iniciar; "Pausar" la detiene) y arranca sola cada vez que se prende la PC.
 
 La página consulta la cola cada 3 segundos (con un worker, para que siga funcionando aunque la ventana esté atrás), escribe el ZPL directo a la Zebra por USB y marca las etiquetas como enviadas. En Impresoras la estación aparece como "WebUSB - Win32". La app de etiquetas SAE y esta estación conviven: cada una toma la impresora solo mientras manda una etiqueta.
+
+## Convivir con la app de etiquetas SAE en la misma PC
+
+Las dos apps usan la misma Zebra. Para que no se peleen por el USB, las dos deben imprimir por la **cola de Windows**:
+
+1. La Zebra con su **driver normal de Windows** (ZDesigner / "Compatibilidad con impresoras USB"), no WinUSB. Si está en WinUSB (por haber usado WebUSB), en Administrador de dispositivos → la Zebra → Actualizar controlador → "Elegir de una lista" → *Compatibilidad con impresoras USB*.
+2. La estación de SAE (`EstacionZebra.exe`) corriendo como siempre: expone http://127.0.0.1:9101 e imprime por el driver de Windows.
+3. La estación del WMS (`estacion_wms.bat`) detecta esa estación automáticamente y le manda sus etiquetas; en su pantalla aparece "Estación de etiquetas SAE activa en esta PC". WebUSB solo se usa si no hay estación SAE.
+
+Así Windows serializa los trabajos de las dos apps y ninguna bloquea a la otra.

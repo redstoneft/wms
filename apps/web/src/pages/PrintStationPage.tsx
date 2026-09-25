@@ -108,6 +108,30 @@ async function deployedBundle(): Promise<string | null> {
 }
 const CURRENT_BUNDLE = /assets\/(index-[A-Za-z0-9_-]+\.js)/.exec(Array.from(document.scripts).map((s) => s.src).join(' '))?.[1] ?? null;
 
+// ---- the SAE label station (EstacionZebra.exe) on this PC: http://127.0.0.1:9101, prints through the Windows driver.
+// When it is running, the WMS sends its labels there too, so both apps share the printer through the Windows queue
+// and nobody fights over the USB interface. WebUSB is only the fallback when no local station answers.
+const LOCAL_URL = 'http://127.0.0.1:9101';
+interface LocalStation { version?: string; estacion?: string; impresora?: string }
+async function detectLocalStation(): Promise<LocalStation | null> {
+  try {
+    const c = new AbortController();
+    const t = window.setTimeout(() => c.abort(), 1500);
+    const r = await fetch(`${LOCAL_URL}/estado`, { signal: c.signal, cache: 'no-store' });
+    window.clearTimeout(t);
+    const d = (await r.json()) as { ok?: boolean } & LocalStation;
+    return d.ok ? d : null;
+  } catch {
+    return null;
+  }
+}
+async function printViaLocalStation(zpl: string) {
+  const r = await fetch(`${LOCAL_URL}/imprimir`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ etiquetas: [{ zpl }] }) });
+  const d = (await r.json()) as { ok?: boolean; impresas?: number; fallidas?: number; errores?: string[]; error?: string };
+  if (d.error) throw new Error(d.error);
+  if (!d.impresas || (d.fallidas ?? 0) > 0) throw new Error(d.errores?.[0] ?? 'La estación local no pudo imprimir');
+}
+
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 interface LogRow { t: string; msg: string; ok: boolean }
 
@@ -125,6 +149,8 @@ export default function PrintStationPage() {
   const [tokenInput, setTokenInput] = useState('');
   const [printer, setPrinter] = useState<{ printer: string; name: string; queued: number } | null>(null);
   const [device, setDevice] = useState<UsbDevice | null>(null);
+  const [local, setLocal] = useState<LocalStation | null>(null); // SAE EstacionZebra.exe on this PC, if running
+  const localRef = useRef<LocalStation | null>(null);
   const [paused, setPaused] = useState<boolean>(() => ls.get(LS_PAUSED) === '1');
   const [log, setLog] = useState<LogRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +160,7 @@ export default function PrintStationPage() {
   const cycleStart = useRef(0); // watchdog: when the loop got stuck in a USB call
   const supported = !!usb();
   const secure = window.isSecureContext;
-  const running = !!token && !!device && !paused;
+  const running = !!token && (!!device || !!local) && !paused;
 
   const say = useCallback((msg: string, ok = true) => setLog((l) => [{ t: new Date().toLocaleTimeString(), msg, ok }, ...l].slice(0, 80)), []);
 
@@ -143,6 +169,23 @@ export default function PrintStationPage() {
     if (!token) { setPrinter(null); return; }
     agent<{ printer: string; name: string; queued: number }>(token, '/ping').then((p) => { setPrinter(p); setError(null); }).catch((e) => setError(errText(e)));
   }, [token]);
+
+  // the SAE station on this PC: checked on load and every 20 s (it may start or stop at any time)
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      const d = await detectLocalStation();
+      if (!alive) return;
+      const was = localRef.current;
+      localRef.current = d;
+      setLocal(d);
+      if (d && !was) say(`Estación de etiquetas SAE detectada en esta PC (${d.impresora ?? 'impresora de Windows'}): el WMS imprime a través de ella`);
+      if (!d && was) say('La estación de etiquetas SAE se cerró: se usa el USB directo', false);
+    };
+    void check();
+    const id = window.setInterval(() => void check(), 20_000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [say]);
 
   // remembered device (permission granted before) → resumes automatically
   useEffect(() => {
@@ -171,11 +214,20 @@ export default function PrintStationPage() {
       if (!/No device selected/i.test(m)) setError(m);
     }
   };
+  /** one label out: through the SAE station when it runs (shared Windows queue), else straight to the USB */
+  const send = async (zpl: string) => {
+    if (localRef.current) {
+      await printViaLocalStation(FORCE_ZPL + zpl);
+      return;
+    }
+    if (!device) throw new Error('Sin Zebra: elige la Zebra por USB o abre la estación de etiquetas SAE (EstacionZebra.exe)');
+    await writeToZebra(device, FORCE_ZPL + zpl);
+  };
   const test = async () => {
-    if (!device) return;
+    if (!device && !local) return;
     setError(null);
     try {
-      await writeToZebra(device, FORCE_ZPL + TEST_LABEL);
+      await send(TEST_LABEL);
       say('Etiqueta de prueba enviada a la Zebra');
     } catch (e) {
       const raw = errText(e);
@@ -201,7 +253,7 @@ export default function PrintStationPage() {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     let generation = 0;
     const run = async () => {
-      if (busy.current || !device) return;
+      if (busy.current || (!device && !localRef.current)) return;
       busy.current = true;
       const mine = ++generation;
       try {
@@ -213,7 +265,7 @@ export default function PrintStationPage() {
             for (const job of r.jobs) {
               try {
                 // other apps (SAE labels) may leave the printer in EPL mode: force ZPL before every label, it is harmless otherwise
-                await writeToZebra(device, FORCE_ZPL + job.zpl);
+                await send(job.zpl);
                 await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: true } });
                 setPrinted((n) => n + 1);
                 say(`IMPRESA ${job.label_type} ${job.entity}${job.is_reprint ? ' (reimpresión)' : ''}`);
@@ -253,7 +305,7 @@ export default function PrintStationPage() {
         say('La estación se quedó atorada; reiniciando el ciclo', false);
         generation++;
         busy.current = false;
-        void device.close().catch(() => undefined);
+        void device?.close().catch(() => undefined);
       }
       void run();
     };
@@ -270,7 +322,7 @@ export default function PrintStationPage() {
     const onVis = () => { if (document.visibilityState === 'visible') kick(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { alive = false; worker?.terminate(); if (fallback) window.clearInterval(fallback); document.removeEventListener('visibilitychange', onVis); };
-  }, [running, device, token, printer?.name, say]);
+  }, [running, device, local, token, printer?.name, say]);
 
   // keep the screen awake while the station runs
   useEffect(() => {
@@ -328,18 +380,23 @@ export default function PrintStationPage() {
 
         {/* 2. device */}
         <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
-          <div className="text-sm font-semibold text-slate-700">2 · Zebra por USB</div>
+          <div className="text-sm font-semibold text-slate-700">2 · Zebra</div>
+          {local && (
+            <div className="mt-1 rounded-md bg-emerald-50 px-2 py-2 text-sm text-emerald-800" data-testid="station-local">
+              Estación de etiquetas SAE activa en esta PC{local.impresora ? ` · ${local.impresora}` : ''}{local.version ? ` · v${local.version}` : ''}. El WMS imprime a través de ella (las dos apps comparten la Zebra por Windows, sin conflicto).
+            </div>
+          )}
           <div className="mt-1 flex flex-wrap items-center gap-3 text-sm">
             <span data-testid="station-device">
               {device ? <span className="text-emerald-700">{device.productName ?? 'Impresora USB'}{device.serialNumber ? ` · ${device.serialNumber}` : ''}</span> : ready ? <span className="text-amber-700">sin elegir (solo la primera vez)</span> : <span className="text-slate-500">buscando…</span>}
             </span>
             <button type="button" className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50" onClick={connect} disabled={!supported || !secure} data-testid="station-connect">
-              {device ? 'Cambiar de Zebra' : 'Elegir la Zebra'}
+              {device ? 'Cambiar de Zebra' : local ? 'Elegir la Zebra por USB (solo si no usas la estación SAE)' : 'Elegir la Zebra'}
             </button>
-            <button type="button" className="rounded-md bg-slate-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50" onClick={test} disabled={!device} data-testid="station-test">
+            <button type="button" className="rounded-md bg-slate-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50" onClick={test} disabled={!device && !local} data-testid="station-test">
               Imprimir prueba
             </button>
-            {device && (paused ? (
+            {(device || local) && (paused ? (
               <button type="button" className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white" onClick={() => { ls.set(LS_PAUSED, null); setPaused(false); }} data-testid="station-start">Reanudar</button>
             ) : (
               <button type="button" className="rounded-md bg-rose-600 px-3 py-1.5 text-sm font-semibold text-white" onClick={() => { ls.set(LS_PAUSED, '1'); setPaused(true); }} data-testid="station-stop">Pausar</button>
