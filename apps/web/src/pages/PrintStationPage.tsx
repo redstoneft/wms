@@ -231,7 +231,9 @@ export default function PrintStationPage() {
       say('Etiqueta de prueba enviada a la Zebra');
     } catch (e) {
       const raw = errText(e);
-      const m = /claim interface|Access denied|already open|in use/i.test(raw) ? `La Zebra está ocupada por otro programa (app de etiquetas SAE u otra ventana de esta estación). Ciérralo e intenta de nuevo. (${raw})` : raw;
+      const m = /Access denied/i.test(raw)
+        ? 'La Zebra usa el driver normal de Windows: el navegador no puede tomarla. Cierra esta ventana y ejecuta estacion_wms.bat (con Python instalado corre como programa e imprime por Windows, también para la app de etiquetas SAE).'
+        : /claim interface|already open|in use/i.test(raw) ? `La Zebra está ocupada por otro programa (app de etiquetas SAE u otra ventana de esta estación). Ciérralo e intenta de nuevo. (${raw})` : raw;
       setError(m);
       say(`Prueba falló: ${m}`, false);
     }
@@ -272,7 +274,15 @@ export default function PrintStationPage() {
                 setError(null);
               } catch (e) {
                 const raw = errText(e);
-                const busy = /claim interface|Access denied|already open|in use|NetworkError|Unable to open|Failed to open/i.test(raw);
+                if (/Access denied/i.test(raw)) {
+                  // Windows owns the printer (normal printer driver): this browser cannot take it. Keep the label queued for the Python station.
+                  await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, retry: true, error: raw } }).catch(() => undefined);
+                  setError('La Zebra usa el driver normal de Windows, así que el navegador no puede tomarla. Cierra esta ventana y ejecuta estacion_wms.bat: con Python instalado corre como programa e imprime por Windows (y atiende también a la app de etiquetas SAE). La etiqueta sigue en cola.');
+                  say(`SIN ACCESO USB ${job.label_type} ${job.entity}: usa estacion_wms.bat (Python)`, false);
+                  await sleep(15000);
+                  break;
+                }
+                const busy = /claim interface|already open|in use|NetworkError|Unable to open|Failed to open/i.test(raw);
                 if (busy) {
                   // another program has the Zebra (the SAE label app, or a second copy of this station): keep the label queued and retry
                   await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, retry: true, error: raw } }).catch(() => undefined);

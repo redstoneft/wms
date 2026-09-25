@@ -26,3 +26,7 @@ Descarga `reparar_impresora.bat` desde Datos maestros → Impresoras → Generar
 4. Crea la impresora `ZEBRA` con el driver "Generic / Text Only" en ese puerto (manda el ZPL tal cual).
 5. Imprime una etiqueta de prueba y avisa si se queda atorada (entonces es cable o puerto USB).
 6. Deja `run_agent.bat` con `set WMS_WINDOWS_PRINTER=ZEBRA`.
+
+## Una sola estación para el WMS y la app de etiquetas SAE
+
+Desde la v2.0 la estación Python (`wms_print_agent.py`) también expone el servicio local `http://127.0.0.1:9101` con la misma interfaz que `EstacionZebra.exe` (`/estado`, `/imprimir`, `/impresora`). La app web de etiquetas SAE la detecta sola y le manda sus etiquetas; el WMS imprime por el mismo proceso y el mismo driver de Windows, con un candado que serializa ambos. Con `estacion_wms.bat` (descargado de Impresoras → Generar token) basta: si hay Python corre este programa; si no, abre la estación del navegador.

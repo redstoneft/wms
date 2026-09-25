@@ -21,10 +21,13 @@ esa impresora; aqui debe salir "IMPRESA" y la Zebra debe imprimir en menos de 5 
 Si Windows dice que imprimio pero no sale nada: la cola esta "sin conexion"/en pausa, es otra
 cola Zebra (mira el puerto USB), o la impresora estaba en modo EPL (la estacion la pone en ZPL).
 """
+import json
 import os
 import socket
 import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ====== CONFIG (se puede sobreescribir con variables de entorno del mismo nombre) ======
 WMS_URL = os.environ.get("WMS_URL", "https://wms.104-248-116-147.sslip.io")
@@ -158,6 +161,101 @@ def report(job_id: str, ok: bool, error: str = ""):
             time.sleep(1)
 
 
+# ====== Servicio local para la app de etiquetas SAE (misma interfaz que EstacionZebra.exe: /estado, /imprimir, /impresora) ======
+# Asi UNA sola estacion en la PC imprime lo del WMS y lo de la app de etiquetas SAE, las dos por el driver de Windows.
+LOCAL_PORT = int(os.environ.get("WMS_LOCAL_PORT", "9101"))
+_print_lock = threading.Lock()
+VERSION = "2.0-wms"
+
+
+class LocalHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):  # noqa: D401
+        pass
+
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Cache-Control", "no-store")
+
+    def _json(self, code, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self._cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):  # noqa: N802
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self):  # noqa: N802
+        if self.path.startswith("/estado"):
+            return self._json(200, {"ok": True, "version": VERSION, "estacion": socket.gethostname(), "impresora": PRINTER_NAME, "impresoras": list_printers(), "wms": True})
+        self._json(404, {"error": "no existe"})
+
+    def do_POST(self):  # noqa: N802
+        global PRINTER_NAME
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            datos = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+        except Exception as e:  # noqa: BLE001
+            return self._json(400, {"error": f"JSON invalido: {e}"})
+        if self.path.startswith("/impresora"):
+            nombre = (datos.get("nombre") or "").strip()
+            if nombre and nombre not in list_printers():
+                return self._json(400, {"error": f"No existe la impresora '{nombre}' en Windows"})
+            PRINTER_NAME = nombre or autodetect_zebra()
+            print(f">> Impresora cambiada desde la app de etiquetas: {PRINTER_NAME}")
+            return self._json(200, {"ok": True, "impresora": PRINTER_NAME})
+        if self.path.startswith("/imprimir"):
+            etiquetas = datos.get("etiquetas") or []
+            printer = (datos.get("impresora") or PRINTER_NAME or "").strip()
+            if not printer:
+                return self._json(400, {"error": "No hay impresora Zebra configurada en la estacion"})
+            impresas, fallidas, errores = 0, 0, []
+            with _print_lock:
+                for i, et in enumerate(etiquetas, 1):
+                    zpl = et.get("zpl") if isinstance(et, dict) else str(et)
+                    if not zpl:
+                        fallidas += 1
+                        errores.append(f"etiqueta {i}: sin ZPL")
+                        continue
+                    ultimo = ""
+                    for intento in range(1, MAX_RETRIES + 1):
+                        try:
+                            print_raw(zpl, printer)
+                            impresas += 1
+                            break
+                        except Exception as e:  # noqa: BLE001
+                            ultimo = str(e)
+                            time.sleep(0.3 * intento)
+                    else:
+                        fallidas += 1
+                        errores.append(f"etiqueta {i}: {ultimo}")
+                        if fallidas >= 3 and impresas == 0:
+                            errores.append("La impresora no responde; se detuvo el lote")
+                            break
+            if impresas:
+                print(f"[{time.strftime('%H:%M:%S')}] app de etiquetas -> {printer}: {impresas} etiqueta(s)" + (f", {fallidas} fallidas" if fallidas else ""))
+            return self._json(200, {"ok": fallidas == 0, "impresas": impresas, "fallidas": fallidas, "errores": errores[:10], "impresora": printer})
+        self._json(404, {"error": "no existe"})
+
+
+def start_local_service():
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", LOCAL_PORT), LocalHandler)
+    except OSError as e:
+        print(f"  [aviso] no se pudo abrir el servicio local en 127.0.0.1:{LOCAL_PORT} ({e}). Si ya corre EstacionZebra.exe, no pasa nada.")
+        return
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print(f"  Servicio local para la app de etiquetas SAE: http://127.0.0.1:{LOCAL_PORT}")
+
+
 def main():
     global PRINTER_NAME
     print("=" * 70)
@@ -205,6 +303,7 @@ def main():
         print(f"  >> El WMS no acepta el token o no responde: {e}")
         sys.exit(1)
     print("=" * 70)
+    start_local_service()
     print("Esperando etiquetas... (Ctrl+C para salir)")
     backoff = POLL_SECONDS
     while True:
@@ -221,7 +320,8 @@ def main():
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     # otras apps pueden dejar la Zebra en modo EPL: forzar ZPL antes de cada etiqueta (inofensivo si ya esta en ZPL)
-                    print_raw(FORCE_ZPL + job["zpl"].encode("utf-8"), PRINTER_NAME)
+                    with _print_lock:
+                        print_raw(FORCE_ZPL + job["zpl"].encode("utf-8"), PRINTER_NAME)
                     ok = True
                     break
                 except Exception as e:  # noqa: BLE001
