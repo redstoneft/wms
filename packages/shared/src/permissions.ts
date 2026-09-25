@@ -72,6 +72,7 @@ const OPERATOR_COMMON: Permission[] = [
   'labels.reprint', // a damaged or lost pallet label is reprinted on the floor (reason required, audited)
   'returns.manage', // quick returns from the handheld: a couple of pieces straight onto the pallet that holds the product
   'deliveries.manage', // the delivery calendar (whiteboard) is kept from the handheld
+  'putaway.execute', // anyone on the floor puts pallets away and chooses their destination (e.g. after an assembly)
   'inventory.read',
   'lpn.read',
   'incidents.read',
