@@ -6,12 +6,14 @@ import { api } from '../api/client';
 import { assemblyApi, type AssemblyOrder, type AssemblyResult } from '../api/assembly';
 import { inventoryApi } from '../api/inventory';
 import { labelsApi } from '../api/labels';
+import { putawayApi } from '../api/storage';
+import type { PutawayOption } from '../api/types';
 import { masterdataApi } from '../api/masterdata';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
 import { BigButton, BigValue, StepBar, useWm, WmShell } from './WmShell';
 
-type Step = 'HOME' | 'STATION' | 'IN_LPN' | 'IN_SKU' | 'IN_QTY' | 'IN_MORE' | 'OUT_SKU' | 'PALLETS' | 'SCRAP' | 'PURPOSE' | 'CONFIRM' | 'CONFIRM_START' | 'START_DONE' | 'DONE';
+type Step = 'HOME' | 'REVIEW' | 'STATION' | 'IN_LPN' | 'IN_SKU' | 'IN_QTY' | 'IN_MORE' | 'OUT_SKU' | 'PALLETS' | 'SCRAP' | 'PURPOSE' | 'CONFIRM' | 'CONFIRM_START' | 'START_DONE' | 'DONE';
 /** ONESHOT: everything at once · START: take components to the station, confirm later · FINISH: confirm an open order */
 type Flow = 'ONESHOT' | 'START' | 'FINISH';
 interface InLine {
@@ -47,6 +49,19 @@ function Flow() {
   const [open, setOpen] = useState<AssemblyOrder | null>(null); // the open order being confirmed (FINISH)
   const [started, setStarted] = useState<AssemblyOrder | null>(null);
   const openList = useQuery({ queryKey: ['assembly', 'open'], queryFn: () => assemblyApi.list({ status: 'IN_PROGRESS', limit: 50 }), enabled: step === 'HOME', refetchInterval: 15_000 });
+  const doneList = useQuery({ queryKey: ['assembly', 'done'], queryFn: () => assemblyApi.list({ status: 'COMPLETED', limit: 10 }), enabled: step === 'HOME' });
+  const [review, setReview] = useState<AssemblyOrder | null>(null);
+  const openReview = async (id: string) => {
+    setBusy(true);
+    try {
+      setReview(await assemblyApi.get(id));
+      setStep('REVIEW');
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   const [station, setStation] = useState('');
   const [lines, setLines] = useState<InLine[]>([]);
   const [draft, setDraft] = useState<InLine | null>(null);
@@ -203,9 +218,9 @@ function Flow() {
       setBusy(false);
     }
   };
-  const print = async (lpn: string) => {
+  const print = async (lpn: string, reprintReason?: string) => {
     try {
-      await labelsApi.print({ label_type: 'LPN', entity_id: lpn });
+      await labelsApi.print({ label_type: 'LPN', entity_id: lpn, reprint_reason: reprintReason });
       wm.ok(`ETIQUETA ${lpn} ENVIADA`);
     } catch (e) {
       wm.fail(e);
@@ -243,6 +258,24 @@ function Flow() {
             <span className="block text-sm font-normal normal-case text-slate-300">Ya está armado: insumos, tarimas que salieron y merma en un solo paso</span>
           </BigButton>
         </div>
+        {(doneList.data ?? []).length > 0 && (
+          <div className="mt-4 rounded-2xl bg-slate-900 p-3">
+            <div className="mb-1 text-xs font-bold uppercase text-slate-400">Armados terminados · toca uno para cambiar destino o reimprimir etiquetas</div>
+            <ul className="grid gap-2" data-testid="asm-done-list">
+              {(doneList.data ?? []).map((o) => (
+                <li key={o.id}>
+                  <button type="button" className="w-full rounded-xl bg-slate-800 p-3 text-left" onClick={() => void openReview(o.id)} disabled={busy} data-testid={`asm-done-${o.code}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-lg font-black">{o.code}</span>
+                      <span className="text-sm text-slate-300">{o.outputs.length} tarima(s)</span>
+                    </div>
+                    <div className="text-sm text-slate-200">{o.output_sku.code} · {o.output_sku.description.slice(0, 30)} · {fmtQty(o.output_qty)} pzas</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="mt-4 rounded-2xl bg-slate-900 p-3">
           <div className="mb-1 text-xs font-bold uppercase text-slate-400">Armados en proceso · toca uno para confirmar que ya quedó</div>
           {(openList.data ?? []).length === 0 && <div className="text-sm text-slate-400">{openList.isLoading ? 'Cargando…' : 'Ninguno abierto'}</div>}
@@ -626,23 +659,28 @@ function Flow() {
         </BigButton>
       </div>
     );
+  if (step === 'REVIEW' && review)
+    return (
+      <div>
+        <StepBar text={`ARMADO ${review.code} · DESTINOS Y ETIQUETAS`} />
+        <div className="mb-2 text-sm text-slate-300">{review.output_sku.code} · {review.output_sku.description} · {fmtQty(review.output_qty)} pzas</div>
+        <div className="grid gap-2">
+          {review.outputs.map((o) => (
+            <PalletCard key={o.id} lpn={o.lpn.code} detail={`${o.cases} cajas × ${o.pieces_per_case}${o.partial_pieces ? ` + 1 caja con ${o.partial_pieces}` : ''} = ${fmtQty(o.qty)} pzas`} taskId={o.putaway_task_id} destination={o.suggested_location ?? null} placed={o.putaway_status === 'COMPLETED'} busy={busy} setBusy={setBusy} onPrint={print} onChanged={() => void openReview(review.id)} />
+          ))}
+        </div>
+        <BigButton tone="neutral" className="mt-3" onClick={reset}>
+          Regresar
+        </BigButton>
+      </div>
+    );
   if (step === 'DONE' && result)
     return (
       <div>
         <StepBar text={`ARMADO ${result.code} · IMPRIME Y PEGA LAS ETIQUETAS`} />
         <div className="grid gap-2">
           {result.produced.map((p) => (
-            <div key={p.lpn} className="rounded-lg bg-slate-800 p-3">
-              <div className="font-mono text-2xl font-black" data-testid="new-lpn">
-                {p.lpn}
-              </div>
-              <div className="text-sm text-slate-300">
-                {p.cases} cajas × {p.pieces_per_case}{p.partial_pieces ? ` + 1 caja con ${p.partial_pieces}` : ''} = {fmtQty(p.qty)} pzas{p.defective ? ` · ${p.defective} defectuosas` : ''}{p.suggested_location ? ` · acomodo sugerido ${p.suggested_location}` : ''}
-              </div>
-              <BigButton tone="neutral" className="mt-2" onClick={() => void print(p.lpn)}>
-                Imprimir etiqueta
-              </BigButton>
-            </div>
+            <PalletCard key={p.lpn} lpn={p.lpn} detail={`${p.cases} cajas × ${p.pieces_per_case}${p.partial_pieces ? ` + 1 caja con ${p.partial_pieces}` : ''} = ${fmtQty(p.qty)} pzas${p.defective ? ` · ${p.defective} defectuosas` : ''}`} taskId={p.putaway_task_id} destination={p.suggested_location} placed={false} busy={busy} setBusy={setBusy} onPrint={print} onChanged={(code) => setResult({ ...result, produced: result.produced.map((x) => (x.lpn === p.lpn ? { ...x, suggested_location: code } : x)) })} />
           ))}
         </div>
         {result.warnings.length > 0 && <div className="mt-3 rounded-lg bg-amber-900/60 p-3 text-amber-200">{result.warnings.join(' · ')}</div>}
@@ -653,4 +691,76 @@ function Flow() {
       </div>
     );
   return null;
+}
+
+/** One finished pallet: where it goes (changeable from the list of valid locations) and its label (reprint carries the new destination). */
+function PalletCard({ lpn, detail, taskId, destination, placed, busy, setBusy, onPrint, onChanged }: { lpn: string; detail: string; taskId: string | null; destination: string | null; placed: boolean; busy: boolean; setBusy: (b: boolean) => void; onPrint: (lpn: string, reason?: string) => Promise<void>; onChanged: (code: string) => void }) {
+  const wm = useWm();
+  const [opts, setOpts] = useState<{ list: PutawayOption[]; selected: string } | null>(null);
+  const [changed, setChanged] = useState(false);
+  const load = async () => {
+    if (!taskId) return;
+    setBusy(true);
+    try {
+      const r = await putawayApi.options(taskId);
+      if (!r.options.length) { wm.warn('NO HAY OTRA UBICACIÓN DISPONIBLE'); return; }
+      setOpts({ list: r.options, selected: r.options.find((o) => !o.is_current)?.code ?? r.options[0]!.code });
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const choose = async () => {
+    if (!taskId || !opts) return;
+    setBusy(true);
+    try {
+      const r = await putawayApi.choose(taskId, { location_code: opts.selected });
+      wm.ok(`${lpn} → ${r.target.code}`);
+      setOpts(null);
+      setChanged(true);
+      onChanged(r.target.code);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-lg bg-slate-800 p-3">
+      <div className="font-mono text-2xl font-black" data-testid="new-lpn">{lpn}</div>
+      <div className="text-sm text-slate-300">{detail}</div>
+      <div className="mt-1 text-sm">
+        <span className="text-slate-400">{placed ? 'Ubicada en' : 'Destino'}: </span>
+        <span className="font-mono text-lg font-black text-violet-300" data-testid="pallet-destination">{destination ?? 'sin destino'}</span>
+      </div>
+      {opts && (
+        <div className="mt-2 rounded-xl border-2 border-violet-500 bg-slate-900 p-2" data-testid="pallet-dest-chooser">
+          <select value={opts.selected} onChange={(e) => setOpts({ ...opts, selected: e.target.value })} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="pallet-dest-select">
+            {opts.list.map((o) => (
+              <option key={o.code} value={o.code}>
+                {o.code}{o.has_same_sku ? ' · ya tiene este producto' : ''}{o.pallet_capacity > 0 ? ` · ${o.lpn_count}/${o.pallet_capacity}` : ''}{o.is_current ? ' (actual)' : ''}
+              </option>
+            ))}
+          </select>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <BigButton tone="neutral" onClick={() => setOpts(null)}>Cancelar</BigButton>
+            <BigButton tone="success" onClick={choose} disabled={busy} testId="pallet-dest-use">Usar esta ubicación</BigButton>
+          </div>
+        </div>
+      )}
+      {!opts && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {taskId && !placed && (
+            <BigButton tone="neutral" onClick={load} disabled={busy} testId="pallet-dest-change">
+              Cambiar ubicación
+            </BigButton>
+          )}
+          <BigButton tone="primary" onClick={() => void onPrint(lpn, changed ? 'Cambio de ubicación de acomodo' : undefined)} disabled={busy} testId="pallet-print">
+            {changed ? 'Reimprimir con la nueva ubicación' : 'Imprimir etiqueta'}
+          </BigButton>
+        </div>
+      )}
+    </div>
+  );
 }

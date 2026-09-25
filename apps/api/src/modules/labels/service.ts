@@ -23,6 +23,9 @@ export async function buildLabelModel(tx: Tx, labelType: LabelType, entityId: st
         .map((b) => ({ sku: b.sku.code, description: b.sku.description, qty: b.qty.toString(), cases: '' }));
       const cases = lpn.cases_count ? String(lpn.cases_count) : '';
       if (skuLines.length === 1 && skuLines[0]) skuLines[0].cases = cases;
+      // where the pallet is going (pending put-away): printed so the label already shows its rack position
+      const pending = await tx.putaway_tasks.findFirst({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, select: { suggested_location_id: true }, orderBy: { created_at: 'desc' } });
+      const destino = pending?.suggested_location_id ? (await tx.locations.findUnique({ where: { id: pending.suggested_location_id }, select: { code: true } }))?.code ?? null : null;
       const m: LpnLabelModel = {
         label_type: 'LPN',
         title: lpn.code,
@@ -34,12 +37,15 @@ export async function buildLabelModel(tx: Tx, labelType: LabelType, entityId: st
           { label: 'CONTENEDOR', value: lpn.container?.container_number ?? '-' },
           { label: 'PROVEEDOR', value: lpn.supplier?.name ?? '-' },
           { label: 'CAJAS', value: cases || '-' },
+          ...(destino ? [{ label: 'DESTINO', value: destino }] : []),
           ...(lpn.lot ? [{ label: 'LOTE', value: lpn.lot }] : []),
           ...(lpn.expiry_date ? [{ label: 'CADUCIDAD', value: lpn.expiry_date.toISOString().slice(0, 10) }] : []),
         ],
         sku_lines: skuLines,
-        footer: `${skuLines.length} SKU(s) · ${lpn.current_location?.code ?? 'sin ubicar'}`,
+        footer: `${skuLines.length} SKU(s) · ${lpn.current_location?.code ?? 'sin ubicar'}${destino ? ` → DESTINO ${destino}` : ''}`,
       };
+      // empty fields ('-') only push the useful ones into a cramped second column
+      m.lines = m.lines.filter((l) => l.value !== '-');
       return m;
     }
     case 'LOCATION': {

@@ -76,6 +76,31 @@ describe('assembly in two phases', () => {
     await expectReconciled();
   });
 
+  it('after the assembly the operator changes a pallet destination from the list and the reprinted label shows it', async () => {
+    const body = await storedPallet(f, BODY, f.reserve[6]!.id, 24n);
+    const r = await sup.post('/assembly/start', { inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 24 }], output_sku_code: f.skus[PAN]!.code, notes: 'cambiar destino' }, idem());
+    const done = await sup.post(`/assembly/${r.body.id}/complete`, { pallets: [{ cases: 2, pieces_per_case: 12 }] }, idem());
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    const detail = await sup.get(`/assembly/${r.body.id}`);
+    expect(detail.status).toBe(200);
+    const out = detail.body.outputs[0];
+    expect(out.putaway_task_id).toBeTruthy();
+    expect(out.suggested_location).toBeTruthy();
+    const first: string = out.suggested_location;
+    const opts = await sup.get(`/putaway/tasks/${out.putaway_task_id}/options`);
+    const pick = opts.body.options.find((o: { code: string }) => o.code !== first);
+    expect(pick).toBeTruthy();
+    const ch = await sup.post(`/putaway/tasks/${out.putaway_task_id}/choose`, { location_code: pick.code });
+    expect(ch.status, JSON.stringify(ch.body)).toBe(200);
+    const again = await sup.get(`/assembly/${r.body.id}`);
+    expect(again.body.outputs[0].suggested_location).toBe(pick.code);
+    // the label carries the destination
+    const prev = await sup.post('/labels/preview', { label_type: 'LPN', entity_id: out.lpn.code });
+    expect(prev.status, JSON.stringify(prev.body).slice(0, 200)).toBe(200);
+    expect(prev.body.zpl).toContain('DESTINO');
+    expect(prev.body.zpl).toContain(pick.code);
+  });
+
   it('cancel: the reserved pallet is unblocked and gets a put-away task back to the racks', async () => {
     const body = await storedPallet(f, BODY, f.reserve[2]!.id, 48n);
     const r = await sup.post('/assembly/start', { station_barcode: f.staging[1]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }], output_sku_code: f.skus[PAN]!.code, notes: 'se cancela' }, idem());

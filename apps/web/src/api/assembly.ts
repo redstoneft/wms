@@ -34,7 +34,7 @@ export interface AssemblyOrder {
   station: { id: string; code: string; barcode: string };
   output_sku: { id: string; code: string; description: string; gtin: string | null };
   inputs: { id: string; qty: string; lpn: { code: string; status: string }; sku: { code: string; description: string } }[];
-  outputs: { id: string; cases: number; pieces_per_case: number; qty: string; putaway_task_id: string | null; lpn: { code: string; status: string } }[];
+  outputs: { id: string; cases: number; pieces_per_case: number; partial_pieces?: number; defective_qty?: string; qty: string; putaway_task_id: string | null; lpn: { code: string; status: string }; location?: string | null; suggested_location?: string | null; putaway_status?: string | null }[];
 }
 export interface AssemblyResult extends AssemblyOrder {
   consumed: { lpn: string; sku: string; qty: string; lpn_status: string }[];

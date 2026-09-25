@@ -343,5 +343,14 @@ export async function listAssemblies(tx: Tx, q: { limit: number; sku?: string; s
 export async function getAssembly(tx: Tx, id: string) {
   const row = await tx.assembly_orders.findUnique({ where: { id }, include: ORDER_INCLUDE });
   if (!row) throw new NotFoundError('assembly_order', id);
-  return row;
+  // each finished pallet: where it is now and where its put-away sends it (the operator may change that and reprint)
+  const outputs = [];
+  for (const o of row.outputs) {
+    const task = o.putaway_task_id ? await tx.putaway_tasks.findUnique({ where: { id: o.putaway_task_id }, select: { status: true, suggested_location_id: true, final_location_id: true } }) : null;
+    const locId = task?.status === 'COMPLETED' ? task.final_location_id : task?.suggested_location_id;
+    const dest = locId ? (await tx.locations.findUnique({ where: { id: locId }, select: { code: true } }))?.code ?? null : null;
+    const cur = o.lpn.current_location_id ? (await tx.locations.findUnique({ where: { id: o.lpn.current_location_id }, select: { code: true } }))?.code ?? null : null;
+    outputs.push({ ...o, location: cur, suggested_location: dest, putaway_status: task?.status ?? null });
+  }
+  return { ...row, outputs };
 }
