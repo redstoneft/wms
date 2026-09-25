@@ -44,22 +44,26 @@ export default function BoardPage() {
     return () => { alive = false; window.clearInterval(id); };
   }, [token]);
 
-  // calendar: this week and next, Monday to Saturday (Sunday deliveries show in Saturday's box)
+  // calendar: from today onwards, 12 working days (Mon-Sat) in two rows; Sunday deliveries show in Saturday's box.
+  // Days already gone are not shown; anything PLANNED before today is listed as overdue at the bottom.
   const items = data?.items ?? [];
   const now = new Date();
   const todayIso = localIso(now);
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  const mondayIso = localIso(monday);
   const days: { iso: string; sundayIso: string | null; d: Date }[] = [];
-  for (let w = 0; w < 2; w++) for (let c = 0; c < 6; c++) {
-    const d = new Date(monday); d.setDate(monday.getDate() + w * 7 + c);
+  for (let off = 0; days.length < 12; off++) {
+    const d = new Date(now); d.setDate(now.getDate() + off);
+    if (d.getDay() === 0) continue;
     const sun = new Date(d); sun.setDate(d.getDate() + 1);
-    days.push({ iso: localIso(d), sundayIso: c === 5 ? localIso(sun) : null, d });
+    days.push({ iso: localIso(d), sundayIso: d.getDay() === 6 ? localIso(sun) : null, d });
   }
-  const overdue = items.filter((i) => i.status === 'PLANNED' && i.delivery_date < mondayIso);
+  const overdue = items.filter((i) => i.status === 'PLANNED' && i.delivery_date < todayIso);
   const byDay = groupByDay(items);
   const of = (iso: string) => byDay.find((g) => g.date === iso)?.items ?? [];
+  const listOf = (day: { iso: string; sundayIso: string | null }) => [...of(day.iso), ...(day.sundayIso ? of(day.sundayIso).map((i) => ({ ...i, title: `dom · ${i.title}` })) : [])];
+  // each row takes space in proportion to its busiest day, so a day with many deliveries is not cut off
+  const load = (row: number) => Math.max(1, ...days.slice(row * 6, row * 6 + 6).map((day) => listOf(day).reduce((n, i) => n + 1 + (i.notes ? 0.6 : 0), 0)));
+  const rows = `${load(0)}fr ${load(1)}fr`;
+  const cellFont = (n: number) => (n <= 3 ? '1em' : n <= 5 ? '0.82em' : n <= 8 ? '0.68em' : '0.56em');
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 p-5 text-white" style={{ fontSize: 'clamp(14px, 1.35vw, 26px)' }}>
@@ -72,23 +76,21 @@ export default function BoardPage() {
       </div>
       {!token && <div className="text-[1.2em] text-rose-400">Falta el enlace del tablero. Genera uno en Entregas → Ver en TV.</div>}
       {error && <div className="text-[1em] text-rose-400">{error}{data ? ' · mostrando la última información' : ''}</div>}
-      <div className="grid flex-1 gap-2" style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gridTemplateRows: 'repeat(2, minmax(0, 1fr))' }} data-tick={tick}>
+      <div className="grid flex-1 gap-2" style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gridTemplateRows: rows }} data-tick={tick}>
         {days.map(({ iso, sundayIso, d }) => {
           const isToday = iso === todayIso;
-          const past = iso < todayIso;
-          const list = [...of(iso), ...(sundayIso ? of(sundayIso).map((i) => ({ ...i, title: `dom · ${i.title}` })) : [])];
+          const list = listOf({ iso, sundayIso });
           const { name } = dayLabel(iso);
           return (
-            <section key={iso} className={`flex min-h-0 flex-col rounded-xl border-2 p-2 ${isToday ? 'border-amber-400 bg-amber-400/10' : past ? 'border-slate-800 bg-slate-900/60' : 'border-slate-700 bg-slate-900'}`}>
-              <div className={`mb-1 text-[1em] font-black capitalize ${isToday ? 'text-amber-300' : past ? 'text-slate-500' : 'text-slate-200'}`}>{name}{isToday ? ' · HOY' : ''}</div>
-              <ul className="grid min-h-0 gap-1.5 overflow-hidden">
-                {list.slice(0, 6).map((i) => (
+            <section key={iso} className={`flex min-h-0 flex-col rounded-xl border-2 p-2 ${isToday ? 'border-amber-400 bg-amber-400/10' : 'border-slate-700 bg-slate-900'}`}>
+              <div className={`mb-1 text-[1em] font-black capitalize ${isToday ? 'text-amber-300' : 'text-slate-200'}`}>{name}{isToday ? ' · HOY' : ''}</div>
+              <ul className="flex min-h-0 flex-col gap-1 overflow-hidden" style={{ fontSize: cellFont(list.length) }}>
+                {list.map((i) => (
                   <li key={i.id} className={`rounded-lg bg-slate-800/80 px-2 py-1 ${i.status === 'DONE' ? 'opacity-50' : ''}`}>
                     <div className={`text-[1em] font-black leading-tight ${i.status === 'DONE' ? 'line-through' : ''}`}>{i.delivery_time && <span className="mr-1 text-amber-300">{i.delivery_time}</span>}{i.title}</div>
-                    {i.notes && <div className="text-[0.72em] leading-tight text-slate-300">{i.notes}</div>}
+                    {i.notes && <div className="text-[0.75em] leading-tight text-slate-300">{i.notes}</div>}
                   </li>
                 ))}
-                {list.length > 6 && <li className="text-[0.75em] text-slate-400">+{list.length - 6} más</li>}
               </ul>
               <span className="hidden">{d.getDate()}</span>
             </section>

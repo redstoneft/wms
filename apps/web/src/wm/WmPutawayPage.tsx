@@ -6,6 +6,7 @@ import { putawayApi } from '../api/storage';
 import type { PutawayOption, PutawayStartResult } from '../api/types';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
+import { LocationPicker } from './LocationPicker';
 import { SupervisorAuth } from './SupervisorAuth';
 import { BigButton, BigValue, StepBar, useWm, WmShell } from './WmShell';
 
@@ -162,13 +163,7 @@ function Flow() {
       {options && (
         <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="location-chooser">
           <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Elige la ubicación destino</div>
-          <select value={options.selected} onChange={(e) => setOptions({ ...options, selected: e.target.value })} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="location-select">
-            {options.list.map((o) => (
-              <option key={o.code} value={o.code}>
-                {o.code}{o.has_same_sku ? ' · ya tiene este producto' : ''}{o.pallet_capacity > 0 ? ` · ${o.lpn_count}/${o.pallet_capacity}` : ''}{o.is_current ? ' (actual)' : ''}
-              </option>
-            ))}
-          </select>
+          <LocationPicker list={options.list} selected={options.selected} onSelect={(code) => setOptions({ ...options, selected: code })} testId="location-select" />
           <div className="mt-2 grid grid-cols-2 gap-2">
             <BigButton tone="neutral" onClick={() => setOptions(null)}>
               Cancelar

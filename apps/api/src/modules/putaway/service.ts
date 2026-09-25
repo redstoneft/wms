@@ -77,7 +77,7 @@ async function loadWeights(tx: Tx, profile: LpnProfile, abc: string): Promise<Sl
  * actual reservation happens when the task is created, and the fit is
  * re-validated with locks at confirmation time.
  */
-export async function suggestLocation(tx: Tx, lpn: LpnRow): Promise<SlottingExplanation> {
+export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternatives?: boolean } = {}): Promise<SlottingExplanation> {
   const profile = await lpnProfile(tx, lpn);
   if (profile.sku_ids.length === 0) throw new RuleError('EMPTY_LPN', `LPN ${lpn.code} has no inventory`);
   const skuMeta = await tx.$queryRaw<{ abc_class: string }[]>`SELECT abc_class FROM skus WHERE id = ANY(${profile.sku_ids}::uuid[]) ORDER BY abc_class LIMIT 1`;
@@ -182,7 +182,7 @@ export async function suggestLocation(tx: Tx, lpn: LpnRow): Promise<SlottingExpl
     rejected_sample: rejected,
     candidates_evaluated: candidates.length,
     weights,
-    alternatives: scored.slice(1, 25).map((s) => ({ location_id: s.c.id, code: s.c.code, score: s.score, has_same_sku: s.c.has_same_sku, lpn_count: s.c.lpn_count + s.c.reserved_count, pallet_capacity: s.c.pallet_capacity, level: s.c.level })),
+    alternatives: scored.slice(1, opts.allAlternatives ? undefined : 25).map((s) => ({ location_id: s.c.id, code: s.c.code, score: s.score, has_same_sku: s.c.has_same_sku, lpn_count: s.c.lpn_count + s.c.reserved_count, pallet_capacity: s.c.pallet_capacity, level: s.c.level })),
   };
 }
 
@@ -346,13 +346,14 @@ export async function resuggest(tx: Tx, ctx: ActorContext, taskId: string) {
 }
 
 
-/** Destinations the operator may pick for a pending task: the engine's suggestion plus the next best locations. */
+/** Destinations the operator may pick for a pending task: the engine's suggestion plus every other location that accepts the pallet. */
 export async function putawayOptions(tx: Tx, taskId: string) {
   const t = await tx.putaway_tasks.findUnique({ where: { id: taskId } });
   if (!t) throw new NotFoundError('putaway task', taskId);
   if (!['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(t.status)) throw new RuleError('TASK_STATUS', `Task is ${t.status}`);
   const lpn = await lockLpn(tx, t.lpn_id);
-  const s = await suggestLocation(tx, lpn);
+  // every location the engine accepts (the stored explanation keeps only the top 25, the operator gets the full list)
+  const s = await suggestLocation(tx, lpn, { allAlternatives: true });
   const current = t.suggested_location_id ? await tx.locations.findUnique({ where: { id: t.suggested_location_id }, select: { id: true, code: true } }) : null;
   const options = [
     ...(s.chosen ? [{ location_id: s.chosen.location_id, code: s.chosen.code, score: s.chosen.score, has_same_sku: s.factors.some((f) => f.factor === 'same_sku'), lpn_count: -1, pallet_capacity: -1, level: null as number | null }] : []),

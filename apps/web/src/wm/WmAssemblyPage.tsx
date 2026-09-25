@@ -8,6 +8,7 @@ import { inventoryApi } from '../api/inventory';
 import { labelsApi } from '../api/labels';
 import { putawayApi } from '../api/storage';
 import type { PutawayOption } from '../api/types';
+import { LocationPicker } from './LocationPicker';
 import { masterdataApi } from '../api/masterdata';
 import { ScanInput } from '../components/ScanInput';
 import { fmtQty } from '../lib/format';
@@ -736,13 +737,7 @@ function PalletCard({ lpn, detail, taskId, destination, placed, busy, setBusy, o
       </div>
       {opts && (
         <div className="mt-2 rounded-xl border-2 border-violet-500 bg-slate-900 p-2" data-testid="pallet-dest-chooser">
-          <select value={opts.selected} onChange={(e) => setOpts({ ...opts, selected: e.target.value })} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="pallet-dest-select">
-            {opts.list.map((o) => (
-              <option key={o.code} value={o.code}>
-                {o.code}{o.has_same_sku ? ' · ya tiene este producto' : ''}{o.pallet_capacity > 0 ? ` · ${o.lpn_count}/${o.pallet_capacity}` : ''}{o.is_current ? ' (actual)' : ''}
-              </option>
-            ))}
-          </select>
+          <LocationPicker list={opts.list} selected={opts.selected} onSelect={(code) => setOpts({ ...opts, selected: code })} testId="pallet-dest-select" />
           <div className="mt-2 grid grid-cols-2 gap-2">
             <BigButton tone="neutral" onClick={() => setOpts(null)}>Cancelar</BigButton>
             <BigButton tone="success" onClick={choose} disabled={busy} testId="pallet-dest-use">Usar esta ubicación</BigButton>
