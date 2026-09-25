@@ -44,45 +44,63 @@ export default function BoardPage() {
     return () => { alive = false; window.clearInterval(id); };
   }, [token]);
 
-  const groups = groupByDay(data?.items ?? []);
+  // calendar: this week and next, Monday to Saturday (Sunday deliveries show in Saturday's box)
+  const items = data?.items ?? [];
   const now = new Date();
+  const todayIso = localIso(now);
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const mondayIso = localIso(monday);
+  const days: { iso: string; sundayIso: string | null; d: Date }[] = [];
+  for (let w = 0; w < 2; w++) for (let c = 0; c < 6; c++) {
+    const d = new Date(monday); d.setDate(monday.getDate() + w * 7 + c);
+    const sun = new Date(d); sun.setDate(d.getDate() + 1);
+    days.push({ iso: localIso(d), sundayIso: c === 5 ? localIso(sun) : null, d });
+  }
+  const overdue = items.filter((i) => i.status === 'PLANNED' && i.delivery_date < mondayIso);
+  const byDay = groupByDay(items);
+  const of = (iso: string) => byDay.find((g) => g.date === iso)?.items ?? [];
+
   return (
-    <div className="min-h-screen bg-slate-950 p-6 text-white" style={{ fontSize: 'clamp(16px, 1.6vw, 28px)' }}>
-      <div className="mb-4 flex items-end justify-between border-b border-slate-700 pb-3">
+    <div className="flex min-h-screen flex-col bg-slate-950 p-5 text-white" style={{ fontSize: 'clamp(14px, 1.35vw, 26px)' }}>
+      <div className="mb-3 flex items-end justify-between border-b border-slate-700 pb-2">
         <div>
-          <div className="text-[1.6em] font-black uppercase tracking-wide">Entregas</div>
-          <div className="text-[0.8em] text-slate-400">{data?.board ?? 'Tablero'} · actualizado {now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</div>
+          <div className="text-[1.5em] font-black uppercase tracking-wide">Entregas</div>
+          <div className="text-[0.75em] text-slate-400">{data?.board ?? 'Tablero'} · actualizado {now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</div>
         </div>
-        <div className="text-right text-[1.1em] text-slate-300">{now.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+        <div className="text-right text-[1.05em] text-slate-300">{now.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
       </div>
       {!token && <div className="text-[1.2em] text-rose-400">Falta el enlace del tablero. Genera uno en Entregas → Ver en TV.</div>}
-      {error && <div className="text-[1.2em] text-rose-400">{error}{data ? ' · mostrando la última información' : ''}</div>}
-      {data && groups.length === 0 && <div className="mt-10 text-center text-[1.6em] text-slate-400">Sin entregas programadas</div>}
-      <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(28em, 1fr))' }} data-tick={tick}>
-        {groups.map((g) => {
-          const { name, rel } = dayLabel(g.date);
+      {error && <div className="text-[1em] text-rose-400">{error}{data ? ' · mostrando la última información' : ''}</div>}
+      <div className="grid flex-1 gap-2" style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gridTemplateRows: 'repeat(2, minmax(0, 1fr))' }} data-tick={tick}>
+        {days.map(({ iso, sundayIso, d }) => {
+          const isToday = iso === todayIso;
+          const past = iso < todayIso;
+          const list = [...of(iso), ...(sundayIso ? of(sundayIso).map((i) => ({ ...i, title: `dom · ${i.title}` })) : [])];
+          const { name } = dayLabel(iso);
           return (
-            <section key={g.date} className={`rounded-2xl border-2 p-4 ${rel === 'HOY' ? 'border-amber-400 bg-amber-400/10' : rel === 'ATRASADA' ? 'border-rose-600 bg-rose-900/20' : 'border-slate-700 bg-slate-900'}`}>
-              <div className="mb-3 flex items-center gap-3">
-                <span className="text-[1.4em] font-black capitalize">{name}</span>
-                {rel && <span className={`rounded-full px-3 py-0.5 text-[0.7em] font-black ${rel === 'ATRASADA' ? 'bg-rose-600 text-white' : 'bg-amber-400 text-amber-950'}`}>{rel}</span>}
-              </div>
-              <ul className="grid gap-2">
-                {g.items.map((d) => (
-                  <li key={d.id} className={`rounded-xl bg-slate-800/80 px-4 py-3 ${d.status === 'DONE' ? 'opacity-50' : ''}`}>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className={`text-[1.5em] font-black ${d.status === 'DONE' ? 'line-through' : ''}`}>{d.title}</span>
-                      {d.delivery_time && <span className="font-mono text-[1.5em] font-black text-amber-300">{d.delivery_time}</span>}
-                    </div>
-                    {d.notes && <div className="mt-1 text-[1em] text-slate-300">{d.notes}</div>}
-                    {d.status === 'DONE' && <div className="text-[0.8em] font-bold text-emerald-400">ENTREGADO</div>}
+            <section key={iso} className={`flex min-h-0 flex-col rounded-xl border-2 p-2 ${isToday ? 'border-amber-400 bg-amber-400/10' : past ? 'border-slate-800 bg-slate-900/60' : 'border-slate-700 bg-slate-900'}`}>
+              <div className={`mb-1 text-[1em] font-black capitalize ${isToday ? 'text-amber-300' : past ? 'text-slate-500' : 'text-slate-200'}`}>{name}{isToday ? ' · HOY' : ''}</div>
+              <ul className="grid min-h-0 gap-1.5 overflow-hidden">
+                {list.slice(0, 6).map((i) => (
+                  <li key={i.id} className={`rounded-lg bg-slate-800/80 px-2 py-1 ${i.status === 'DONE' ? 'opacity-50' : ''}`}>
+                    <div className={`text-[1em] font-black leading-tight ${i.status === 'DONE' ? 'line-through' : ''}`}>{i.delivery_time && <span className="mr-1 text-amber-300">{i.delivery_time}</span>}{i.title}</div>
+                    {i.notes && <div className="text-[0.72em] leading-tight text-slate-300">{i.notes}</div>}
                   </li>
                 ))}
+                {list.length > 6 && <li className="text-[0.75em] text-slate-400">+{list.length - 6} más</li>}
               </ul>
+              <span className="hidden">{d.getDate()}</span>
             </section>
           );
         })}
       </div>
+      {overdue.length > 0 && <div className="mt-2 text-[0.8em] font-bold text-rose-400">ATRASADAS: {overdue.map((i) => `${i.title} (${i.delivery_date.slice(8, 10)}/${i.delivery_date.slice(5, 7)})`).join(' · ')}</div>}
+      {data && items.length === 0 && <div className="mt-2 text-center text-[1.2em] text-slate-400">Sin entregas programadas</div>}
     </div>
   );
+}
+
+function localIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
