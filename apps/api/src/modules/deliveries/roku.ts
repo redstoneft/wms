@@ -6,8 +6,8 @@ import { ROKU_PNG } from './roku-assets.js';
 
 const MANIFEST = (boardUrl: string) => `title=Tablero de entregas WMS
 major_version=1
-minor_version=0
-build_version=1
+minor_version=1
+build_version=2
 mm_icon_focus_hd=pkg:/images/icon_hd.png
 mm_icon_focus_sd=pkg:/images/icon_sd.png
 splash_screen_hd=pkg:/images/splash_hd.png
@@ -55,28 +55,33 @@ const SCENE_BRS = `sub init()
   m.status = m.top.findNode("status")
   m.subtitle = m.top.findNode("subtitle")
   m.clock = m.top.findNode("clock")
-  m.top.findNode("title").font = mkFont("font:LargeBoldSystemFont", 64)
-  m.subtitle.font = mkFont("font:MediumSystemFont", 26)
-  m.clock.font = mkFont("font:MediumBoldSystemFont", 34)
-  m.status.font = mkFont("font:SmallSystemFont", 24)
+  m.top.findNode("title").font = "font:LargestBoldSystemFont"
+  m.subtitle.font = "font:SmallSystemFont"
+  m.clock.font = "font:MediumBoldSystemFont"
+  m.status.font = "font:SmallSystemFont"
   m.poll = m.top.findNode("poll")
   m.poll.observeField("fire", "onPoll")
   m.clockTimer = m.top.findNode("clockTimer")
   m.clockTimer.observeField("fire", "onClock")
   info = CreateObject("roAppInfo")
   m.url = info.GetValue("board_url")
-  m.subtitle.text = "Cargando..."
+  m.subtitle.text = "Cargando... " + m.url
   m.hasData = false
-  onClock()
-  onPoll()
+  try
+    onClock()
+    onPoll()
+  catch e
+    m.status.text = "Error al iniciar: " + e.message
+    print "BoardScene init error: "; e.message
+  end try
   m.poll.control = "start"
   m.clockTimer.control = "start"
   m.top.setFocus(true)
 end sub
 
+' Sized text uses the default system face (a Font node with no uri); bold titles use the built-in bold font names.
 function mkFont(uri as string, size as integer) as object
   f = CreateObject("roSGNode", "Font")
-  f.uri = uri
   f.size = size
   return f
 end function
@@ -123,19 +128,28 @@ sub onPoll()
 end sub
 
 sub onResult()
-  res = m.task.result
-  if res = invalid or res.ok <> true
-    msg = "Sin conexion con el WMS"
-    if res <> invalid and res.error <> invalid then msg = msg + " (" + res.error + ")"
-    if m.hasData then msg = msg + " - mostrando lo ultimo"
-    m.status.text = msg
-    return
-  end if
-  m.status.text = ""
-  m.hasData = true
-  d = localDate(0)
-  m.subtitle.text = "Actualizado " + pad2(d.GetHours()) + ":" + pad2(d.GetMinutes())
-  render(res.data)
+  try
+    res = m.task.result
+    if res = invalid
+      m.status.text = "Sin conexion con el WMS"
+      return
+    end if
+    if res.ok <> true
+      msg = "Sin conexion con el WMS"
+      if res.error <> invalid then msg = msg + " (" + res.error + ")"
+      if m.hasData then msg = msg + " - mostrando lo ultimo"
+      m.status.text = msg
+      return
+    end if
+    m.status.text = ""
+    m.hasData = true
+    d = localDate(0)
+    m.subtitle.text = "Actualizado " + pad2(d.GetHours()) + ":" + pad2(d.GetMinutes())
+    render(res.data)
+  catch e
+    m.status.text = "Error en el tablero: " + e.message
+    print "BoardScene onResult error: "; e.message
+  end try
 end sub
 
 function dateFromIso(iso as string) as object
@@ -153,7 +167,7 @@ sub render(data as object)
   if items = invalid or items.Count() = 0
     lbl = CreateObject("roSGNode", "Label")
     lbl.text = "Sin entregas programadas"
-    lbl.font = mkFont("font:LargeSystemFont", 44)
+    lbl.font = "font:LargeSystemFont"
     lbl.color = "0x94A3B8FF"
     m.cols.appendChild(lbl)
     return
@@ -210,7 +224,7 @@ function groupNode(g as object, today as string, tomorrow as string, w as intege
     color = "0xF87171FF"
   end if
   head.text = dayName(d.GetDayOfWeek()) + " " + Str(d.GetDayOfMonth()).Trim() + " " + monthName(d.GetMonth()) + tag
-  head.font = mkFont("font:LargeBoldSystemFont", 40)
+  head.font = "font:LargeBoldSystemFont"
   head.color = color
   head.width = w
   grp.appendChild(head)
@@ -220,7 +234,7 @@ function groupNode(g as object, today as string, tomorrow as string, w as intege
     if it.delivery_time <> invalid and it.delivery_time <> "" then t = t + "  " + it.delivery_time
     if it.status = "DONE" then t = t + "  (entregado)"
     row.text = t
-    row.font = mkFont("font:LargeBoldSystemFont", 44)
+    row.font = "font:LargestBoldSystemFont"
     if it.status = "DONE"
       row.color = "0x64748BFF"
     else
@@ -232,7 +246,7 @@ function groupNode(g as object, today as string, tomorrow as string, w as intege
     if it.notes <> invalid and it.notes <> ""
       note = CreateObject("roSGNode", "Label")
       note.text = it.notes
-      note.font = mkFont("font:MediumSystemFont", 28)
+      note.font = "font:MediumSystemFont"
       note.color = "0xCBD5E1FF"
       note.width = w
       note.wrap = true
