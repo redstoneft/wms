@@ -38,8 +38,8 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
   if (outSku.requires_lot && !input.output.lot) throw new RuleError('LOT_REQUIRED', `SKU ${outSku.code} requires a lot`);
   if (outSku.requires_expiry && !input.output.expiry_date) throw new RuleError('EXPIRY_REQUIRED', `SKU ${outSku.code} requires an expiry date`);
 
-  const outputQty = input.output.pallets.reduce((acc, p) => acc + BigInt(p.cases) * BigInt(p.pieces_per_case), 0n);
-  const scrapQty = input.scrap ? BigInt(input.scrap.qty) : 0n;
+  const outputQty = input.output.pallets.reduce((acc, p) => acc + palletQty(p), 0n);
+  const scrapQty = palletsDefective(input.output.pallets) + (input.scrap ? BigInt(input.scrap.qty) : 0n);
   const consumedQty = input.inputs.reduce((acc, i) => acc + BigInt(i.qty), 0n);
   const inputSkuRows = await Promise.all([...new Set(input.inputs.map((i) => i.sku_code))].map((c) => resolveSku(tx, c)));
   const inputSkus = new Set(inputSkuRows.map((s) => s.id));
@@ -64,7 +64,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
       output_qty: outputQty,
       consumed_qty: consumedQty,
       scrap_qty: scrapQty,
-      scrap_reason: input.scrap?.reason ?? null,
+      scrap_reason: input.scrap?.reason ?? (scrapQty > 0n ? 'Piezas defectuosas en el armado' : null),
       notes: input.notes ?? null,
       mode,
       created_by: ctx.userId,
@@ -118,38 +118,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
   }
 
   // 2) produce finished pallets at the station
-  const produced: { lpn: string; cases: number; pieces_per_case: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[] = [];
-  const warnings: string[] = [];
-  for (const p of input.output.pallets) {
-    const qty = BigInt(p.cases) * BigInt(p.pieces_per_case);
-    const lpn = await createLpn(tx, ctx, { warehouse_id: station.warehouse_id, lpn_type: 'STORAGE', location_id: station.id, lot: input.output.lot ?? null, expiry_date: input.output.expiry_date ?? null, cases_count: p.cases });
-    await setLpnStatus(tx, lpn.id, 'STORED');
-    await createInventory(tx, ctx, {
-      movement_type: 'ASSEMBLY_IN',
-      to_lpn: lpn,
-      sku_id: outSku.id,
-      qty,
-      uom_code: 'CASE',
-      uom_qty: BigInt(p.cases),
-      status: 'AVAILABLE',
-      location_id: station.id,
-      reference_type: 'assembly_order',
-      reference_id: order.id,
-      reason: `Armado ${code}`,
-      note: `${p.cases} cajas × ${p.pieces_per_case} pzas`,
-    });
-    let taskId: string | null = null;
-    let suggested: string | null = null;
-    try {
-      const task = await createPutawayTask(tx, ctx, lpn, { allowStoredLocation: true });
-      taskId = task.id;
-      if (task.suggested_location_id) suggested = (await tx.locations.findUnique({ where: { id: task.suggested_location_id }, select: { code: true } }))?.code ?? null;
-    } catch (e) {
-      warnings.push(`${lpn.code}: sin tarea de acomodo (${(e as Error).message})`);
-    }
-    await tx.assembly_outputs.create({ data: { order_id: order.id, lpn_id: lpn.id, cases: p.cases, pieces_per_case: p.pieces_per_case, qty, putaway_task_id: taskId } });
-    produced.push({ lpn: lpn.code, cases: p.cases, pieces_per_case: p.pieces_per_case, qty: qty.toString(), putaway_task_id: taskId, suggested_location: suggested });
-  }
+  const { produced, warnings } = await produceOutputs(tx, ctx, { id: order.id, code }, station, outSku.id, input.output.pallets, input.output.lot ?? null, input.output.expiry_date ?? null);
 
   // 3) scrap is a loss: it leaves a trace as an incident on the order
   let incidentId: string | null = null;
@@ -158,7 +127,7 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
       incident_type: 'DAMAGED',
       severity: 'LOW',
       title: `Merma en armado ${code}: ${scrapQty} pzas`,
-      description: input.scrap!.reason,
+      description: input.scrap?.reason ?? 'Piezas defectuosas en el armado',
       entity_type: 'assembly_order',
       entity_id: order.id,
       sku_id: mainInputSkuId,
@@ -259,8 +228,10 @@ export async function finishAssembly(tx: Tx, ctx: ActorContext, id: string, inpu
   const outSku = order.output_sku;
   if (outSku.requires_lot && !input.lot) throw new RuleError('LOT_REQUIRED', `SKU ${outSku.code} requires a lot`);
   if (outSku.requires_expiry && !input.expiry_date) throw new RuleError('EXPIRY_REQUIRED', `SKU ${outSku.code} requires an expiry date`);
-  const outputQty = input.pallets.reduce((acc, p) => acc + BigInt(p.cases) * BigInt(p.pieces_per_case), 0n);
-  const scrapQty = input.scrap ? BigInt(input.scrap.qty) : 0n;
+  const outputQty = input.pallets.reduce((acc, p) => acc + palletQty(p), 0n);
+  // defective pieces per pallet + any extra scrap declared on top
+  const scrapQty = palletsDefective(input.pallets) + (input.scrap ? BigInt(input.scrap.qty) : 0n);
+  const scrapReason = input.scrap?.reason ?? (scrapQty > 0n ? 'Piezas defectuosas en el armado' : null);
   const consumedQty = order.inputs.reduce((a, i) => a + i.qty, 0n);
   const inputSkus = new Set(order.inputs.map((i) => i.sku_id));
   if (inputSkus.size === 1 && consumedQty !== outputQty + scrapQty) {
@@ -297,10 +268,11 @@ export async function finishAssembly(tx: Tx, ctx: ActorContext, id: string, inpu
   // 3) defective pieces
   let incidentId: string | null = null;
   if (scrapQty > 0n) {
-    const inc = await createIncident(tx, ctx, { incident_type: 'DAMAGED', severity: 'LOW', title: `Defectuosas en armado ${order.code}: ${scrapQty} pzas`, description: input.scrap!.reason, entity_type: 'assembly_order', entity_id: order.id, sku_id: order.inputs[0]?.sku_id ?? null, location_id: station.id, qty: scrapQty });
+    const perPallet = produced.filter((p) => p.defective > 0).map((p) => `${p.lpn}: ${p.defective}`).join(', ');
+    const inc = await createIncident(tx, ctx, { incident_type: 'DAMAGED', severity: 'LOW', title: `Defectuosas en armado ${order.code}: ${scrapQty} pzas`, description: `${scrapReason ?? ''}${perPallet ? ` · por tarima: ${perPallet}` : ''}`.trim(), entity_type: 'assembly_order', entity_id: order.id, sku_id: order.inputs[0]?.sku_id ?? null, location_id: station.id, qty: scrapQty });
     incidentId = inc.id;
   }
-  await tx.assembly_orders.update({ where: { id: order.id }, data: { status: 'COMPLETED', output_qty: outputQty, scrap_qty: scrapQty, scrap_reason: input.scrap?.reason ?? null, incident_id: incidentId, completed_at: new Date(), completed_by: ctx.userId, notes: input.notes ? `${order.notes ?? ''}\n${input.notes}`.trim() : order.notes } });
+  await tx.assembly_orders.update({ where: { id: order.id }, data: { status: 'COMPLETED', output_qty: outputQty, scrap_qty: scrapQty, scrap_reason: scrapReason, incident_id: incidentId, completed_at: new Date(), completed_by: ctx.userId, notes: input.notes ? `${order.notes ?? ''}\n${input.notes}`.trim() : order.notes } });
   await audit(tx, ctx, { action: 'assembly.completed', entity_type: 'assembly_order', entity_id: order.id, after: { code: order.code, mode: order.mode, station: station.code, output_sku: outSku.code, output_qty: outputQty.toString(), consumed_qty: consumedQty.toString(), scrap_qty: scrapQty.toString(), consumed, produced: produced.map((p) => p.lpn), incident_id: incidentId, two_phase: true } });
   const full = await tx.assembly_orders.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
   return { ...full, consumed, produced, warnings };
@@ -331,14 +303,19 @@ export async function cancelAssembly(tx: Tx, ctx: ActorContext, id: string, reas
 }
 
 /** Finished pallets born at the station (shared by the one-shot and the two-phase flows). */
-async function produceOutputs(tx: Tx, ctx: ActorContext, order: { id: string; code: string }, station: LocationRow, outSkuId: string, pallets: { cases: number; pieces_per_case: number }[], lot: string | null, expiry: string | null) {
-  const produced: { lpn: string; cases: number; pieces_per_case: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[] = [];
+type PalletSpec = { cases: number; pieces_per_case: number; partial_pieces?: number; defective?: number };
+export const palletQty = (p: PalletSpec) => BigInt(p.cases) * BigInt(p.pieces_per_case) + BigInt(p.partial_pieces ?? 0);
+export const palletsDefective = (pallets: PalletSpec[]) => pallets.reduce((a, p) => a + BigInt(p.defective ?? 0), 0n);
+
+async function produceOutputs(tx: Tx, ctx: ActorContext, order: { id: string; code: string }, station: LocationRow, outSkuId: string, pallets: PalletSpec[], lot: string | null, expiry: string | null) {
+  const produced: { lpn: string; cases: number; pieces_per_case: number; partial_pieces: number; defective: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[] = [];
   const warnings: string[] = [];
   for (const p of pallets) {
-    const qty = BigInt(p.cases) * BigInt(p.pieces_per_case);
-    const lpn = await createLpn(tx, ctx, { warehouse_id: station.warehouse_id, lpn_type: 'STORAGE', location_id: station.id, lot, expiry_date: expiry, cases_count: p.cases });
+    const partial = p.partial_pieces ?? 0;
+    const qty = palletQty(p);
+    const lpn = await createLpn(tx, ctx, { warehouse_id: station.warehouse_id, lpn_type: 'STORAGE', location_id: station.id, lot, expiry_date: expiry, cases_count: p.cases + (partial > 0 ? 1 : 0) });
     await setLpnStatus(tx, lpn.id, 'STORED');
-    await createInventory(tx, ctx, { movement_type: 'ASSEMBLY_IN', to_lpn: lpn, sku_id: outSkuId, qty, uom_code: 'CASE', uom_qty: BigInt(p.cases), status: 'AVAILABLE', location_id: station.id, reference_type: 'assembly_order', reference_id: order.id, reason: `Armado ${order.code}`, note: `${p.cases} cajas × ${p.pieces_per_case} pzas` });
+    await createInventory(tx, ctx, { movement_type: 'ASSEMBLY_IN', to_lpn: lpn, sku_id: outSkuId, qty, uom_code: partial > 0 ? 'PIECE' : 'CASE', uom_qty: partial > 0 ? qty : BigInt(p.cases), status: 'AVAILABLE', location_id: station.id, reference_type: 'assembly_order', reference_id: order.id, reason: `Armado ${order.code}`, note: `${p.cases} cajas × ${p.pieces_per_case} pzas${partial > 0 ? ` + 1 caja con ${partial}` : ''}${(p.defective ?? 0) > 0 ? ` · ${p.defective} defectuosas` : ''}` });
     let taskId: string | null = null;
     let suggested: string | null = null;
     try {
@@ -348,8 +325,8 @@ async function produceOutputs(tx: Tx, ctx: ActorContext, order: { id: string; co
     } catch (e) {
       warnings.push(`${lpn.code}: sin tarea de acomodo (${(e as Error).message})`);
     }
-    await tx.assembly_outputs.create({ data: { order_id: order.id, lpn_id: lpn.id, cases: p.cases, pieces_per_case: p.pieces_per_case, qty, putaway_task_id: taskId } });
-    produced.push({ lpn: lpn.code, cases: p.cases, pieces_per_case: p.pieces_per_case, qty: qty.toString(), putaway_task_id: taskId, suggested_location: suggested });
+    await tx.assembly_outputs.create({ data: { order_id: order.id, lpn_id: lpn.id, cases: p.cases, pieces_per_case: p.pieces_per_case, partial_pieces: partial, defective_qty: BigInt(p.defective ?? 0), qty, putaway_task_id: taskId } });
+    produced.push({ lpn: lpn.code, cases: p.cases, pieces_per_case: p.pieces_per_case, partial_pieces: partial, defective: p.defective ?? 0, qty: qty.toString(), putaway_task_id: taskId, suggested_location: suggested });
   }
   return { produced, warnings };
 }

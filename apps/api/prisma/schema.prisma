@@ -1235,7 +1235,9 @@ model assembly_outputs {
   lpn_id          String @db.Uuid
   cases           Int
   pieces_per_case Int
-  qty             BigInt // cases × pieces_per_case
+  qty             BigInt // cases × pieces_per_case + partial_pieces
+  partial_pieces  Int    @default(0) // one incomplete case at the end of the pallet
+  defective_qty   BigInt @default(0) // defective pieces found while assembling this pallet
   putaway_task_id String? @db.Uuid
 
   order assembly_orders @relation(fields: [order_id], references: [id], onDelete: Cascade)

@@ -4,6 +4,10 @@ import { api } from './client';
 export interface AssemblyPalletInput {
   cases: number;
   pieces_per_case: number;
+  /** pieces in one incomplete case at the end of the pallet */
+  partial_pieces?: number;
+  /** defective pieces found on this pallet (scrap) */
+  defective?: number;
 }
 export interface AssemblyInput {
   station_barcode?: string;
@@ -34,7 +38,7 @@ export interface AssemblyOrder {
 }
 export interface AssemblyResult extends AssemblyOrder {
   consumed: { lpn: string; sku: string; qty: string; lpn_status: string }[];
-  produced: { lpn: string; cases: number; pieces_per_case: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[];
+  produced: { lpn: string; cases: number; pieces_per_case: number; partial_pieces?: number; defective?: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[];
   warnings: string[];
 }
 

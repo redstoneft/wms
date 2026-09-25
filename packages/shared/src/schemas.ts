@@ -324,6 +324,16 @@ export const zTransferComplete = z.object({
 });
 
 // ---- assembly (components → finished product) ----
+/** One finished pallet: full cases × pieces per case, optionally one incomplete case, and defective pieces found on it. */
+export const zAssemblyPallet = z.object({
+  cases: z.number().int().min(0).max(10000),
+  pieces_per_case: z.number().int().min(1).max(100000),
+  /** pieces in the last, incomplete case (0 = none) */
+  partial_pieces: z.number().int().min(0).max(100000).default(0),
+  /** defective pieces attributed to this pallet (they are scrap) */
+  defective: z.number().int().min(0).max(100000).default(0),
+}).refine((p) => p.cases > 0 || p.partial_pieces > 0, 'La tarima debe tener al menos una caja o piezas');
+
 export const zAssemblyComplete = z.object({
   /** where the work happens; the new pallets are born here and get a put-away task (omitted or empty → the warehouse's assembly station) */
   station_barcode: z.string().trim().max(64).optional(),
@@ -336,7 +346,7 @@ export const zAssemblyComplete = z.object({
     lot: z.string().trim().max(60).optional(),
     expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     /** one entry per physical pallet produced; the packing factor is per pallet (cases of 12 today, of 6 tomorrow) */
-    pallets: z.array(z.object({ cases: z.number().int().min(1).max(10000), pieces_per_case: z.number().int().min(1).max(100000) })).min(1).max(50),
+    pallets: z.array(zAssemblyPallet).min(1).max(50),
   }),
   /** pieces lost during assembly; required to explain any difference between consumed and produced */
   scrap: z.object({ qty: zQty, reason: zReason }).optional(),
@@ -359,7 +369,7 @@ export const zAssemblyStart = z.object({
 export const zAssemblyFinish = z.object({
   lot: z.string().trim().max(60).optional(),
   expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  pallets: z.array(z.object({ cases: z.number().int().min(1).max(10000), pieces_per_case: z.number().int().min(1).max(100000) })).min(1).max(50),
+  pallets: z.array(zAssemblyPallet).min(1).max(50),
   scrap: z.object({ qty: zQty, reason: zReason }).optional(),
   notes: z.string().trim().max(2000).optional(),
 });

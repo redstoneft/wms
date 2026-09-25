@@ -60,6 +60,22 @@ describe('assembly in two phases', () => {
     await expectReconciled();
   });
 
+  it('confirm with an incomplete last case and defective pieces per pallet: 59 × 12 + 1 case of 10 + 2 defective = 720 consumed', async () => {
+    const body = await storedPallet(f, BODY, f.reserve[5]!.id, 720n);
+    const r = await sup.post('/assembly/start', { inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 720 }], output_sku_code: f.skus[PAN]!.code, notes: 'caja incompleta' }, idem());
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const before = await skuTotal(f.skus[PAN]!.id);
+    const done = await sup.post(`/assembly/${r.body.id}/complete`, { pallets: [{ cases: 59, pieces_per_case: 12, partial_pieces: 10, defective: 2 }] }, idem());
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body.produced[0]).toMatchObject({ cases: 59, partial_pieces: 10, defective: 2, qty: '718' });
+    expect(done.body.scrap_qty).toBe('2');
+    expect(done.body.incident_id).toBeTruthy();
+    expect((await skuTotal(f.skus[PAN]!.id)) - before).toBe(718n);
+    const lpn = await sql<{ cases_count: number }>(`SELECT cases_count FROM lpns WHERE code = '${done.body.produced[0].lpn}'`);
+    expect(lpn[0]!.cases_count).toBe(60); // 59 full + the incomplete one
+    await expectReconciled();
+  });
+
   it('cancel: the reserved pallet is unblocked and gets a put-away task back to the racks', async () => {
     const body = await storedPallet(f, BODY, f.reserve[2]!.id, 48n);
     const r = await sup.post('/assembly/start', { station_barcode: f.staging[1]!.barcode, inputs: [{ lpn_code: body.code, sku_code: f.skus[BODY]!.code, qty: 48 }], output_sku_code: f.skus[PAN]!.code, notes: 'se cancela' }, idem());
