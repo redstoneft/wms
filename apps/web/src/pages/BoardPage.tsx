@@ -9,6 +9,26 @@ export default function BoardPage() {
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
+  // TV mode: keep the screen awake (where the browser allows it), hide the cursor, reload on a new deployment
+  useEffect(() => {
+    let lock: { release: () => Promise<void> } | null = null;
+    const wl = (navigator as unknown as { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
+    const acquire = () => wl?.request('screen').then((l) => { lock = l; }).catch(() => undefined);
+    void acquire();
+    const onVis = () => { if (document.visibilityState === 'visible') void acquire(); };
+    document.addEventListener('visibilitychange', onVis);
+    document.body.style.cursor = 'none';
+    const current = /assets\/(index-[A-Za-z0-9_-]+\.js)/.exec(Array.from(document.scripts).map((x) => x.src).join(' '))?.[1] ?? null;
+    const upd = window.setInterval(async () => {
+      try {
+        const html = await (await fetch('/', { cache: 'no-store', credentials: 'omit' })).text();
+        const b = /assets\/(index-[A-Za-z0-9_-]+\.js)/.exec(html)?.[1] ?? null;
+        if (b && current && b !== current) window.location.reload();
+      } catch { /* offline: keep showing the last data */ }
+    }, 10 * 60_000);
+    return () => { document.removeEventListener('visibilitychange', onVis); window.clearInterval(upd); document.body.style.cursor = ''; void lock?.release(); };
+  }, []);
+
   useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -36,7 +56,7 @@ export default function BoardPage() {
         <div className="text-right text-[1.1em] text-slate-300">{now.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
       </div>
       {!token && <div className="text-[1.2em] text-rose-400">Falta el enlace del tablero. Genera uno en Entregas → Ver en TV.</div>}
-      {error && <div className="text-[1.2em] text-rose-400">{error}</div>}
+      {error && <div className="text-[1.2em] text-rose-400">{error}{data ? ' · mostrando la última información' : ''}</div>}
       {data && groups.length === 0 && <div className="mt-10 text-center text-[1.6em] text-slate-400">Sin entregas programadas</div>}
       <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(28em, 1fr))' }} data-tick={tick}>
         {groups.map((g) => {

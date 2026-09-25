@@ -134,6 +134,7 @@ function Flow() {
           <ol className="mt-2 list-decimal space-y-1 pl-5">
             <li>Genera el enlace (una sola vez) y cópialo.</li>
             <li>En la TV abre ese enlace y ponlo en pantalla completa. Guárdalo como favorito o página de inicio.</li>
+            <li>Para que la TV esté siempre encendida con el calendario: una PC (o mini PC) conectada por HDMI con <b>tablero_tv.bat</b> (abajo); o un Android TV con la app Fully Kiosk Browser apuntando al enlace. En la TV, apaga el temporizador de apagado automático.</li>
             <li>Para proyectar desde este handheld: abre el tablero aquí y usa "Transmitir pantalla" de Android a la TV.</li>
           </ol>
         </div>
@@ -156,6 +157,14 @@ function Flow() {
                 Abrir tablero
               </BigButton>
             </div>
+            <a
+              className="mt-2 block rounded-2xl bg-sky-700 px-4 py-3 text-center text-sm font-bold text-white"
+              href={URL.createObjectURL(new Blob([`@echo off\r\nrem Tablero de entregas del WMS para la PC conectada a la TV. Doble clic una vez: la PC ya no se apaga ni apaga la pantalla,\r\nrem se copia a la carpeta Inicio y abre el tablero en pantalla completa (kiosco) cada vez que se prende.\r\nset "URL=${link}"\r\nset "INICIO=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\"\r\nif /i not "%~dp0"=="%INICIO%" copy /y "%~f0" "%INICIO%tablero_tv.bat" >nul 2>nul\r\npowercfg /change monitor-timeout-ac 0 >nul 2>nul\r\npowercfg /change standby-timeout-ac 0 >nul 2>nul\r\npowercfg /change hibernate-timeout-ac 0 >nul 2>nul\r\nif /i "%~dp0"=="%INICIO%" timeout /t 20 >nul\r\nstart "" msedge --kiosk "%URL%" --edge-kiosk-type=fullscreen --no-first-run 2>nul || start "" chrome --kiosk "%URL%" --no-first-run 2>nul || start "" "%URL%"\r\n`], { type: 'application/octet-stream' }))}
+              download="tablero_tv.bat"
+              data-testid="board-kiosk-bat"
+            >
+              Descargar tablero_tv.bat (PC Windows conectada a la TV: pantalla completa, sin apagarse, arranca solo)
+            </a>
           </div>
         )}
         <BigButton tone="neutral" className="mt-3" onClick={() => setMode('LIST')}>
