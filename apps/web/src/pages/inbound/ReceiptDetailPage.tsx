@@ -41,8 +41,8 @@ export default function ReceiptDetailPage() {
   const [cancelReason, setCancelReason] = useState('');
   const cancel = useMutation({
     mutationFn: () => inboundApi.cancel(id, cancelReason.trim()),
-    onSuccess: () => {
-      toast.success('Recepción cancelada', 'No se recibió nada; el folio queda como cancelado.');
+    onSuccess: (r) => {
+      toast.success('Recepción cancelada', r.reverted?.length ? `${r.reverted.length} tarima(s) revertidas: ${r.reverted.map((x) => `${x.lpn} ${fmtQty(x.qty)} ${x.sku}`).join(', ')}` : 'No se recibió nada; el folio queda como cancelado.');
       setCancelOpen(false);
       void qc.invalidateQueries({ queryKey: ['receipt', id] });
       void qc.invalidateQueries({ queryKey: ['receipts'] });
@@ -98,7 +98,7 @@ export default function ReceiptDetailPage() {
                 <Button onClick={() => setConfirmComplete(true)}>Completar recepción</Button>
               </>
             )}
-            {open && can('receiving.close') && (r.lpns?.length ?? 0) === 0 && (
+            {r.status !== 'CANCELLED' && ((open && can('receiving.close') && (r.lpns?.length ?? 0) === 0) || can('receiving.cancel_received')) && (
               <Button variant="danger" onClick={() => setCancelOpen(true)}>
                 Cancelar recepción
               </Button>
@@ -112,7 +112,14 @@ export default function ReceiptDetailPage() {
         }
       />
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancelar recepción" footer={<Button variant="danger" onClick={() => cancel.mutate()} disabled={cancelReason.trim().length < 3} loading={cancel.isPending}>Cancelar recepción</Button>}>
-        <p className="text-sm text-slate-600">Solo se puede cancelar una recepción sin pallets recibidos. El folio no se reutiliza y la cancelación queda en auditoría con el motivo.</p>
+        {(r.lpns?.length ?? 0) === 0 ? (
+          <p className="text-sm text-slate-600">La recepción no tiene pallets recibidos. El folio no se reutiliza y la cancelación queda en auditoría con el motivo.</p>
+        ) : (
+          <Alert tone="warn">
+            Esta recepción tiene {r.lpns?.length} tarima(s) recibidas. Al cancelarla, todo su inventario se revierte (sale del sistema como recepción deshecha), las tarimas quedan canceladas y se cancelan sus acomodos pendientes. Solo se permite si ninguna tarima está asignada a un pedido, surtida o en traslado. Queda auditado y se abre una incidencia.
+            <div className="mt-1 font-mono text-xs">{r.lpns?.map((l) => l.code).join(' · ')}</div>
+          </Alert>
+        )}
         <Field label="Motivo" required>
           <Input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="abierta por error" />
         </Field>

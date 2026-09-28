@@ -4,7 +4,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { getSkuByCode, resolveSkuBarcode, toBaseQty } from '../../lib/lookup.js';
-import { createInventory, createLpn, getBalance, lockLocation, lockLpnByCode, removeInventory, type LpnRow } from '../../inventory/ledger.js';
+import { createInventory, createLpn, getBalance, lockBalances, lockLocation, lockLpn, lockLpnByCode, removeInventory, type LpnRow } from '../../inventory/ledger.js';
 import { createIncident } from '../incidents/service.js';
 import { createPutawayTask } from '../putaway/service.js';
 
@@ -400,13 +400,53 @@ export async function closeReceipt(tx: Tx, ctx: ActorContext, receiptId: string)
   return updated;
 }
 
-/** A receipt opened by mistake: allowed only while nothing has been received (no LPN, no movement). The number is not reused. */
+/**
+ * Cancel a receipt. Anyone who closes receipts may cancel one that received nothing. A receipt that already has pallets
+ * can be cancelled only by an administrator (permission receiving.cancel_received): every pallet of the receipt must be
+ * intact (at the dock or stored, nothing allocated, picked or moved out); their inventory leaves with RECEIPT_UNDO
+ * movements, the pallets are cancelled, pending put-aways dropped, and an incident keeps the trace. The number is not reused.
+ */
 export async function cancelReceipt(tx: Tx, ctx: ActorContext, receiptId: string, reason: string) {
-  const r = await tx.receipts.findUnique({ where: { id: receiptId }, include: { _count: { select: { lpns: true } } } });
-  if (!r) throw new NotFoundError('receipt', receiptId);
-  if (!['OPEN', 'IN_PROGRESS'].includes(r.status)) throw new RuleError('RECEIPT_STATUS', `Receipt is ${r.status}`);
-  if (r._count.lpns > 0) throw new RuleError('RECEIPT_HAS_LPNS', 'La recepción ya tiene pallets recibidos; no se puede cancelar. Complétala y ajusta con incidencia.');
+  const rows = await tx.$queryRaw<{ id: string; status: string }[]>`SELECT id, status FROM receipts WHERE id = ${receiptId}::uuid FOR UPDATE`;
+  if (!rows[0]) throw new NotFoundError('receipt', receiptId);
+  const r = await tx.receipts.findUniqueOrThrow({ where: { id: receiptId }, include: { lpns: { where: { status: { notIn: ['CANCELLED', 'CONSUMED', 'SHIPPED'] } }, select: { id: true, code: true, status: true } } } });
+  if (r.status === 'CANCELLED') throw new RuleError('RECEIPT_STATUS', 'Receipt is already CANCELLED');
+  const reverted: { lpn: string; sku: string; qty: string; status: string; location: string | null }[] = [];
+  if (r.lpns.length > 0) {
+    if (!ctx.permissions.has('receiving.cancel_received')) throw new RuleError('RECEIPT_HAS_LPNS', 'La recepción ya tiene pallets recibidos; solo un administrador puede cancelarla (el inventario se revierte).');
+    // every pallet must be untouched: nothing allocated/picked/in transfer, nothing already taken out
+    const blocked: string[] = [];
+    for (const l of r.lpns) {
+      const lpn = await lockLpn(tx, l.id);
+      if (!['OPEN', 'STORED'].includes(lpn.status)) {
+        blocked.push(`${lpn.code} está ${lpn.status}`);
+        continue;
+      }
+      const bal = await lockBalances(tx, lpn.id);
+      const busy = bal.filter((b) => b.qty > 0n && !['AVAILABLE', 'DAMAGED', 'BLOCKED', 'QUARANTINE'].includes(b.status));
+      if (busy.length) blocked.push(`${lpn.code} tiene inventario ${busy.map((b) => b.status).join('/')}`);
+    }
+    if (blocked.length) throw new RuleError('RECEIPT_LPNS_IN_USE', `No se puede cancelar: ${blocked.join('; ')}. Libera esas tarimas primero.`, { blocked });
+    for (const l of r.lpns) {
+      const lpn = await lockLpn(tx, l.id);
+      const loc = lpn.current_location_id ? (await tx.locations.findUnique({ where: { id: lpn.current_location_id }, select: { code: true } }))?.code ?? null : null;
+      for (const b of await lockBalances(tx, lpn.id)) {
+        if (b.qty <= 0n) continue;
+        await removeInventory(tx, ctx, { movement_type: 'RECEIPT_UNDO', from_lpn: lpn, sku_id: b.sku_id, qty: b.qty, status: b.status, receipt_id: r.id, reference_type: 'receipt', reference_id: r.id, reason: `Recepción cancelada: ${reason}` });
+        const sku = await tx.skus.findUnique({ where: { id: b.sku_id }, select: { code: true } });
+        reverted.push({ lpn: lpn.code, sku: sku?.code ?? b.sku_id, qty: b.qty.toString(), status: b.status, location: loc });
+      }
+      await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'CANCELLED', version: { increment: 1 } } });
+      await tx.putaway_tasks.updateMany({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
+    }
+    await tx.receipt_lines.updateMany({ where: { receipt_id: r.id }, data: { received_qty: 0n, damaged_qty: 0n, status: 'PENDING' } });
+  }
   const updated = await tx.receipts.update({ where: { id: receiptId }, data: { status: 'CANCELLED', closed_at: new Date(), notes: [r.notes, `CANCELADA: ${reason}`].filter(Boolean).join(' · ') } });
-  await audit(tx, ctx, { action: 'receipt.cancel', entity_type: 'receipt', entity_id: receiptId, before: { status: r.status }, after: { status: 'CANCELLED' }, reason });
-  return updated;
+  let incidentId: string | null = null;
+  if (reverted.length) {
+    const inc = await createIncident(tx, ctx, { incident_type: 'OTHER', severity: 'MEDIUM', title: `Recepción ${r.receipt_number} cancelada con ${r.lpns.length} tarima(s) revertidas`, description: `${reason} · ${reverted.map((x) => `${x.lpn}: ${x.qty} ${x.sku}${x.location ? ` en ${x.location}` : ''}`).join('; ')}`, entity_type: 'receipt', entity_id: r.id });
+    incidentId = inc.id;
+  }
+  await audit(tx, ctx, { action: 'receipt.cancel', entity_type: 'receipt', entity_id: receiptId, before: { status: r.status }, after: { status: 'CANCELLED', reverted, incident_id: incidentId }, reason });
+  return { ...updated, reverted, incident_id: incidentId };
 }

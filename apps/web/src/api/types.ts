@@ -361,7 +361,7 @@ export interface Receipt {
   receipt_number: string;
   container_id: Uuid | null;
   po_id: Uuid | null;
-  status: 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'CLOSED' | 'WITH_INCIDENT';
+  status: 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'CLOSED' | 'WITH_INCIDENT' | 'CANCELLED';
   receiving_location_id: Uuid;
   started_at: Iso;
   completed_at: Iso | null;

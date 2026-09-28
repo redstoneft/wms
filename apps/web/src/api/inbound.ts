@@ -24,7 +24,7 @@ export const inboundApi = {
   undo: (body: { receipt_id: string; lpn_code: string; sku_code: string; qty: string; uom_code?: string; reason?: string }, key: string) => api.postIdem<ReceiveUndoResult>('/receipts/undo', body, key),
   closeLpn: (lpn_code: string, key: string) => api.postIdem<{ lpn_code: string; putaway_task: { id: string; suggested_location_id: string | null } | null }>('/receipts/lpn/close', { lpn_code }, key),
   /** receipt opened by mistake (nothing received): status CANCELLED, audited, number not reused */
-  cancel: (id: string, reason: string) => api.post<{ id: string; status: string }>(`/receipts/${id}/cancel`, { reason }),
+  cancel: (id: string, reason: string) => api.post<{ id: string; status: string; reverted?: { lpn: string; sku: string; qty: string; status: string; location: string | null }[]; incident_id?: string | null }>(`/receipts/${id}/cancel`, { reason }),
   complete: (body: { receipt_id: string; accept_differences: boolean; notes?: string }) =>
     api.post<{ receipt: Receipt; incidents: string[]; putaway_tasks: string[]; differences: { sku: string; expected: string; received: string }[] }>('/receipts/complete', body),
   close: (id: string) => api.post<Receipt>(`/receipts/${id}/close`),

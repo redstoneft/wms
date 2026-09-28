@@ -94,6 +94,10 @@ Lo suelto que se surte (piezas o cajas que no son tarima completa) cae en la **t
 
 En Armado, al escribir "para qué", se puede indicar **¿Es para un pedido?** con el número del pedido (también al confirmar un armado en dos tiempos). Las tarimas producidas nacen como tarimas de salida **ya surtidas para ese pedido** (sin tarea de acomodo), se les asigna el carril de staging y su etiqueta dice PEDIDO y carril. El sistema no deja producir para el pedido más de lo que pide: el sobrante se arma aparte, sin pedido, y va a existencia con acomodo.
 
+## CANCELAR UNA RECEPCIÓN CON TARIMAS (solo administrador)
+
+Cualquier usuario que cierra recepciones puede cancelar una recepción **vacía**. Una recepción que ya tiene tarimas la cancela solo el administrador (botón **Cancelar recepción** en la recepción, con motivo): el inventario de todas sus tarimas se revierte (movimiento RECEIPT_UNDO), las tarimas quedan canceladas (estén en el andén o ya acomodadas en rack) y se cancelan sus acomodos pendientes. Se rechaza si alguna tarima está asignada a un pedido, surtida o en traslado: primero hay que liberarla. Queda auditado y se abre una incidencia con el detalle. Permiso `receiving.cancel_received`, solo del rol ADMIN.
+
 ## AJUSTAR CANTIDADES DE UN PEDIDO YA SURTIDO (solo administrador)
 
 En oficina, en el pedido, botón **Ajustar cantidades**: se escribe la nueva cantidad requerida (en piezas) solo en las líneas que cambian, se pueden agregar productos, y se da el motivo. Si la nueva cantidad es menor a lo surtido, el sobrante sale de las tarimas de salida a una **tarima nueva de existencia** con tarea de acomodo (el surtidor la ubica con "Ubicar"). Si es mayor, la diferencia queda por asignar y surtir: el pedido regresa a PARCIALMENTE ASIGNADO y se asigna inventario y se crea la tarea de surtido como siempre. Cero elimina la línea (sus piezas regresan a existencia). Lo verificado se vuelve a verificar. Queda auditado con el motivo y se abre una incidencia. No aplica a pedidos cargados, embarcados o dentro de un embarque. Permiso `orders.adjust`, solo del rol ADMIN.
