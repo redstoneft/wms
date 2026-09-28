@@ -39,7 +39,8 @@ function describe(e: unknown): WmError {
     const d = e.details as Record<string, unknown> | undefined;
     let details = '';
     if (d && typeof d === 'object') {
-      if (typeof d.expected === 'string' || typeof d.scanned === 'string') details = `Esperado: ${String(d.expected ?? '?')} · Escaneado: ${String(d.scanned ?? '?')}`;
+      if (typeof d.remaining === 'string' && typeof d.scanned === 'string') details = `Faltan ${d.remaining} pzas · registraste ${d.scanned} pzas. Captura solo lo que falta (revisa piezas vs cajas).`;
+      else if (typeof d.expected === 'string' || typeof d.expected_lpn === 'string' || typeof d.scanned === 'string') details = `Esperado: ${String(d.expected ?? d.expected_lpn ?? '?')} · Escaneado: ${String(d.scanned ?? '?')}`;
       else if (typeof d.hint === 'string') details = d.hint;
       else if (Array.isArray(d.blocking_reasons)) details = (d.blocking_reasons as string[]).join('\n');
       else if (Array.isArray(d.reasons)) details = (d.reasons as string[]).join('\n');
