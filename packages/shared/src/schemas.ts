@@ -244,6 +244,8 @@ export const zCreateFloorBlocks = z.object({
   rows_direction: z.enum(['UP', 'DOWN']).default('UP'),
   /** positions grow along +x (default) or along -x (numbered from the entrance side) */
   cols_direction: z.enum(['RIGHT', 'LEFT']).default('RIGHT'),
+  /** pallets side by side across the block that get their own label (A01-1, A01-2…); the block depth is split among them */
+  positions_across: z.number().int().min(1).max(4).default(1),
 });
 export type CreateFloorBlocksInput = z.infer<typeof zCreateFloorBlocks>;
 export const zUpdateLocation = z.object({

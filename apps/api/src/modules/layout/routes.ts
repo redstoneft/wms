@@ -218,7 +218,9 @@ export async function layoutRoutes(app: FastifyInstance) {
       const out: { id: string; code: string; barcode: string; x_m: number; y_m: number }[] = [];
       const firstRow = body.first_row.charCodeAt(0) - 65;
       if (firstRow + body.rows > 26) throw new RuleError('TOO_MANY_ROWS', 'Row letters run past Z: start lower or use fewer rows');
-      const perLayer = body.pallets_per_layer ?? Math.max(1, Math.floor(body.block_width_m / 1.2) * Math.floor(body.block_depth_m / 1.2));
+      const across = body.positions_across;
+      const stripDepth = Math.round((body.block_depth_m / across) * 100) / 100;
+      const perLayer = body.pallets_per_layer ?? Math.max(1, Math.floor(body.block_width_m / 1.2) * Math.floor(stripDepth / 1.2));
       const capacity = body.pallet_capacity ?? perLayer * body.stack_levels;
       const height = body.pallet_capacity ? body.height_m : Math.max(body.height_m, body.stack_levels * 1.6);
       const stepX = body.block_width_m + body.gap_x_m;
@@ -229,10 +231,14 @@ export async function layoutRoutes(app: FastifyInstance) {
           const x = Math.round((body.cols_direction === 'RIGHT' ? body.x_m + c * stepX : body.x_m - (c + 1) * body.block_width_m - c * body.gap_x_m) * 100) / 100;
           const y = Math.round((body.rows_direction === 'UP' ? body.y_m + r * stepY : body.y_m - (r + 1) * body.block_depth_m - r * body.gap_y_m) * 100) / 100;
           if (y < 0 || x < 0 || x + body.block_width_m > Number(wh.width_m) + 0.01 || y + body.block_depth_m > Number(wh.depth_m) + 0.01) throw new RuleError('OUT_OF_BOUNDS', `Block ${code} falls outside the warehouse (${x}, ${y})`);
-          const clash = await tx.locations.findFirst({ where: { OR: [{ warehouse_id: wh.id, code }, { barcode: `LOC-${code}` }] }, select: { code: true } });
-          if (clash) throw new ConflictError('LOCATION_EXISTS', `Location ${code} already exists`);
-          const loc = await tx.locations.create({ data: { warehouse_id: wh.id, zone_id: body.zone_id ?? null, code, barcode: `LOC-${code}`, location_type: body.location_type, x_m: x, y_m: y, width_m: body.block_width_m, depth_m: body.block_depth_m, height_m: height, pallet_capacity: capacity, max_weight_kg: body.max_weight_kg } });
-          out.push({ id: loc.id, code: loc.code, barcode: loc.barcode, x_m: x, y_m: y });
+          for (let k = 0; k < across; k++) {
+            const kcode = across > 1 ? `${code}-${k + 1}` : code;
+            const ky = Math.round((y + k * stripDepth) * 100) / 100;
+            const clash = await tx.locations.findFirst({ where: { OR: [{ warehouse_id: wh.id, code: kcode }, { barcode: `LOC-${kcode}` }] }, select: { code: true } });
+            if (clash) throw new ConflictError('LOCATION_EXISTS', `Location ${kcode} already exists`);
+            const loc = await tx.locations.create({ data: { warehouse_id: wh.id, zone_id: body.zone_id ?? null, code: kcode, barcode: `LOC-${kcode}`, location_type: body.location_type, x_m: x, y_m: ky, width_m: body.block_width_m, depth_m: stripDepth, height_m: height, pallet_capacity: capacity, max_weight_kg: body.max_weight_kg } });
+            out.push({ id: loc.id, code: loc.code, barcode: loc.barcode, x_m: x, y_m: ky });
+          }
         }
       }
       await audit(tx, req.actor!, { action: 'location.floor_blocks', entity_type: 'warehouse', entity_id: wh.id, after: { prefix: body.prefix, rows: body.rows, cols: body.cols, capacity, stack_levels: body.stack_levels, codes: out.map((o) => o.code) } });
