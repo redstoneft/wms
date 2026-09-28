@@ -39,7 +39,7 @@ export interface AssemblyOrder {
   for_order?: { id: string; order_number: string; status: string; staging_assignments: { location: { code: string } }[] } | null;
   outputs: { id: string; cases: number; pieces_per_case: number; partial_pieces?: number; defective_qty?: string; qty: string; putaway_task_id: string | null; lpn: { code: string; status: string }; location?: string | null; suggested_location?: string | null; putaway_status?: string | null }[];
 }
-export interface AssemblyResult extends AssemblyOrder {
+export interface AssemblyResult extends Omit<AssemblyOrder, 'for_order'> {
   consumed: { lpn: string; sku: string; qty: string; lpn_status: string }[];
   produced: { lpn: string; cases: number; pieces_per_case: number; partial_pieces?: number; defective?: number; qty: string; putaway_task_id: string | null; suggested_location: string | null }[];
   warnings: string[];
