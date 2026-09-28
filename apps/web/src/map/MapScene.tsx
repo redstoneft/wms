@@ -435,7 +435,7 @@ function Pallets({ model, visible, highlight, selectedId, far, onHover, onSelect
 }
 
 // ---------------------------------------------------------------- areas
-function Areas({ model, visible, highlight, selectedId, far, editMode, drag, onHover, onSelect, onAreaDragStart }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'far' | 'editMode' | 'onHover' | 'onSelect'> & { drag: RackDrag | null; onAreaDragStart: (locId: string, e: ThreeEvent<PointerEvent>) => void }) {
+function Areas({ model, visible, highlight, selectedId, editMode, drag, onHover, onSelect, onAreaDragStart }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'editMode' | 'onHover' | 'onSelect'> & { drag: RackDrag | null; onAreaDragStart: (locId: string, e: ThreeEvent<PointerEvent>) => void }) {
   return (
     <group>
       {model.areas.map((a) => {
@@ -468,9 +468,9 @@ function Areas({ model, visible, highlight, selectedId, far, editMode, drag, onH
               <edgesGeometry args={[new THREE.BoxGeometry(...a.size)]} />
               <lineBasicMaterial color="#334155" />
             </lineSegments>
-            {/* floor blocks: a small tag with the short code, only when the camera is close (the full labels hid everything else) */}
+            {/* floor blocks: no permanent tag (they hid everything else); the code shows on hover and when selected */}
             {isFloorBlock(a.loc) ? (
-              !far && (
+              a.loc.id === selectedId && (
                 <Html position={[0, 0.3, 0]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
                   <div className="whitespace-nowrap rounded bg-white/70 px-1 text-[9px] font-bold text-slate-700" style={{ opacity: hidden ? 0.3 : 0.9 }}>
                     {a.loc.code.replace(/^.*-(?=[A-Z]\d{2}$)/, '')}
