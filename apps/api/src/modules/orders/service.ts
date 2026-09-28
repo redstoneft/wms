@@ -375,7 +375,7 @@ export async function adjustOrderLines(tx: Tx, ctx: ActorContext, input: { order
   for (const inp of input.lines) {
     const sku = await getSkuByCode(tx, inp.sku_code);
     const { base: newReq } = await toBaseQty(tx, sku.id, inp.qty, inp.uom_code);
-    let line = lines.find((l) => l.sku_id === sku.id) ?? null;
+    const line = lines.find((l) => l.sku_id === sku.id) ?? null;
     if (!line) {
       if (newReq <= 0n) continue;
       const created = await tx.order_lines.create({ data: { order_id: o.id, line_no: ++maxLine, sku_id: sku.id, required_qty: newReq, uom_code: inp.uom_code, uom_qty: inp.qty }, include: { sku: true } });
