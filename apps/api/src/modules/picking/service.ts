@@ -524,9 +524,9 @@ export async function returnPickedToSource(tx: Tx, ctx: ActorContext, orderId: s
 
 /**
  * Returns picked goods of an order to stock (used on cancellation): every piece goes back to the pallet and position it
- * came from (returnPickedToSource); whole pallets converted in place become storage pallets again and only get a
- * put-away task when they are no longer in their original position (the suggestion prefers that position). Whatever
- * cannot be traced stays on the outbound pallet as a storage pallet with a put-away task. Full traceability is preserved.
+ * came from (returnPickedToSource); whole pallets converted in place become storage pallets again in their original
+ * position (moved back in the system even from staging; a put-away task only when that position is gone or taken).
+ * Whatever cannot be traced stays on the outbound pallet as a storage pallet with a put-away task. Full traceability is preserved.
  */
 export async function unpickOrder(tx: Tx, ctx: ActorContext, orderId: string, reason: string) {
   const lines = await tx.order_lines.findMany({ where: { order_id: orderId } });
@@ -542,11 +542,23 @@ export async function unpickOrder(tx: Tx, ctx: ActorContext, orderId: string, re
   const lpns = await tx.lpns.findMany({ where: { order_id: orderId, status: { in: ['PICKING', 'STAGED'] } } });
   for (const l of lpns) {
     const lpn = await lockLpn(tx, l.id);
-    const balances = await lockBalances(tx, lpn.id);
-    let any = false;
+    const balances = (await lockBalances(tx, lpn.id)).filter((b) => b.qty > 0n && (b.status === 'PICKING' || b.status === 'STAGING'));
+    if (balances.length === 0) {
+      await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'CONSUMED', order_id: null, version: { increment: 1 } } });
+      continue;
+    }
+    // whole pallet picked in place: as if it had never been picked, it goes back to the position the PICK took it from
+    // (in the system; the label already names that position). Only when that position is gone or taken does it get a put-away task.
+    const origin = await tx.inventory_movements.findFirst({ where: { order_id: orderId, movement_type: 'PICK', from_lpn_id: lpn.id, to_lpn_id: lpn.id }, orderBy: { occurred_at: 'asc' }, select: { from_location_id: true } });
+    let target = lpn.current_location_id;
+    let needsPutaway = false;
+    if (origin?.from_location_id && origin.from_location_id !== lpn.current_location_id) {
+      const orig = await tx.locations.findUnique({ where: { id: origin.from_location_id }, select: { id: true, is_active: true, admin_status: true, pallet_capacity: true } });
+      const occupied = orig ? await tx.lpns.count({ where: { current_location_id: orig.id, status: { in: ['STORED', 'OPEN'] }, id: { not: lpn.id } } }) : 0;
+      if (orig && orig.is_active && orig.admin_status === 'ACTIVE' && occupied < orig.pallet_capacity) target = orig.id;
+      else needsPutaway = true;
+    }
     for (const b of balances) {
-      if (b.qty <= 0n || (b.status !== 'PICKING' && b.status !== 'STAGING')) continue;
-      any = true;
       await recordMovement(tx, ctx, {
         movement_type: 'UNPICK',
         sku_id: b.sku_id,
@@ -554,31 +566,18 @@ export async function unpickOrder(tx: Tx, ctx: ActorContext, orderId: string, re
         from_lpn_id: lpn.id,
         to_lpn_id: lpn.id,
         from_location_id: lpn.current_location_id,
-        to_location_id: lpn.current_location_id,
+        to_location_id: target,
         from_status: b.status,
         to_status: 'AVAILABLE',
         order_id: orderId,
         reason,
+        note: target !== lpn.current_location_id ? 'Regresa a su posición original' : undefined,
         idempotency_suffix: `UNPICK:${lpn.id}:${b.sku_id}:${b.status}`,
       });
       await dec(b.sku_id, b.qty);
     }
-    if (!any) {
-      await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'CONSUMED', order_id: null, version: { increment: 1 } } });
-      continue;
-    }
     await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'STORED', lpn_type: 'STORAGE', order_id: null, destination: null, version: { increment: 1 } } });
-    // whole pallet picked in place: its original position is where the PICK took it from
-    const origin = await tx.inventory_movements.findFirst({ where: { order_id: orderId, movement_type: 'PICK', from_lpn_id: lpn.id, to_lpn_id: lpn.id }, orderBy: { occurred_at: 'asc' }, select: { from_location_id: true } });
-    if (origin?.from_location_id && origin.from_location_id === lpn.current_location_id) continue; // never moved: nothing to do
-    const task = await createPutawayTask(tx, ctx, { ...lpn, status: 'STORED' }, { allowStoredLocation: true });
-    if (origin?.from_location_id && task.suggested_location_id !== origin.from_location_id) {
-      const orig = await tx.locations.findUnique({ where: { id: origin.from_location_id }, select: { id: true, code: true, is_active: true, admin_status: true, pallet_capacity: true } });
-      const occupied = orig ? await tx.lpns.count({ where: { current_location_id: orig.id, status: { in: ['STORED', 'OPEN'] }, id: { not: lpn.id } } }) : 0;
-      if (orig && orig.is_active && orig.admin_status === 'ACTIVE' && occupied < orig.pallet_capacity) {
-        await tx.putaway_tasks.update({ where: { id: task.id }, data: { suggested_location_id: orig.id, explanation: { note: `Regresa a su posición original ${orig.code} (cancelación del pedido)` } } });
-      }
-    }
+    if (needsPutaway) await createPutawayTask(tx, ctx, { ...lpn, status: 'STORED' }, { allowStoredLocation: true });
   }
   await tx.allocations.updateMany({ where: { order_line: { order_id: orderId }, status: 'PICKED' }, data: { status: 'RELEASED' } });
   return { lpns: lpns.length, returned: back };
