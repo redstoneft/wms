@@ -242,6 +242,8 @@ export const zCreateFloorBlocks = z.object({
   first_col: z.number().int().min(1).max(999).default(1),
   /** rows grow away from the origin along +y (default) or along -y (grid drawn from its far edge) */
   rows_direction: z.enum(['UP', 'DOWN']).default('UP'),
+  /** positions grow along +x (default) or along -x (numbered from the entrance side) */
+  cols_direction: z.enum(['RIGHT', 'LEFT']).default('RIGHT'),
 });
 export type CreateFloorBlocksInput = z.infer<typeof zCreateFloorBlocks>;
 export const zUpdateLocation = z.object({
