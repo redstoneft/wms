@@ -276,16 +276,16 @@ describe('orders: cancellation during picking, partial allocation, short pick', 
     const c = await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cliente canceló' });
     expect(c.status, JSON.stringify(c.body)).toBe(200);
     expect(await skuTotal(f.skus[2]!.id)).toBe(before); // nothing lost
-    // source pallet: everything not picked is AVAILABLE again; picked units live on the (now storage) outbound pallet, AVAILABLE, with a put-away task
-    const src = await sql<{ status: string; qty: bigint }>(`SELECT b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${line.lpn_code}' ORDER BY b.status`);
-    expect(src.reduce((a, r) => a + r.qty, 0n)).toBe(srcBefore[0]!.t - 12n);
+    // source pallet: the picked units are back on it, in its position, AVAILABLE; the outbound pallet is empty and consumed
+    const src = await sql<{ status: string; qty: bigint }>(`SELECT b.status, sum(b.qty)::bigint AS qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${line.lpn_code}' AND b.qty > 0 GROUP BY b.status ORDER BY b.status`);
+    expect(src.reduce((a, r) => a + r.qty, 0n)).toBe(srcBefore[0]!.t);
     expect(src.some((r) => r.status === 'PICKING')).toBe(false);
     const srcAvail = src.find((r) => r.status === 'AVAILABLE')!.qty;
-    expect(srcAvail).toBeGreaterThanOrEqual(srcBefore[0]!.t - 12n - 6n); // other tests may hold an allocation on this shared pallet
-    const out = await sql<{ status: string; qty: bigint; lpn_status: string; lpn_type: string }>(`SELECT b.status, b.qty, l.status AS lpn_status, l.lpn_type FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${outbound}'`);
-    expect(out).toEqual([{ status: 'AVAILABLE', qty: 12n, lpn_status: 'STORED', lpn_type: 'STORAGE' }]);
-    const task = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM putaway_tasks t JOIN lpns l ON l.id = t.lpn_id WHERE l.code = '${outbound}' AND t.status = 'PENDING'`);
-    expect(task[0]!.n).toBe(1n);
+    expect(srcAvail).toBeGreaterThanOrEqual(srcBefore[0]!.t - 6n); // other tests may hold an allocation on this shared pallet
+    const out = await sql<{ status: string; n: bigint }>(`SELECT l.status, (SELECT count(*) FROM inventory_balances b WHERE b.lpn_id = l.id AND b.qty > 0) AS n FROM lpns l WHERE l.code = '${outbound}'`);
+    expect(out).toEqual([{ status: 'CONSUMED', n: 0n }]);
+    const task = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM putaway_tasks t JOIN lpns l ON l.id = t.lpn_id WHERE l.code IN ('${outbound}', '${line.lpn_code}') AND t.status = 'PENDING'`);
+    expect(task[0]!.n).toBe(0n);
     const allocs = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id WHERE ol.order_id = '${o.body.id}' AND a.status = 'ACTIVE'`);
     expect(allocs[0]!.n).toBe(0n);
     const od = await sup.get(`/orders/${o.body.id}`);

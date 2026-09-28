@@ -50,9 +50,9 @@ describe('adjusting a picked order', () => {
     const c1 = r.body.changes.find((c: { sku: string }) => c.sku === f.skus[1]!.code);
     expect(c1).toMatchObject({ before: '20', after: '26', returned_to_stock: '0', to_pick: '6' });
     expect(r.body.changes.find((c: { sku: string }) => c.sku === f.skus[2]!.code)).toMatchObject({ before: '0', after: '5', to_pick: '5' });
-    // the returned pieces sit on a new stored pallet with a put-away task; the total stock of sku0 is unchanged
-    const nl = await sql<{ status: string; lpn_type: string; qty: bigint; bstatus: string; task: string | null }>(`SELECT l.status, l.lpn_type, b.qty, b.status AS bstatus, (SELECT status FROM putaway_tasks t WHERE t.lpn_id = l.id LIMIT 1) AS task FROM lpns l JOIN inventory_balances b ON b.lpn_id = l.id WHERE l.code = '${c0.new_lpns[0]}'`);
-    expect(nl[0]).toEqual({ status: 'STORED', lpn_type: 'STORAGE', qty: 12n, bstatus: 'AVAILABLE', task: 'PENDING' });
+    // the returned pieces go back to the pallet they were picked from, in its position (no new pallet, no put-away); stock unchanged
+    const src = await sql<{ code: string; status: string; loc: string; qty: bigint; tasks: bigint }>(`SELECT l.code, l.status, loc.code AS loc, (SELECT sum(qty)::bigint FROM inventory_balances b WHERE b.lpn_id = l.id AND b.status = 'AVAILABLE') AS qty, (SELECT count(*)::bigint FROM putaway_tasks t WHERE t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')) AS tasks FROM lpns l JOIN locations loc ON loc.id = l.current_location_id WHERE l.code = '${c0.new_lpns[0]}'`);
+    expect(src[0]).toMatchObject({ status: 'STORED', loc: f.reserve[0]!.code, qty: 82n, tasks: 0n });
     expect(await skuTotal(f.skus[0]!.id)).toBe(total0);
     const lines = await sql<{ required_qty: bigint; picked_qty: bigint; allocated_qty: bigint }>(`SELECT required_qty, picked_qty, allocated_qty FROM order_lines WHERE order_id = '${o.body.id}' ORDER BY line_no`);
     expect(lines).toEqual([{ required_qty: 18n, picked_qty: 18n, allocated_qty: 0n }, { required_qty: 26n, picked_qty: 20n, allocated_qty: 0n }, { required_qty: 5n, picked_qty: 0n, allocated_qty: 0n }]);

@@ -9,7 +9,7 @@ import { createPutawayTask } from '../putaway/service.js';
 import { consumeAuthorization } from '../authorizations/routes.js';
 import { getSettings } from '../settings/routes.js';
 import { createIncident } from '../incidents/service.js';
-import { unpickOrder } from '../picking/service.js';
+import { returnPickedToSource, unpickOrder } from '../picking/service.js';
 
 export interface CreateOrderInput {
   order_number: string;
@@ -390,13 +390,18 @@ export async function adjustOrderLines(tx: Tx, ctx: ActorContext, input: { order
     const change = { sku: sku.code, before: line.required_qty.toString(), after: newReq.toString(), returned_to_stock: '0', new_lpns: [] as string[], released_allocation: '0', to_pick: '0' };
     let picked = line.picked_qty;
     if (newReq < picked) {
-      // excess picked pieces go back to stock, newest outbound pallets first
+      // excess picked pieces go back to the pallets and positions they came from; what cannot be traced goes to a new pallet
       let excess = picked - newReq;
+      let returned = 0n;
+      for (const r of await returnPickedToSource(tx, ctx, o.id, input.reason, { sku_id: sku.id, qty: excess })) {
+        returned += BigInt(r.qty);
+        excess -= BigInt(r.qty);
+        change.new_lpns.push(r.to_lpn);
+      }
       const outbound = await tx.$queryRaw<{ lpn_id: string; status: string; qty: bigint }[]>`
         SELECT b.lpn_id, b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id
          WHERE l.order_id = ${o.id}::uuid AND b.sku_id = ${sku.id}::uuid AND b.qty > 0 AND b.status IN ('PICKING','STAGING') AND l.status IN ('PICKING','STAGED')
          ORDER BY l.created_at DESC`;
-      let returned = 0n;
       for (const row of outbound) {
         if (excess <= 0n) break;
         const take = row.qty < excess ? row.qty : excess;
