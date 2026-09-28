@@ -3,7 +3,7 @@
 // API z (height, m) → Three y. Rack positions have their CENTER at (x, y) and
 // base height z; area locations (docks, staging…) use their CORNER at (x, y).
 import type { LocationStatus, LocationType } from '@wms/shared';
-import type { MapLocation, MapPayload, MapRack } from '../api/types';
+import type { MapLocation, MapLpn, MapPayload, MapRack } from '../api/types';
 
 export const STATUS_COLORS: Record<LocationStatus, string> = {
   FREE: '#b7c4cf',
@@ -40,6 +40,14 @@ export interface PalletInstance {
   center: Vec3; // center of the whole pallet (base + load)
   size: Vec3; // footprint w, total height, d
   fill: number; // 0..1 relative fill used to scale the load
+  /** product colour (from the SKU): the load is painted with it */
+  color?: string | null;
+  lpn?: string;
+  sku?: string | null;
+}
+/** Floor blocks: storage locations without rack (RESERVE/PICKING areas) — labelled discreetly, pallets drawn stacked. */
+export function isFloorBlock(loc: MapLocation): boolean {
+  return !loc.rack_id && (loc.location_type === 'RESERVE' || loc.location_type === 'PICKING');
 }
 export interface AreaInstance {
   loc: MapLocation;
@@ -92,17 +100,25 @@ export function buildSceneModel(p: MapPayload): SceneModel {
   const palletIndicesByLoc = new Map<string, number[]>();
   const locById = new Map<string, MapLocation>();
 
+  const lpnsByLoc = new Map<string, MapLpn[]>();
+  for (const l of p.lpns ?? []) {
+    const arr = lpnsByLoc.get(l.location_id);
+    if (arr) arr.push(l);
+    else lpnsByLoc.set(l.location_id, [l]);
+  }
   for (const loc of p.locations) {
     locById.set(loc.id, loc);
     if (isArea(loc)) {
       areas.push({ loc, center: [loc.x + loc.w / 2, 0.05, loc.y + loc.d / 2], size: [loc.w, 0.1, loc.d] });
-      if (loc.lpn_count > 0) {
-        // pallets laid out in a grid inside the area footprint
+      const here = lpnsByLoc.get(loc.id) ?? [];
+      const count = here.length || loc.lpn_count;
+      if (count > 0) {
+        // pallets laid out in a grid inside the area footprint, stacked when the floor is full (floor blocks)
         const pw = 1.1;
-        const cols = Math.max(1, Math.floor(loc.w / (pw + 0.2)));
-        const rows = Math.max(1, Math.floor(loc.d / (pw + 0.2)));
+        const cols = Math.max(1, Math.floor(loc.w / (pw + 0.1)));
+        const rows = Math.max(1, Math.floor(loc.d / (pw + 0.1)));
         const perLayer = cols * rows;
-        const n = Math.min(loc.lpn_count, perLayer * 3);
+        const n = Math.min(count, perLayer * 6);
         const idxs: number[] = [];
         for (let i = 0; i < n; i++) {
           const layer = Math.floor(i / perLayer);
@@ -110,10 +126,11 @@ export function buildSceneModel(p: MapPayload): SceneModel {
           const c = k % cols;
           const r = Math.floor(k / cols);
           const ph = 1.2;
-          const x = loc.x + 0.15 + (pw + 0.2) * c + pw / 2;
-          const z = loc.y + 0.15 + (pw + 0.2) * r + pw / 2;
+          const x = loc.x + 0.1 + (pw + 0.1) * c + pw / 2;
+          const z = loc.y + 0.1 + (pw + 0.1) * r + pw / 2;
+          const l = here[i];
           idxs.push(pallets.length);
-          pallets.push({ locId: loc.id, status: loc.status, center: [x, 0.1 + layer * ph + ph / 2, z], size: [pw, ph, pw], fill: 1 });
+          pallets.push({ locId: loc.id, status: loc.status, center: [x, 0.1 + layer * ph + ph / 2, z], size: [pw, ph, pw], fill: 1, color: l?.color ?? null, lpn: l?.lpn, sku: l?.sku ?? null });
         }
         palletIndicesByLoc.set(loc.id, idxs);
       }
@@ -128,8 +145,9 @@ export function buildSceneModel(p: MapPayload): SceneModel {
     if (loc.lpn_count > 0) {
       const fill = Math.max(0.35, Math.min(1, loc.pallet_capacity > 0 ? loc.lpn_count / loc.pallet_capacity : 1));
       const ph = Math.max(0.5, (loc.h - 0.15) * 0.85 * fill);
+      const first = lpnsByLoc.get(loc.id)?.[0];
       palletIndicesByLoc.set(loc.id, [pallets.length]);
-      pallets.push({ locId: loc.id, status: loc.status, center: [loc.x, loc.z + ph / 2, loc.y], size: [w * 0.9, ph, d * 0.9], fill });
+      pallets.push({ locId: loc.id, status: loc.status, center: [loc.x, loc.z + ph / 2, loc.y], size: [w * 0.9, ph, d * 0.9], fill, color: first?.color ?? null, lpn: first?.lpn, sku: first?.sku ?? null });
     }
   }
 

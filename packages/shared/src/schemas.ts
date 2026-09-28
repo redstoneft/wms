@@ -93,6 +93,8 @@ export const zCreateSku = z.object({
   pallet_height_cm: z.number().positive().max(10000).optional(),
   requires_lot: z.boolean().default(false),
   requires_expiry: z.boolean().default(false),
+  /** colour of the product on the 3D map (hex); empty = derived from the name */
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
   uoms: z.array(zSkuUom).default([]),
   barcodes: z.array(z.object({ barcode: zBarcode, uom_code: zUom.default('PIECE') })).default([]),
 });
@@ -227,7 +229,12 @@ export const zCreateFloorBlocks = z.object({
   gap_x_m: z.number().min(0).max(20).default(0),
   gap_y_m: z.number().min(0).max(20).default(0),
   height_m: z.number().positive().max(30).default(3),
-  pallet_capacity: z.number().int().min(1).max(500),
+  /** pallets per block = pallets that fit on the floor × stack levels (given directly, or computed from stack_levels) */
+  pallet_capacity: z.number().int().min(1).max(500).optional(),
+  /** how many pallets high the block is stacked (1 = no stacking) */
+  stack_levels: z.number().int().min(1).max(6).default(2),
+  /** pallets side by side on the floor of one block (default: fitted from the block size, 1.2 m per pallet) */
+  pallets_per_layer: z.number().int().min(1).max(100).optional(),
   max_weight_kg: z.number().positive().max(1000000).default(20000),
   location_type: z.enum(['RESERVE', 'PICKING']).default('RESERVE'),
   /** first row letter (A) and first column number (1) let a second grid continue the numbering */

@@ -1,7 +1,7 @@
 // /masterdata — SKUs (UoMs + barcodes), customers, suppliers, carriers, printers, quarantine reasons.
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { UomCode } from '@wms/shared';
+import { productColor, type UomCode } from '@wms/shared';
 import { masterdataApi } from '../api/masterdata';
 import type { Party, Printer, Sku } from '../api/types';
 import { fmtDateTime } from '../lib/format';
@@ -94,6 +94,7 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
         description: f.description,
         ...(f.isNew ? {} : { description_locked: f.description_locked ?? undefined }),
         family: f.family || undefined,
+        color: f.color || null,
         compatibility_group: f.compatibility_group || undefined,
         abc_class: f.abc_class,
         unit_weight_kg: Number(f.unit_weight_kg ?? 0),
@@ -133,6 +134,13 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
           <Checkbox label="Conservar este nombre aunque SAE mande otro" checked={!!f.description_locked} onChange={(e) => setF({ ...f, description_locked: e.target.checked })} />
         )}
         <Field label="Familia"><Input value={f.family ?? ''} onChange={(e) => setF({ ...f, family: e.target.value })} /></Field>
+        <Field label="Color en el mapa 3D (vacío = se toma del nombre: ROSA, AZUL, NEGRO…)">
+          <div className="flex items-center gap-2">
+            <input type="color" value={f.color ?? productColor(f.code ?? '', f.description)} onChange={(e) => setF({ ...f, color: e.target.value })} className="h-9 w-14 cursor-pointer rounded border border-slate-300" />
+            <span className="font-mono text-xs text-slate-500">{f.color ?? `auto ${productColor(f.code ?? '', f.description)}`}</span>
+            {f.color && <Button variant="secondary" onClick={() => setF({ ...f, color: null })}>Automático</Button>}
+          </div>
+        </Field>
         <Field label="Grupo de compatibilidad"><Input value={f.compatibility_group ?? ''} onChange={(e) => setF({ ...f, compatibility_group: e.target.value })} /></Field>
         <Field label="Clase ABC"><Select value={f.abc_class ?? 'C'} onChange={(e) => setF({ ...f, abc_class: e.target.value })}><option>A</option><option>B</option><option>C</option></Select></Field>
         <Field label="Peso unitario (kg)"><Input type="number" step="0.001" value={String(f.unit_weight_kg ?? '')} onChange={(e) => setF({ ...f, unit_weight_kg: e.target.value })} /></Field>

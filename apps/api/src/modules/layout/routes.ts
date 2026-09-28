@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { Prisma } from '../../generated/prisma/client.js';
 import { z } from 'zod';
-import { zCreateAisle, zCreateAreaLocation, zCreateFloorBlocks, zCreateRack, zCreateZone, zUpdateLocation, zUpdateRack, zUpdateZone, zUuid, zWarehouseFeatures } from '@wms/shared';
+import { productColor, zCreateAisle, zCreateAreaLocation, zCreateFloorBlocks, zCreateRack, zCreateZone, zUpdateLocation, zUpdateRack, zUpdateZone, zUuid, zWarehouseFeatures } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
@@ -218,6 +218,9 @@ export async function layoutRoutes(app: FastifyInstance) {
       const out: { id: string; code: string; barcode: string; x_m: number; y_m: number }[] = [];
       const firstRow = body.first_row.charCodeAt(0) - 65;
       if (firstRow + body.rows > 26) throw new RuleError('TOO_MANY_ROWS', 'Row letters run past Z: start lower or use fewer rows');
+      const perLayer = body.pallets_per_layer ?? Math.max(1, Math.floor(body.block_width_m / 1.2) * Math.floor(body.block_depth_m / 1.2));
+      const capacity = body.pallet_capacity ?? perLayer * body.stack_levels;
+      const height = body.pallet_capacity ? body.height_m : Math.max(body.height_m, body.stack_levels * 1.6);
       const stepX = body.block_width_m + body.gap_x_m;
       const stepY = body.block_depth_m + body.gap_y_m;
       for (let r = 0; r < body.rows; r++) {
@@ -228,15 +231,15 @@ export async function layoutRoutes(app: FastifyInstance) {
           if (y < 0 || x + body.block_width_m > Number(wh.width_m) + 0.01 || y + body.block_depth_m > Number(wh.depth_m) + 0.01) throw new RuleError('OUT_OF_BOUNDS', `Block ${code} falls outside the warehouse (${x}, ${y})`);
           const clash = await tx.locations.findFirst({ where: { OR: [{ warehouse_id: wh.id, code }, { barcode: `LOC-${code}` }] }, select: { code: true } });
           if (clash) throw new ConflictError('LOCATION_EXISTS', `Location ${code} already exists`);
-          const loc = await tx.locations.create({ data: { warehouse_id: wh.id, zone_id: body.zone_id ?? null, code, barcode: `LOC-${code}`, location_type: body.location_type, x_m: x, y_m: y, width_m: body.block_width_m, depth_m: body.block_depth_m, height_m: body.height_m, pallet_capacity: body.pallet_capacity, max_weight_kg: body.max_weight_kg } });
+          const loc = await tx.locations.create({ data: { warehouse_id: wh.id, zone_id: body.zone_id ?? null, code, barcode: `LOC-${code}`, location_type: body.location_type, x_m: x, y_m: y, width_m: body.block_width_m, depth_m: body.block_depth_m, height_m: height, pallet_capacity: capacity, max_weight_kg: body.max_weight_kg } });
           out.push({ id: loc.id, code: loc.code, barcode: loc.barcode, x_m: x, y_m: y });
         }
       }
-      await audit(tx, req.actor!, { action: 'location.floor_blocks', entity_type: 'warehouse', entity_id: wh.id, after: { prefix: body.prefix, rows: body.rows, cols: body.cols, capacity: body.pallet_capacity, codes: out.map((o) => o.code) } });
+      await audit(tx, req.actor!, { action: 'location.floor_blocks', entity_type: 'warehouse', entity_id: wh.id, after: { prefix: body.prefix, rows: body.rows, cols: body.cols, capacity, stack_levels: body.stack_levels, codes: out.map((o) => o.code) } });
       return out;
     });
     reply.status(201);
-    return { created: created.length, locations: created };
+    return { created: created.length, pallet_capacity: created.length ? (await db.locations.findUnique({ where: { id: created[0]!.id }, select: { pallet_capacity: true } }))?.pallet_capacity : null, locations: created };
   });
 
   app.patch('/locations/:id', { preHandler: manage }, async (req) => {
@@ -288,6 +291,16 @@ export async function layoutRoutes(app: FastifyInstance) {
         SELECT 'warehouse', l.warehouse_id::text, count(*), count(*) FILTER (WHERE o.status IN ('OCCUPIED','PARTIAL'))
           FROM locations l JOIN v_location_occupancy o ON o.location_id = l.id WHERE l.warehouse_id = ${wh.id}::uuid AND l.is_active GROUP BY l.warehouse_id`,
     ]);
+    // every pallet in the building with what it mainly holds: the map draws it in the product's colour
+    const lpnRows = await db.$queryRaw<{ location_id: string; lpn: string; status: string; sku: string | null; description: string | null; color: string | null; qty: bigint | null; skus: bigint }[]>`
+      SELECT l.current_location_id AS location_id, l.code AS lpn, l.status,
+             m.code AS sku, m.description, m.color, m.qty, COALESCE(c.n, 0)::bigint AS skus
+        FROM lpns l
+        LEFT JOIN LATERAL (SELECT s.code, s.description, s.color, b.qty FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = l.id AND b.qty > 0 ORDER BY b.qty DESC LIMIT 1) m ON true
+        LEFT JOIN LATERAL (SELECT count(DISTINCT b.sku_id) AS n FROM inventory_balances b WHERE b.lpn_id = l.id AND b.qty > 0) c ON true
+       WHERE l.warehouse_id = ${wh.id}::uuid AND l.current_location_id IS NOT NULL AND l.status NOT IN ('SHIPPED','CANCELLED','CONSUMED')
+       ORDER BY l.current_location_id, l.created_at`;
+    const lpns = lpnRows.map((r) => ({ location_id: r.location_id, lpn: r.lpn, status: r.status, sku: r.sku, description: r.description, qty: r.qty === null ? '0' : r.qty.toString(), skus: Number(r.skus), color: r.sku ? productColor(r.sku, r.description, r.color) : null }));
     const num = (v: unknown) => Number(v);
     return {
       warehouse: { ...wh, width_m: num(wh.width_m), depth_m: num(wh.depth_m), height_m: num(wh.height_m) },
@@ -310,6 +323,7 @@ export async function layoutRoutes(app: FastifyInstance) {
         rotation_deg: r.rotation_deg,
       })),
       locations,
+      lpns,
       occupancy: occupancy.map((o) => ({ scope: o.scope, id: o.id, total: Number(o.total), occupied: Number(o.occupied), pct: o.total ? Math.round((Number(o.occupied) / Number(o.total)) * 1000) / 10 : 0 })),
       generated_at: new Date().toISOString(),
     };

@@ -321,6 +321,7 @@ model skus {
   description        String   @db.VarChar(300)
   description_locked Boolean  @default(false) // edited by hand in the WMS: the SAE sync must not overwrite it
   family             String?  @db.VarChar(60)
+  color              String?  @db.VarChar(20) // product colour on the 3D map (hex); null = derived from the name
   compatibility_group String? @db.VarChar(60) // SKUs in different incompatible groups never share a location
   abc_class          String   @default("C") @db.VarChar(1)
   base_uom           String   @default("PIECE") @db.VarChar(10)

@@ -4,3 +4,4 @@ export * from './schemas.js';
 export * from './permissions.js';
 export * from './release.js';
 export * from './labels.js';
+export * from './colors.js';

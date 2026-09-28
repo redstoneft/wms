@@ -7,7 +7,7 @@ import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { Warehouse, WarehouseFeatures, Zone } from '../api/types';
-import { HIGHLIGHT_COLOR, PALLET_BASE_COLOR, PALLET_LOAD_COLOR, SELECT_COLOR, STATUS_COLORS, type FrameInstance, type SceneModel, type Vec3 } from './mapModel';
+import { HIGHLIGHT_COLOR, isFloorBlock, PALLET_BASE_COLOR, PALLET_LOAD_COLOR, SELECT_COLOR, STATUS_COLORS, type FrameInstance, type SceneModel, type Vec3 } from './mapModel';
 
 export interface FlyTarget {
   seq: number;
@@ -380,13 +380,13 @@ function Pallets({ model, visible, highlight, selectedId, far, onHover, onSelect
         }
         tmpColor.set(sel ? SELECT_COLOR : hl ? HIGHLIGHT_COLOR : PALLET_BASE_COLOR);
         b.setColorAt(i, tmpColor);
-        tmpColor.set(sel ? SELECT_COLOR : hl ? HIGHLIGHT_COLOR : PALLET_LOAD_COLOR);
+        tmpColor.set(sel ? SELECT_COLOR : hl ? HIGHLIGHT_COLOR : p.color ?? PALLET_LOAD_COLOR);
         l.setColorAt(i, tmpColor);
       }
       if (s) {
         if (show && far) setInstance(s, i, p.center, p.size);
         else s.setMatrixAt(i, ZERO);
-        tmpColor.set(sel ? SELECT_COLOR : hl ? HIGHLIGHT_COLOR : STATUS_COLORS[p.status] ?? '#3b82f6');
+        tmpColor.set(sel ? SELECT_COLOR : hl ? HIGHLIGHT_COLOR : p.color ?? STATUS_COLORS[p.status] ?? '#3b82f6');
         s.setColorAt(i, tmpColor);
       }
     });
@@ -432,7 +432,7 @@ function Pallets({ model, visible, highlight, selectedId, far, onHover, onSelect
 }
 
 // ---------------------------------------------------------------- areas
-function Areas({ model, visible, highlight, selectedId, onHover, onSelect }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'onHover' | 'onSelect'>) {
+function Areas({ model, visible, highlight, selectedId, far, onHover, onSelect }: Pick<MapSceneProps, 'model' | 'visible' | 'highlight' | 'selectedId' | 'far' | 'onHover' | 'onSelect'>) {
   return (
     <group>
       {model.areas.map((a) => {
@@ -458,14 +458,26 @@ function Areas({ model, visible, highlight, selectedId, onHover, onSelect }: Pic
               <edgesGeometry args={[new THREE.BoxGeometry(...a.size)]} />
               <lineBasicMaterial color="#334155" />
             </lineSegments>
-            <Html position={[0, 0.4, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
-              <div className="whitespace-nowrap rounded bg-white/90 px-1.5 py-0.5 text-[11px] font-bold text-slate-800 shadow" style={{ opacity: hidden ? 0.4 : 1 }}>
-                {a.loc.code}
-                <span className="ml-1 font-normal text-slate-500">
-                  {a.loc.lpn_count}/{a.loc.pallet_capacity}
-                </span>
-              </div>
-            </Html>
+            {/* floor blocks: a small tag with the short code, only when the camera is close (the full labels hid everything else) */}
+            {isFloorBlock(a.loc) ? (
+              !far && (
+                <Html position={[0, 0.3, 0]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
+                  <div className="whitespace-nowrap rounded bg-white/70 px-1 text-[9px] font-bold text-slate-700" style={{ opacity: hidden ? 0.3 : 0.9 }}>
+                    {a.loc.code.replace(/^.*-(?=[A-Z]\d{2}$)/, '')}
+                    <span className="ml-0.5 font-normal text-slate-500">{a.loc.lpn_count}/{a.loc.pallet_capacity}</span>
+                  </div>
+                </Html>
+              )
+            ) : (
+              <Html position={[0, 0.4, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+                <div className="whitespace-nowrap rounded bg-white/90 px-1.5 py-0.5 text-[11px] font-bold text-slate-800 shadow" style={{ opacity: hidden ? 0.4 : 1 }}>
+                  {a.loc.code}
+                  <span className="ml-1 font-normal text-slate-500">
+                    {a.loc.lpn_count}/{a.loc.pallet_capacity}
+                  </span>
+                </div>
+              </Html>
+            )}
           </group>
         );
       })}

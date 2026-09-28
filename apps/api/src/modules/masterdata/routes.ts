@@ -75,6 +75,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
           pallet_height_cm: body.pallet_height_cm ?? null,
           requires_lot: body.requires_lot,
           requires_expiry: body.requires_expiry,
+          color: body.color ?? null,
           uoms: { create: uoms.map((u) => ({ uom_code: u.uom_code, base_qty: u.base_qty })) },
           barcodes: { create: body.barcodes.map((b) => ({ barcode: b.barcode, uom_code: b.uom_code })) },
         },

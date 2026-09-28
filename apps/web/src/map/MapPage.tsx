@@ -309,6 +309,12 @@ export default function MapPage() {
               <div>
                 {STATUS_LABELS[hoverLoc.status]} · {hoverLoc.lpn_count} LPN · {fmtQty(hoverLoc.total_qty)} pzas
               </div>
+              {mapQ.data?.lpns?.filter((l) => l.location_id === hoverLoc.id).slice(0, 4).map((l) => (
+                <div key={l.lpn} className="flex items-center gap-1 text-[11px] text-slate-200">
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm border border-white/40" style={{ background: l.color ?? '#c8a97e' }} />
+                  <span className="font-mono">{l.lpn}</span> · {l.sku ?? 'vacía'} {l.sku && `· ${fmtQty(l.qty)}`}
+                </div>
+              ))}
             </div>
           )}
         </div>

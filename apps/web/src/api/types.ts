@@ -61,6 +61,8 @@ export interface Sku {
   description_locked?: boolean;
   external_source?: string | null;
   family: string | null;
+  /** colour on the 3D map (hex); null = derived from the name */
+  color?: string | null;
   compatibility_group: string | null;
   abc_class: string;
   unit_weight_kg: Dec;
@@ -270,11 +272,23 @@ export interface MapOccupancy {
   occupied: number;
   pct: number;
 }
+/** One pallet on the map: where it is and what it mainly holds (colour of the product). */
+export interface MapLpn {
+  location_id: Uuid;
+  lpn: string;
+  status: string;
+  sku: string | null;
+  description: string | null;
+  qty: Qty;
+  skus: number;
+  color: string | null;
+}
 export interface MapPayload {
   warehouse: Warehouse;
   zones: Zone[];
   racks: MapRack[];
   locations: MapLocation[];
+  lpns?: MapLpn[];
   occupancy: MapOccupancy[];
   generated_at: Iso;
 }
