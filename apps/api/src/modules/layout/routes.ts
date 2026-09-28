@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { Prisma } from '../../generated/prisma/client.js';
 import { z } from 'zod';
-import { zCreateAisle, zCreateAreaLocation, zCreateRack, zCreateZone, zUpdateLocation, zUpdateRack, zUpdateZone, zUuid, zWarehouseFeatures } from '@wms/shared';
+import { zCreateAisle, zCreateAreaLocation, zCreateFloorBlocks, zCreateRack, zCreateZone, zUpdateLocation, zUpdateRack, zUpdateZone, zUuid, zWarehouseFeatures } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
@@ -207,6 +207,36 @@ export async function layoutRoutes(app: FastifyInstance) {
     });
     reply.status(201);
     return loc;
+  });
+
+  /** Floor blocks: a grid of rack-less storage locations (each holds several pallets), drawn on the 3D map as areas. */
+  app.post('/locations/floor-blocks', { preHandler: manage }, async (req, reply) => {
+    const body = zCreateFloorBlocks.parse(req.body);
+    const created = await withTx(async (tx) => {
+      const wh = await tx.warehouses.findUnique({ where: { id: body.warehouse_id }, select: { id: true, width_m: true, depth_m: true } });
+      if (!wh) throw new NotFoundError('warehouse', body.warehouse_id);
+      const out: { id: string; code: string; barcode: string; x_m: number; y_m: number }[] = [];
+      const firstRow = body.first_row.charCodeAt(0) - 65;
+      if (firstRow + body.rows > 26) throw new RuleError('TOO_MANY_ROWS', 'Row letters run past Z: start lower or use fewer rows');
+      const stepX = body.block_width_m + body.gap_x_m;
+      const stepY = body.block_depth_m + body.gap_y_m;
+      for (let r = 0; r < body.rows; r++) {
+        for (let c = 0; c < body.cols; c++) {
+          const code = `${body.prefix}-${String.fromCharCode(65 + firstRow + r)}${String(body.first_col + c).padStart(2, '0')}`;
+          const x = Math.round((body.x_m + c * stepX) * 100) / 100;
+          const y = Math.round((body.rows_direction === 'UP' ? body.y_m + r * stepY : body.y_m - (r + 1) * body.block_depth_m - r * body.gap_y_m) * 100) / 100;
+          if (y < 0 || x + body.block_width_m > Number(wh.width_m) + 0.01 || y + body.block_depth_m > Number(wh.depth_m) + 0.01) throw new RuleError('OUT_OF_BOUNDS', `Block ${code} falls outside the warehouse (${x}, ${y})`);
+          const clash = await tx.locations.findFirst({ where: { OR: [{ warehouse_id: wh.id, code }, { barcode: `LOC-${code}` }] }, select: { code: true } });
+          if (clash) throw new ConflictError('LOCATION_EXISTS', `Location ${code} already exists`);
+          const loc = await tx.locations.create({ data: { warehouse_id: wh.id, zone_id: body.zone_id ?? null, code, barcode: `LOC-${code}`, location_type: body.location_type, x_m: x, y_m: y, width_m: body.block_width_m, depth_m: body.block_depth_m, height_m: body.height_m, pallet_capacity: body.pallet_capacity, max_weight_kg: body.max_weight_kg } });
+          out.push({ id: loc.id, code: loc.code, barcode: loc.barcode, x_m: x, y_m: y });
+        }
+      }
+      await audit(tx, req.actor!, { action: 'location.floor_blocks', entity_type: 'warehouse', entity_id: wh.id, after: { prefix: body.prefix, rows: body.rows, cols: body.cols, capacity: body.pallet_capacity, codes: out.map((o) => o.code) } });
+      return out;
+    });
+    reply.status(201);
+    return { created: created.length, locations: created };
   });
 
   app.patch('/locations/:id', { preHandler: manage }, async (req) => {

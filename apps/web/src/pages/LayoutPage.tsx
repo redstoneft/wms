@@ -216,7 +216,15 @@ function AreasTab({ warehouseId }: { warehouseId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const zones = useQuery({ queryKey: ['zones'], queryFn: () => layoutApi.zones() });
-  const areas = useQuery({ queryKey: ['locations', 'areas'], queryFn: async () => (await Promise.all(['RECEIVING', 'STAGING', 'SHIPPING', 'QUARANTINE', 'RETURNS', 'DAMAGED'].map((t) => layoutApi.locations({ type: t, limit: 500 })))).flatMap((r) => r.items) });
+  // areas = every location that is not a rack slot: docks, lanes… and floor blocks (RESERVE/PICKING without rack)
+  const areas = useQuery({ queryKey: ['locations', 'areas'], queryFn: async () => (await Promise.all(['RECEIVING', 'STAGING', 'SHIPPING', 'QUARANTINE', 'RETURNS', 'DAMAGED', 'RESERVE', 'PICKING'].map((t) => layoutApi.locations({ type: t, limit: 2000 })))).flatMap((r) => r.items).filter((l) => !l.rack_id) });
+  const emptyBlocks = { zone_id: '', prefix: 'HID-PISO', x_m: '1', y_m: '43', rows: '3', cols: '6', block_width_m: '2.4', block_depth_m: '2.4', gap_x_m: '0', gap_y_m: '1.2', height_m: '3', pallet_capacity: '8', max_weight_kg: '20000', first_row: 'A', first_col: '1', rows_direction: 'UP' };
+  const [blocks, setBlocks] = useState<typeof emptyBlocks | null>(null);
+  const saveBlocks = useMutation({
+    mutationFn: () => layoutApi.createFloorBlocks({ warehouse_id: warehouseId, zone_id: blocks!.zone_id || undefined, prefix: blocks!.prefix, x_m: Number(blocks!.x_m), y_m: Number(blocks!.y_m), rows: Number(blocks!.rows), cols: Number(blocks!.cols), block_width_m: Number(blocks!.block_width_m), block_depth_m: Number(blocks!.block_depth_m), gap_x_m: Number(blocks!.gap_x_m), gap_y_m: Number(blocks!.gap_y_m), height_m: Number(blocks!.height_m), pallet_capacity: Number(blocks!.pallet_capacity), max_weight_kg: Number(blocks!.max_weight_kg), first_row: blocks!.first_row, first_col: Number(blocks!.first_col), rows_direction: blocks!.rows_direction }),
+    onSuccess: (r) => { toast.success(`${r.created} bloques creados`, `${r.locations[0]?.code} … ${r.locations[r.locations.length - 1]?.code}`); setBlocks(null); void qc.invalidateQueries({ queryKey: ['locations'] }); void qc.invalidateQueries({ queryKey: ['map'] }); },
+    onError: (e) => toast.error('No se pudieron crear los bloques', e),
+  });
   const empty = { zone_id: '', code: '', location_type: 'STAGING', x_m: '0', y_m: '0', width_m: '3', depth_m: '8', height_m: '3', pallet_capacity: '10', max_weight_kg: '50000' };
   const [form, setForm] = useState<typeof empty | null>(null);
   const save = useMutation({
@@ -226,7 +234,7 @@ function AreasTab({ warehouseId }: { warehouseId: string }) {
   });
   return (
     <div>
-      {can('layout.manage') && <div className="mb-3"><Button onClick={() => setForm(empty)}>Nueva área</Button></div>}
+      {can('layout.manage') && <div className="mb-3 flex gap-2"><Button onClick={() => setForm(empty)}>Nueva área</Button><Button variant="secondary" onClick={() => setBlocks(emptyBlocks)}>Generar bloques a piso</Button></div>}
       <Table
         rows={areas.data}
         loading={areas.isLoading}
@@ -245,7 +253,7 @@ function AreasTab({ warehouseId }: { warehouseId: string }) {
         {form && (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Código" required><Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} /></Field>
-            <Field label="Tipo" required><Select value={form.location_type} onChange={(e) => setForm({ ...form, location_type: e.target.value })}>{LOCATION_TYPES.filter((t) => t !== 'RESERVE' && t !== 'PICKING').map((t) => <option key={t} value={t}>{es(t)}</option>)}</Select></Field>
+            <Field label="Tipo" required><Select value={form.location_type} onChange={(e) => setForm({ ...form, location_type: e.target.value })}>{LOCATION_TYPES.map((t) => <option key={t} value={t}>{t === 'RESERVE' ? 'Bloque a piso (reserva)' : t === 'PICKING' ? 'Bloque a piso (picking)' : es(t)}</option>)}</Select></Field>
             <Field label="Zona"><Select value={form.zone_id} onChange={(e) => setForm({ ...form, zone_id: e.target.value })}><option value="">—</option>{zones.data?.map((z) => <option key={z.id} value={z.id}>{z.code}</option>)}</Select></Field>
             <Field label="Capacidad (pallets)"><Input type="number" value={form.pallet_capacity} onChange={(e) => setForm({ ...form, pallet_capacity: e.target.value })} /></Field>
             <Field label="X (m)"><Input type="number" step="0.1" value={form.x_m} onChange={(e) => setForm({ ...form, x_m: e.target.value })} /></Field>
@@ -254,6 +262,29 @@ function AreasTab({ warehouseId }: { warehouseId: string }) {
             <Field label="Fondo (m)"><Input type="number" step="0.1" value={form.depth_m} onChange={(e) => setForm({ ...form, depth_m: e.target.value })} /></Field>
             <Field label="Alto (m)"><Input type="number" step="0.1" value={form.height_m} onChange={(e) => setForm({ ...form, height_m: e.target.value })} /></Field>
             <Field label="Peso máx. (kg)"><Input type="number" value={form.max_weight_kg} onChange={(e) => setForm({ ...form, max_weight_kg: e.target.value })} /></Field>
+          </div>
+        )}
+      </Drawer>
+      <Drawer open={!!blocks} onClose={() => setBlocks(null)} title="Generar bloques a piso" footer={<div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setBlocks(null)}>Cancelar</Button><Button onClick={() => saveBlocks.mutate()} loading={saveBlocks.isPending} disabled={!blocks?.prefix}>Crear {blocks ? Number(blocks.rows) * Number(blocks.cols) : 0} bloques</Button></div>}>
+        {blocks && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Alert tone="info">Una cuadrícula de bloques en el piso (sin rack). Cada bloque es una ubicación que admite varias tarimas (lado a lado y estibadas). Los códigos salen como {blocks.prefix}-{blocks.first_row}{String(blocks.first_col).padStart(2, '0')}, {blocks.prefix}-{blocks.first_row}{String(Number(blocks.first_col) + 1).padStart(2, '0')}… (letra = fila, número = columna). Se dibujan en el mapa 3D y el acomodo los asigna como cualquier ubicación.</Alert>
+            <Field label="Prefijo" required><Input value={blocks.prefix} onChange={(e) => setBlocks({ ...blocks, prefix: e.target.value.toUpperCase() })} /></Field>
+            <Field label="Zona"><Select value={blocks.zone_id} onChange={(e) => setBlocks({ ...blocks, zone_id: e.target.value })}><option value="">—</option>{zones.data?.map((z) => <option key={z.id} value={z.id}>{z.code}</option>)}</Select></Field>
+            <Field label="Filas (letras)"><Input type="number" value={blocks.rows} onChange={(e) => setBlocks({ ...blocks, rows: e.target.value })} /></Field>
+            <Field label="Columnas (números)"><Input type="number" value={blocks.cols} onChange={(e) => setBlocks({ ...blocks, cols: e.target.value })} /></Field>
+            <Field label="Esquina X (m)"><Input type="number" step="0.1" value={blocks.x_m} onChange={(e) => setBlocks({ ...blocks, x_m: e.target.value })} /></Field>
+            <Field label="Esquina Y (m)"><Input type="number" step="0.1" value={blocks.y_m} onChange={(e) => setBlocks({ ...blocks, y_m: e.target.value })} /></Field>
+            <Field label="Ancho del bloque (m)"><Input type="number" step="0.1" value={blocks.block_width_m} onChange={(e) => setBlocks({ ...blocks, block_width_m: e.target.value })} /></Field>
+            <Field label="Fondo del bloque (m)"><Input type="number" step="0.1" value={blocks.block_depth_m} onChange={(e) => setBlocks({ ...blocks, block_depth_m: e.target.value })} /></Field>
+            <Field label="Pasillo entre columnas (m)"><Input type="number" step="0.1" value={blocks.gap_x_m} onChange={(e) => setBlocks({ ...blocks, gap_x_m: e.target.value })} /></Field>
+            <Field label="Pasillo entre filas (m)"><Input type="number" step="0.1" value={blocks.gap_y_m} onChange={(e) => setBlocks({ ...blocks, gap_y_m: e.target.value })} /></Field>
+            <Field label="Tarimas por bloque"><Input type="number" value={blocks.pallet_capacity} onChange={(e) => setBlocks({ ...blocks, pallet_capacity: e.target.value })} /></Field>
+            <Field label="Alto de estiba (m)"><Input type="number" step="0.1" value={blocks.height_m} onChange={(e) => setBlocks({ ...blocks, height_m: e.target.value })} /></Field>
+            <Field label="Primera fila (letra)"><Input value={blocks.first_row} maxLength={1} onChange={(e) => setBlocks({ ...blocks, first_row: e.target.value.toUpperCase() })} /></Field>
+            <Field label="Primera columna (número)"><Input type="number" value={blocks.first_col} onChange={(e) => setBlocks({ ...blocks, first_col: e.target.value })} /></Field>
+            <Field label="Las filas crecen"><Select value={blocks.rows_direction} onChange={(e) => setBlocks({ ...blocks, rows_direction: e.target.value })}><option value="UP">hacia el fondo (+Y)</option><option value="DOWN">hacia el frente (−Y)</option></Select></Field>
+            <Field label="Peso máx. por bloque (kg)"><Input type="number" value={blocks.max_weight_kg} onChange={(e) => setBlocks({ ...blocks, max_weight_kg: e.target.value })} /></Field>
           </div>
         )}
       </Drawer>

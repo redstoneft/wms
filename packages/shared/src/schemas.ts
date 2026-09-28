@@ -210,6 +210,33 @@ export const zCreateAreaLocation = z.object({
   pallet_capacity: z.number().int().min(1).max(500).default(1),
   max_weight_kg: z.number().positive().max(1000000).default(1500),
 });
+/** Floor blocks ("bloques a piso"): a grid of rack-less storage locations, each a rectangle on the floor that holds
+ * several pallets (side by side and stacked). Codes: <prefix>-<row letter><col##>, e.g. HID-PISO-A01. */
+export const zCreateFloorBlocks = z.object({
+  warehouse_id: zUuid,
+  zone_id: zUuid.optional(),
+  prefix: z.string().trim().toUpperCase().regex(/^[A-Z0-9-]{2,24}$/, 'letras, dígitos y guiones'),
+  /** bottom-left corner of the grid, metres from the warehouse origin */
+  x_m: z.number().min(0).max(10000),
+  y_m: z.number().min(0).max(10000),
+  rows: z.number().int().min(1).max(26),
+  cols: z.number().int().min(1).max(60),
+  block_width_m: z.number().positive().max(50),
+  block_depth_m: z.number().positive().max(50),
+  /** walkway between columns / between rows (0 = blocks touch) */
+  gap_x_m: z.number().min(0).max(20).default(0),
+  gap_y_m: z.number().min(0).max(20).default(0),
+  height_m: z.number().positive().max(30).default(3),
+  pallet_capacity: z.number().int().min(1).max(500),
+  max_weight_kg: z.number().positive().max(1000000).default(20000),
+  location_type: z.enum(['RESERVE', 'PICKING']).default('RESERVE'),
+  /** first row letter (A) and first column number (1) let a second grid continue the numbering */
+  first_row: z.string().regex(/^[A-Z]$/).default('A'),
+  first_col: z.number().int().min(1).max(999).default(1),
+  /** rows grow away from the origin along +y (default) or along -y (grid drawn from its far edge) */
+  rows_direction: z.enum(['UP', 'DOWN']).default('UP'),
+});
+export type CreateFloorBlocksInput = z.infer<typeof zCreateFloorBlocks>;
 export const zUpdateLocation = z.object({
   admin_status: z.enum(LOCATION_ADMIN_STATUSES).optional(),
   block_reason: z.string().trim().max(300).optional(),

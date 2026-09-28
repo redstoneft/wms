@@ -26,6 +26,8 @@ export const layoutApi = {
   locations: (q: LocationQuery) => api.get<{ items: LocationRow[] }>('/locations', q as Record<string, string | number | undefined>),
   location: (idOrCode: string) => api.get<LocationDetail>(`/locations/${encodeURIComponent(idOrCode)}`),
   createLocation: (body: Record<string, unknown>) => api.post<LocationRow>('/locations', body),
+  /** a grid of floor blocks (rack-less storage locations) */
+  createFloorBlocks: (body: Record<string, unknown>) => api.post<{ created: number; locations: { id: string; code: string; barcode: string; x_m: number; y_m: number }[] }>('/locations/floor-blocks', body),
   updateLocation: (id: string, body: Record<string, unknown>) => api.patch<LocationRow>(`/locations/${id}`, body),
   map: (warehouse_id?: string) => api.get<MapPayload>('/map', { warehouse_id }),
   mapSearch: (type: MapSearchType, q: string) => api.get<MapSearchResult>('/map/search', { type, q }),
