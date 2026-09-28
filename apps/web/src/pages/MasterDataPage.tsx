@@ -134,7 +134,7 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
           <Checkbox label="Conservar este nombre aunque SAE mande otro" checked={!!f.description_locked} onChange={(e) => setF({ ...f, description_locked: e.target.checked })} />
         )}
         <Field label="Familia"><Input value={f.family ?? ''} onChange={(e) => setF({ ...f, family: e.target.value })} /></Field>
-        <Field label="Color en el mapa 3D (vacío = se toma del nombre: ROSA, AZUL, NEGRO…)">
+        <Field label="Color en los bloques a piso del mapa 3D (vacío = se toma del nombre: ROSA, AZUL, NEGRO…)">
           <div className="flex items-center gap-2">
             <input type="color" value={f.color ?? productColor(f.code ?? '', f.description)} onChange={(e) => setF({ ...f, color: e.target.value })} className="h-9 w-14 cursor-pointer rounded border border-slate-300" />
             <span className="font-mono text-xs text-slate-500">{f.color ?? `auto ${productColor(f.code ?? '', f.description)}`}</span>

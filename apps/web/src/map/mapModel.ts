@@ -130,7 +130,8 @@ export function buildSceneModel(p: MapPayload): SceneModel {
           const z = loc.y + 0.1 + (pw + 0.1) * r + pw / 2;
           const l = here[i];
           idxs.push(pallets.length);
-          pallets.push({ locId: loc.id, status: loc.status, center: [x, 0.1 + layer * ph + ph / 2, z], size: [pw, ph, pw], fill: 1, color: l?.color ?? null, lpn: l?.lpn, sku: l?.sku ?? null });
+          // floor blocks (past the bridge): each pallet painted in the colour of the product it holds
+          pallets.push({ locId: loc.id, status: loc.status, center: [x, 0.1 + layer * ph + ph / 2, z], size: [pw, ph, pw], fill: 1, color: isFloorBlock(loc) ? l?.color ?? null : null, lpn: l?.lpn, sku: l?.sku ?? null });
         }
         palletIndicesByLoc.set(loc.id, idxs);
       }
@@ -145,9 +146,10 @@ export function buildSceneModel(p: MapPayload): SceneModel {
     if (loc.lpn_count > 0) {
       const fill = Math.max(0.35, Math.min(1, loc.pallet_capacity > 0 ? loc.lpn_count / loc.pallet_capacity : 1));
       const ph = Math.max(0.5, (loc.h - 0.15) * 0.85 * fill);
+      // rack slots keep the classic look (status colours); the product colour is only for the floor blocks
       const first = lpnsByLoc.get(loc.id)?.[0];
       palletIndicesByLoc.set(loc.id, [pallets.length]);
-      pallets.push({ locId: loc.id, status: loc.status, center: [loc.x, loc.z + ph / 2, loc.y], size: [w * 0.9, ph, d * 0.9], fill, color: first?.color ?? null, lpn: first?.lpn, sku: first?.sku ?? null });
+      pallets.push({ locId: loc.id, status: loc.status, center: [loc.x, loc.z + ph / 2, loc.y], size: [w * 0.9, ph, d * 0.9], fill, color: null, lpn: first?.lpn, sku: first?.sku ?? null });
     }
   }
 
