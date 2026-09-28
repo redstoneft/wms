@@ -248,6 +248,9 @@ export const zCreateFloorBlocks = z.object({
 export type CreateFloorBlocksInput = z.infer<typeof zCreateFloorBlocks>;
 export const zUpdateLocation = z.object({
   admin_status: z.enum(LOCATION_ADMIN_STATUSES).optional(),
+  /** size of an area (rack-less) location: docks, lanes, floor blocks; rack slots take theirs from the rack */
+  width_m: z.number().positive().max(100).optional(),
+  depth_m: z.number().positive().max(100).optional(),
   block_reason: z.string().trim().max(300).optional(),
   pallet_capacity: z.number().int().min(1).max(500).optional(),
   max_weight_kg: z.number().positive().max(1000000).optional(),

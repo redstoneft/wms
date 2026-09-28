@@ -255,6 +255,9 @@ export async function layoutRoutes(app: FastifyInstance) {
         const occupied = await tx.lpns.count({ where: { current_location_id: id } });
         if (occupied) throw new RuleError('LOCATION_OCCUPIED', `Location holds ${occupied} LPN(s); move them first`);
       }
+      if (before.rack_id && (body.x_m !== undefined || body.y_m !== undefined || body.width_m !== undefined || body.depth_m !== undefined)) {
+        throw new RuleError('RACK_SLOT_GEOMETRY', 'A rack position takes its geometry from the rack: move or edit the rack instead');
+      }
       const { reason, ...data } = body;
       const after = await tx.locations.update({
         where: { id },

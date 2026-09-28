@@ -141,6 +141,31 @@ export default function MapPage() {
     },
     onError: (e) => toast.error('No se pudo mover el rack', e),
   });
+  // areas (docks, lanes, assembly, returns, floor blocks): dragged on the floor or edited by numbers
+  const areaLoc = selected.data && !selected.data.rack_id ? selected.data : null;
+  const [areaForm, setAreaForm] = useState({ x_m: '', y_m: '', width_m: '', depth_m: '', pallet_capacity: '' });
+  useEffect(() => {
+    if (areaLoc) setAreaForm({ x_m: String(areaLoc.x_m), y_m: String(areaLoc.y_m), width_m: String(areaLoc.width_m), depth_m: String(areaLoc.depth_m), pallet_capacity: String(areaLoc.pallet_capacity) });
+  }, [areaLoc]);
+  const moveArea = useMutation({
+    mutationFn: (v: { id: string; x_m: number; y_m: number }) => layoutApi.updateLocation(v.id, { x_m: v.x_m, y_m: v.y_m }),
+    onSuccess: (r, v) => {
+      setAreaForm((f) => ({ ...f, x_m: String(v.x_m), y_m: String(v.y_m) }));
+      toast.success(`${r.code} movida`, `${v.x_m} m, ${v.y_m} m`);
+      void qc.invalidateQueries({ queryKey: ['map'] });
+      void qc.invalidateQueries({ queryKey: ['location', v.id] });
+    },
+    onError: (e) => toast.error('No se pudo mover el área', e),
+  });
+  const saveArea = useMutation({
+    mutationFn: () => layoutApi.updateLocation(areaLoc!.id, { x_m: Number(areaForm.x_m), y_m: Number(areaForm.y_m), width_m: Number(areaForm.width_m), depth_m: Number(areaForm.depth_m), pallet_capacity: Number(areaForm.pallet_capacity) }),
+    onSuccess: (r) => {
+      toast.success(`${r.code} actualizada`);
+      void qc.invalidateQueries({ queryKey: ['map'] });
+      void qc.invalidateQueries({ queryKey: ['location', r.id] });
+    },
+    onError: (e) => toast.error('No se pudo guardar', e),
+  });
   const saveRack = useMutation({
     mutationFn: () => layoutApi.updateRack(selectedRackId!, { x_m: Number(rackForm.x_m), y_m: Number(rackForm.y_m), rotation_deg: Number(rackForm.rotation_deg) }),
     onSuccess: (r) => {
@@ -287,6 +312,7 @@ export default function MapPage() {
               setPanelOpen(true);
             }}
             onRackMove={(id, x_m, y_m) => moveRack.mutate({ id, x_m, y_m })}
+            onAreaMove={(id, x_m, y_m) => moveArea.mutate({ id, x_m, y_m })}
           />
           {/* legend */}
           <div className="pointer-events-none absolute bottom-3 left-3 hidden rounded-lg bg-white/90 p-2 text-[11px] shadow sm:block" data-testid="map-legend">
@@ -301,7 +327,7 @@ export default function MapPage() {
               {model.slots.length} posiciones · {model.pallets.length} pallets · {far ? 'LOD lejano' : 'detalle'}
             </div>
           </div>
-          {editMode && <div className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-1.5rem)] rounded bg-amber-400 px-2 py-1 text-xs font-bold text-amber-950">MODO EDICIÓN<span className="hidden md:inline">: arrastra un rack por su estructura y suéltalo para guardar · clic para editar números</span></div>}
+          {editMode && <div className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-1.5rem)] rounded bg-amber-400 px-2 py-1 text-xs font-bold text-amber-950">MODO EDICIÓN<span className="hidden md:inline">: arrastra un rack o un área (staging, armado, devoluciones, bloques) y suéltalo para guardar · clic para editar números</span></div>}
           {/* hover tooltip */}
           {hover && hoverLoc && (
             <div className="pointer-events-none fixed z-50 rounded-md bg-slate-900 px-2 py-1 text-xs text-white shadow-lg" style={{ left: hover.x + 12, top: hover.y + 12 }}>
@@ -358,6 +384,42 @@ export default function MapPage() {
               </section>
             )}
 
+            {areaLoc && editMode && (
+              <section className="border-b border-slate-200 p-3" data-testid="map-area-editor">
+                <h3 className="font-semibold">Editar área {areaLoc.code}</h3>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <label className="text-xs">
+                    X (m)
+                    <Input type="number" step="0.1" value={areaForm.x_m} onChange={(e) => setAreaForm({ ...areaForm, x_m: e.target.value })} />
+                  </label>
+                  <label className="text-xs">
+                    Y (m)
+                    <Input type="number" step="0.1" value={areaForm.y_m} onChange={(e) => setAreaForm({ ...areaForm, y_m: e.target.value })} />
+                  </label>
+                  <label className="text-xs">
+                    Capacidad
+                    <Input type="number" step="1" min={1} value={areaForm.pallet_capacity} onChange={(e) => setAreaForm({ ...areaForm, pallet_capacity: e.target.value })} />
+                  </label>
+                  <label className="text-xs">
+                    Ancho (m)
+                    <Input type="number" step="0.1" value={areaForm.width_m} onChange={(e) => setAreaForm({ ...areaForm, width_m: e.target.value })} />
+                  </label>
+                  <label className="text-xs">
+                    Fondo (m)
+                    <Input type="number" step="0.1" value={areaForm.depth_m} onChange={(e) => setAreaForm({ ...areaForm, depth_m: e.target.value })} />
+                  </label>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" onClick={() => saveArea.mutate()} loading={saveArea.isPending}>
+                    Guardar
+                  </Button>
+                  <Link to="/layout?tab=areas" className="ml-auto self-center text-xs text-sky-700 underline">
+                    Áreas en Layout →
+                  </Link>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">La esquina X, Y es la inferior izquierda del área. También puedes arrastrarla en el mapa.</p>
+              </section>
+            )}
             {selectedId ? (
               <section className="border-b border-slate-200 p-3" data-testid="map-selected">
                 {selected.isLoading && <Skeleton className="h-24" />}
