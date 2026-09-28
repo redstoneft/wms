@@ -167,6 +167,15 @@ export function extraGtinSources(alts: AltKey[], obs: ObsRow[], pars: ParObs[], 
 
 const SAE_KEY_RE = /^[A-Za-z0-9.][A-Za-z0-9._\-/ ]*$/;
 const GTIN_RE = /^[0-9]{8,14}$/;
+/** A 14-digit code with indicator 1-8 is the CASE code (DUN-14/ITF-14) of a GTIN-13: same product, case level.
+ * Returns that GTIN-13 (indicator dropped, check digit recomputed), or null when the code is not a case code. */
+export function gtin13FromCase(code: string): string | null {
+  if (!/^[1-8][0-9]{13}$/.test(code)) return null;
+  const body = code.slice(1, 13);
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(body[i]) * (i % 2 === 0 ? 1 : 3);
+  return body + String((10 - (sum % 10)) % 10);
+}
 /** SAE keys may contain spaces; WMS codes/barcodes cannot. Same normalisation everywhere. */
 export const saeKeyBarcode = (k: string) => key(k).replace(/\s+/g, '_');
 const stripDots = (k: string) => k.replace(/^\.+/, '').replace(/\.+$/, '');
@@ -180,9 +189,18 @@ interface Product { code: string; model: string; gtin: string | null; caseGtins:
 export function groupProducts(articles: RawArticle[], aliases: Alias[], productos: Producto[], lineas: PedidoLinea[], c: Counters): Product[] {
   const aliasByKey = new Map(aliases.map((a) => [key(a.cve_art), { modelo: key(a.modelo), capa: key(a.capa).toUpperCase() }]));
   const gtinByKey = new Map<string, string>();
+  // a key whose catalogue code is a CASE code (17500462716933) identifies the same product as the GTIN-13 (7500462716936):
+  // the product takes the GTIN-13 and keeps the case code as its case-level barcode
+  const caseByKey = new Map<string, string>();
+  const adopt = (k: string, g: string) => {
+    if (!k || !GTIN_RE.test(g) || gtinByKey.has(k)) return;
+    const base = gtin13FromCase(g);
+    if (base) caseByKey.set(k, g);
+    gtinByKey.set(k, base ?? g);
+  };
   // catalogue rows come ordered by trust (platform, order lines, SAE alternate keys, observations, retail chains): the first wins
-  for (const p of productos) if (p.activo !== false && GTIN_RE.test(key(p.gtin)) && !gtinByKey.has(key(p.sku_interno))) gtinByKey.set(key(p.sku_interno), key(p.gtin));
-  for (const l of lineas) if (GTIN_RE.test(key(l.gtin)) && key(l.sku_interno) && !gtinByKey.has(key(l.sku_interno))) gtinByKey.set(key(l.sku_interno), key(l.gtin));
+  for (const p of productos) if (p.activo !== false) adopt(key(p.sku_interno), key(p.gtin));
+  for (const l of lineas) adopt(key(l.sku_interno), key(l.gtin));
   const ppcByKey = new Map<string, number>();
   for (const l of lineas) if (num(l.piezas_por_caja) > 1) ppcByKey.set(key(l.sku_interno), num(l.piezas_por_caja));
 
@@ -242,6 +260,8 @@ export function groupProducts(articles: RawArticle[], aliases: Alias[], producto
     if (!g) groups.set(id, (g = { gtin, caseGtins: new Set(), keys: [] }));
     g.keys.push(k);
     if (caseGtin) g.caseGtins.add(caseGtin);
+    const cb = caseByKey.get(k.key);
+    if (cb) g.caseGtins.add(cb);
   }
   const usedCodes = new Set<string>();
   const out: Product[] = [];
