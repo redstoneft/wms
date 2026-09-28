@@ -9,6 +9,8 @@ export const ordersApi = {
   accept: (id: string) => api.post<Order>(`/orders/${id}/accept`),
   allocate: (body: { order_id: string; strategy?: string; allow_partial: boolean }) => api.post<AllocateResult>('/orders/allocate', body),
   cancel: (body: { order_id: string; reason: string; authorization_id?: string }) => api.post<{ order_id: string; status: string; deallocated: string }>('/orders/cancel', body),
+  /** admin: new quantities for a picked order (excess back to stock, shortfall picked again) */
+  adjust: (body: { order_id: string; reason: string; lines: { sku_code: string; qty: string; uom_code?: string }[] }) => api.post<{ order_id: string; order_number: string; status: string; changes: { sku: string; before: string; after: string; returned_to_stock: string; new_lpns: string[]; released_allocation: string; to_pick: string }[]; incident_id: string | null }>('/orders/adjust', body),
   /** admin: the order left without following the flow; inventory is shipped from wherever it was */
   forceDeliver: (body: { order_id: string; reason: string }) => api.post<{ order_id: string; status: string; shipped: { lpn: string; sku: string; qty: string; from: string }[]; missing: { sku: string; qty: string }[]; incident_id: string }>('/orders/force-deliver', body),
 };

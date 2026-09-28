@@ -4,7 +4,8 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { getSkuByCode, toBaseQty } from '../../lib/lookup.js';
-import { getBalance, lockBalances, lockLpn, recordMovement, removeInventory } from '../../inventory/ledger.js';
+import { createLpn, getBalance, lockBalances, lockLpn, recordMovement, removeInventory, transferBetweenLpns } from '../../inventory/ledger.js';
+import { createPutawayTask } from '../putaway/service.js';
 import { consumeAuthorization } from '../authorizations/routes.js';
 import { getSettings } from '../settings/routes.js';
 import { createIncident } from '../incidents/service.js';
@@ -352,4 +353,131 @@ export async function forceDeliver(tx: Tx, ctx: ActorContext, input: { order_id:
   });
   await audit(tx, ctx, { action: 'order.force_deliver', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status: 'SHIPPED', shipped, missing, incident_id: inc.id }, reason: input.reason });
   return { order_id: o.id, status: 'SHIPPED', shipped, missing, incident_id: inc.id };
+}
+
+/**
+ * Admin only: the customer changed the order after it was picked. Each line gets its new required quantity:
+ *  - less than what was picked → the excess leaves the outbound pallets onto a new storage pallet (put-away task);
+ *  - less than what was allocated (not yet picked) → the extra allocation is released;
+ *  - more than what was picked → the line needs allocation and picking again (the order goes back to PARTIALLY_ALLOCATED);
+ *  - a SKU not in the order → new line; qty 0 → the line is removed (its picked pieces go back to stock first).
+ * Verification is invalidated for the changed lines. Everything is audited with the reason and an incident is opened.
+ */
+export async function adjustOrderLines(tx: Tx, ctx: ActorContext, input: { order_id: string; reason: string; lines: { sku_code: string; qty: bigint; uom_code: UomCode }[] }) {
+  const o = await lockOrder(tx, input.order_id);
+  if (['SHIPPED', 'CANCELLED', 'LOADING', 'LOADED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}; quantities can no longer change`);
+  if (o.shipment_id) throw new RuleError('ORDER_IN_SHIPMENT', 'Remove the order from its shipment first');
+  const lines = await tx.order_lines.findMany({ where: { order_id: o.id }, include: { sku: true }, orderBy: { line_no: 'asc' } });
+  const changes: { sku: string; before: string; after: string; returned_to_stock: string; new_lpns: string[]; released_allocation: string; to_pick: string }[] = [];
+  let needsPick = false;
+  let touched = false;
+  let maxLine = lines.reduce((m, l) => Math.max(m, l.line_no), 0);
+  for (const inp of input.lines) {
+    const sku = await getSkuByCode(tx, inp.sku_code);
+    const { base: newReq } = await toBaseQty(tx, sku.id, inp.qty, inp.uom_code);
+    let line = lines.find((l) => l.sku_id === sku.id) ?? null;
+    if (!line) {
+      if (newReq <= 0n) continue;
+      const created = await tx.order_lines.create({ data: { order_id: o.id, line_no: ++maxLine, sku_id: sku.id, required_qty: newReq, uom_code: inp.uom_code, uom_qty: inp.qty }, include: { sku: true } });
+      lines.push(created);
+      changes.push({ sku: sku.code, before: '0', after: newReq.toString(), returned_to_stock: '0', new_lpns: [], released_allocation: '0', to_pick: newReq.toString() });
+      needsPick = true;
+      touched = true;
+      continue;
+    }
+    if (newReq === line.required_qty) continue;
+    touched = true;
+    const change = { sku: sku.code, before: line.required_qty.toString(), after: newReq.toString(), returned_to_stock: '0', new_lpns: [] as string[], released_allocation: '0', to_pick: '0' };
+    let picked = line.picked_qty;
+    if (newReq < picked) {
+      // excess picked pieces go back to stock, newest outbound pallets first
+      let excess = picked - newReq;
+      const outbound = await tx.$queryRaw<{ lpn_id: string; status: string; qty: bigint }[]>`
+        SELECT b.lpn_id, b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id
+         WHERE l.order_id = ${o.id}::uuid AND b.sku_id = ${sku.id}::uuid AND b.qty > 0 AND b.status IN ('PICKING','STAGING') AND l.status IN ('PICKING','STAGED')
+         ORDER BY l.created_at DESC`;
+      let returned = 0n;
+      for (const row of outbound) {
+        if (excess <= 0n) break;
+        const take = row.qty < excess ? row.qty : excess;
+        const from = await lockLpn(tx, row.lpn_id);
+        if (!from.current_location_id) continue;
+        const to = await createLpn(tx, ctx, { warehouse_id: from.warehouse_id, lpn_type: 'STORAGE', location_id: from.current_location_id, parent_lpn_id: from.id });
+        await tx.lpns.update({ where: { id: to.id }, data: { status: 'STORED' } });
+        await transferBetweenLpns(tx, ctx, { movement_type: 'UNPICK', from_lpn: from, to_lpn: { ...to, status: 'STORED' }, sku_id: sku.id, qty: take, from_status: row.status as 'PICKING' | 'STAGING', to_status: 'AVAILABLE', to_location_id: from.current_location_id, order_id: o.id, reference_type: 'order_adjust', reference_id: line.id, reason: input.reason, note: `Ajuste del pedido ${o.order_number}: ${take} pzas regresan a existencia` });
+        await createPutawayTask(tx, ctx, { ...to, status: 'STORED' }, { allowStoredLocation: true });
+        const left = await tx.inventory_balances.count({ where: { lpn_id: from.id, qty: { gt: 0n } } });
+        if (left === 0) {
+          await tx.lpns.update({ where: { id: from.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+          await tx.pick_tasks.updateMany({ where: { outbound_lpn_id: from.id }, data: { outbound_lpn_id: null } });
+        }
+        change.new_lpns.push(to.code);
+        returned += take;
+        excess -= take;
+      }
+      if (excess > 0n) throw new RuleError('PICKED_NOT_FOUND', `Order ${o.order_number} shows ${picked} picked of ${sku.code} but only ${picked - excess} were found on its pallets`);
+      // picked allocations shrink to what stays with the order (newest first)
+      let undo = returned;
+      const pickedAllocs = await tx.allocations.findMany({ where: { order_line_id: line.id, status: 'PICKED' }, orderBy: { created_at: 'desc' } });
+      for (const a of pickedAllocs) {
+        if (undo <= 0n) break;
+        const cut = a.picked_qty < undo ? a.picked_qty : undo;
+        const rest = a.picked_qty - cut;
+        await tx.allocations.update({ where: { id: a.id }, data: rest > 0n ? { picked_qty: rest, qty: rest } : { picked_qty: 0n, status: 'RELEASED' } });
+        undo -= cut;
+      }
+      picked -= returned;
+      change.returned_to_stock = returned.toString();
+    }
+    // allocated but not picked beyond the new requirement: release it
+    const activeAllocs = await tx.$queryRaw<{ id: string; lpn_id: string; qty: bigint; picked_qty: bigint }[]>`SELECT id, lpn_id, qty, picked_qty FROM allocations WHERE order_line_id = ${line.id}::uuid AND status = 'ACTIVE' ORDER BY created_at DESC FOR UPDATE`;
+    let allocated = activeAllocs.reduce((a, x) => a + (x.qty - x.picked_qty), 0n);
+    let release = allocated + picked - newReq;
+    let released = 0n;
+    for (const a of activeAllocs) {
+      if (release <= 0n) break;
+      const remaining = a.qty - a.picked_qty;
+      const cut = remaining < release ? remaining : release;
+      if (cut <= 0n) continue;
+      const lpn = await lockLpn(tx, a.lpn_id);
+      await recordMovement(tx, ctx, { movement_type: 'DEALLOCATE', sku_id: sku.id, qty: cut, from_lpn_id: lpn.id, to_lpn_id: lpn.id, from_location_id: lpn.current_location_id, to_location_id: lpn.current_location_id, from_status: 'ALLOCATED', to_status: 'AVAILABLE', order_id: o.id, reference_type: 'allocation', reference_id: a.id, reason: input.reason, idempotency_suffix: `ADJUST:${a.id}:${cut}` });
+      const newQty = a.qty - cut;
+      await tx.allocations.update({ where: { id: a.id }, data: newQty > 0n ? { qty: newQty } : { status: 'RELEASED', ...(a.picked_qty > 0n ? { qty: a.picked_qty } : {}) } });
+      await tx.pick_task_lines.updateMany({ where: { allocation_id: a.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: newQty > 0n ? { qty: newQty } : { status: 'CANCELLED' } });
+      release -= cut;
+      released += cut;
+      allocated -= cut;
+    }
+    change.released_allocation = released.toString();
+    const toPick = newReq - picked - allocated;
+    if (toPick > 0n) {
+      needsPick = true;
+      change.to_pick = toPick.toString();
+    }
+    const verifiedNow = line.verified_qty > newReq ? newReq : line.verified_qty;
+    if (newReq === 0n) {
+      // a line cannot stay at 0 (required > 0 rule): it is removed; the movements, the audit entry and the incident keep its history
+      await tx.pick_task_lines.deleteMany({ where: { order_line_id: line.id } });
+      await tx.allocations.deleteMany({ where: { order_line_id: line.id } });
+      await tx.order_lines.delete({ where: { id: line.id } });
+      changes.push(change);
+      continue;
+    }
+    await tx.order_lines.update({ where: { id: line.id }, data: { required_qty: newReq, uom_code: inp.uom_code, uom_qty: inp.qty, picked_qty: picked, allocated_qty: allocated, verified_qty: verifiedNow, loaded_qty: 0n } });
+    changes.push(change);
+  }
+  if (!touched) return { order_id: o.id, order_number: o.order_number, status: o.status, changes: [], incident_id: null };
+  // the order's state after the change
+  let status = o.status;
+  if (needsPick && ['PICKED', 'STAGED', 'VERIFIED', 'ALLOCATED'].includes(o.status)) status = 'PARTIALLY_ALLOCATED';
+  else if (o.status === 'VERIFIED') status = 'STAGED';
+  if (['STAGED', 'VERIFIED'].includes(o.status)) {
+    await tx.verifications.updateMany({ where: { order_id: o.id, status: 'IN_PROGRESS' }, data: { status: 'CANCELLED', completed_at: new Date() } });
+    await tx.order_lines.updateMany({ where: { order_id: o.id }, data: { verified_qty: 0n } });
+  }
+  const prev = await tx.orders.findUniqueOrThrow({ where: { id: o.id }, select: { notes: true } });
+  await tx.orders.update({ where: { id: o.id }, data: { status, version: { increment: 1 }, notes: [prev.notes, `[AJUSTE DE CANTIDADES] ${input.reason}: ${changes.map((c) => `${c.sku} ${c.before}→${c.after}`).join(', ')}`].filter(Boolean).join('\n') } });
+  const inc = await createIncident(tx, ctx, { incident_type: 'OTHER', severity: 'LOW', title: `Pedido ${o.order_number}: cantidades cambiadas después de surtir`, description: `${input.reason} · ${changes.map((c) => `${c.sku} ${c.before}→${c.after}${c.returned_to_stock !== '0' ? ` (${c.returned_to_stock} a existencia: ${c.new_lpns.join(', ')})` : ''}${c.to_pick !== '0' ? ` (${c.to_pick} por surtir)` : ''}`).join('; ')}`, entity_type: 'order', entity_id: o.id, order_id: o.id });
+  await audit(tx, ctx, { action: 'order.adjust_lines', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status, changes, incident_id: inc.id }, reason: input.reason });
+  return { order_id: o.id, order_number: o.order_number, status, changes, incident_id: inc.id };
 }

@@ -547,6 +547,13 @@ export const zAllocateOrder = z.object({
 export const zCancelOrder = z.object({ order_id: zUuid, reason: zReason });
 /** Admin: the order left the warehouse without following the flow; inventory is shipped from wherever it was. */
 export const zForceDeliver = z.object({ order_id: zUuid, reason: zReason });
+/** Admin: new required quantities for an order that was already picked. Less than picked → the excess returns to stock
+ * on a new storage pallet (put-away task); more than picked → the difference is allocated and picked again. qty 0 removes the line. */
+export const zAdjustOrderLines = z.object({
+  order_id: zUuid,
+  reason: zReason,
+  lines: z.array(z.object({ sku_code: z.string().trim().min(1).max(64), qty: z.coerce.bigint().nonnegative(), uom_code: zUom.default('PIECE') })).min(1).max(200),
+});
 
 // ---- picking ----
 export const zPickScan = z

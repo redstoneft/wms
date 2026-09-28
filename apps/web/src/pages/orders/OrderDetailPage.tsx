@@ -51,6 +51,27 @@ export default function OrderDetailPage() {
     },
     onError: (e) => toast.error('No se pudo crear la tarea', e),
   });
+  const [adjust, setAdjust] = useState<{ open: boolean; reason: string; qty: Record<string, string>; add: { sku: string; qty: string }[] }>({ open: false, reason: '', qty: {}, add: [] });
+  const doAdjust = useMutation({
+    mutationFn: () =>
+      ordersApi.adjust({
+        order_id: id,
+        reason: adjust.reason,
+        lines: [
+          ...Object.entries(adjust.qty).filter(([, v]) => v.trim() !== '').map(([sku_code, qty]) => ({ sku_code, qty: qty.trim() })),
+          ...adjust.add.filter((a) => a.sku.trim() && a.qty.trim()).map((a) => ({ sku_code: a.sku.trim().toUpperCase(), qty: a.qty.trim() })),
+        ],
+      }),
+    onSuccess: (r) => {
+      toast.success(
+        r.changes.length ? `Pedido ajustado · ${es(r.status)}` : 'Sin cambios',
+        r.changes.map((c) => `${c.sku} ${fmtQty(c.before)}→${fmtQty(c.after)}${c.returned_to_stock !== '0' ? ` · ${fmtQty(c.returned_to_stock)} a existencia (${c.new_lpns.join(', ')})` : ''}${c.to_pick !== '0' ? ` · ${fmtQty(c.to_pick)} por surtir` : ''}`).join(' | '),
+      );
+      setAdjust({ open: false, reason: '', qty: {}, add: [] });
+      refresh();
+    },
+    onError: (e) => toast.error('No se pudo ajustar', e),
+  });
   const [force, setForce] = useState<{ open: boolean; reason: string }>({ open: false, reason: '' });
   const doForce = useMutation({
     mutationFn: () => ordersApi.forceDeliver({ order_id: id, reason: force.reason }),
@@ -101,6 +122,11 @@ export default function OrderDetailPage() {
             {can('orders.manage') && !['SHIPPED', 'LOADED', 'LOADING', 'CANCELLED'].includes(o.status) && (
               <Button variant="danger" onClick={() => setCancel({ open: true, reason: '', auth: '' })}>
                 Cancelar pedido
+              </Button>
+            )}
+            {can('orders.adjust') && !['SHIPPED', 'CANCELLED', 'LOADING', 'LOADED'].includes(o.status) && !o.shipment && (
+              <Button variant="secondary" onClick={() => setAdjust({ open: true, reason: '', qty: Object.fromEntries(o.lines.map((l) => [l.sku.code, ''])), add: [] })}>
+                Ajustar cantidades
               </Button>
             )}
             {can('orders.force_deliver') && !['SHIPPED', 'CANCELLED'].includes(o.status) && (
@@ -217,6 +243,35 @@ export default function OrderDetailPage() {
           </Select>
         </Field>
         <p className="mt-2 text-xs text-slate-500">Se generará la ruta por secuencia de picking y se reservará un carril de staging.</p>
+      </Modal>
+      <Modal open={adjust.open} onClose={() => setAdjust({ ...adjust, open: false })} title={`Ajustar cantidades de ${o.order_number}`} footer={<><Button variant="secondary" onClick={() => setAdjust({ ...adjust, open: false })}>Cancelar</Button><Button onClick={() => doAdjust.mutate()} loading={doAdjust.isPending} disabled={adjust.reason.trim().length < 3 || (Object.values(adjust.qty).every((v) => v.trim() === '') && !adjust.add.some((a) => a.sku.trim() && a.qty.trim()))}>Aplicar</Button></>}>
+        <div className="grid gap-3">
+          <Alert tone="info">Escribe la nueva cantidad requerida (en piezas) solo en las líneas que cambian. Si es menor a lo surtido, el sobrante regresa a existencia en una tarima nueva con tarea de acomodo. Si es mayor, la diferencia queda por asignar y surtir. Cero elimina la línea. Lo verificado se vuelve a verificar.</Alert>
+          <Table
+            rows={o.lines}
+            rowKey={(l) => l.id}
+            columns={[
+              { key: 's', header: 'SKU', render: (l) => <span className="font-mono">{l.sku.code}</span> },
+              { key: 'd', header: 'Descripción', render: (l) => l.sku.description },
+              { key: 'r', header: 'Requerido', render: (l) => fmtQty(l.required_qty), align: 'right' },
+              { key: 'p', header: 'Surtido', render: (l) => fmtQty(l.picked_qty), align: 'right' },
+              { key: 'n', header: 'Nueva cantidad', render: (l) => <Input type="number" min={0} value={adjust.qty[l.sku.code] ?? ''} placeholder={fmtQty(l.required_qty)} onChange={(e) => setAdjust({ ...adjust, qty: { ...adjust.qty, [l.sku.code]: e.target.value } })} className="w-28 text-right" /> },
+            ]}
+          />
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase text-slate-500">Agregar producto</div>
+            {adjust.add.map((a, i) => (
+              <div key={i} className="mb-1 flex gap-2">
+                <Input value={a.sku} placeholder="SKU o código de barras" onChange={(e) => setAdjust({ ...adjust, add: adjust.add.map((x, j) => (j === i ? { ...x, sku: e.target.value.toUpperCase() } : x)) })} className="font-mono" />
+                <Input type="number" min={1} value={a.qty} placeholder="piezas" onChange={(e) => setAdjust({ ...adjust, add: adjust.add.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)) })} className="w-28" />
+              </div>
+            ))}
+            <Button variant="secondary" onClick={() => setAdjust({ ...adjust, add: [...adjust.add, { sku: '', qty: '' }] })}>+ Línea</Button>
+          </div>
+          <Field label="Motivo (mín. 3)" required>
+            <Textarea value={adjust.reason} onChange={(e) => setAdjust({ ...adjust, reason: e.target.value })} />
+          </Field>
+        </div>
       </Modal>
       <ConfirmDialog open={force.open} onClose={() => setForce({ open: false, reason: '' })} onConfirm={() => doForce.mutate()} title={`Marcar ${o.order_number} como entregado`} danger loading={doForce.isPending} confirmLabel="Marcar como entregado">
         <div className="grid gap-3">

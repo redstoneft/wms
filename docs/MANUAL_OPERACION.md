@@ -94,6 +94,10 @@ Lo suelto que se surte (piezas o cajas que no son tarima completa) cae en la **t
 
 En Armado, al escribir "para qué", se puede indicar **¿Es para un pedido?** con el número del pedido (también al confirmar un armado en dos tiempos). Las tarimas producidas nacen como tarimas de salida **ya surtidas para ese pedido** (sin tarea de acomodo), se les asigna el carril de staging y su etiqueta dice PEDIDO y carril. El sistema no deja producir para el pedido más de lo que pide: el sobrante se arma aparte, sin pedido, y va a existencia con acomodo.
 
+## AJUSTAR CANTIDADES DE UN PEDIDO YA SURTIDO (solo administrador)
+
+En oficina, en el pedido, botón **Ajustar cantidades**: se escribe la nueva cantidad requerida (en piezas) solo en las líneas que cambian, se pueden agregar productos, y se da el motivo. Si la nueva cantidad es menor a lo surtido, el sobrante sale de las tarimas de salida a una **tarima nueva de existencia** con tarea de acomodo (el surtidor la ubica con "Ubicar"). Si es mayor, la diferencia queda por asignar y surtir: el pedido regresa a PARCIALMENTE ASIGNADO y se asigna inventario y se crea la tarea de surtido como siempre. Cero elimina la línea (sus piezas regresan a existencia). Lo verificado se vuelve a verificar. Queda auditado con el motivo y se abre una incidencia. No aplica a pedidos cargados, embarcados o dentro de un embarque. Permiso `orders.adjust`, solo del rol ADMIN.
+
 ## PEDIDO ENTREGADO FUERA DE FLUJO (solo administrador)
 
 Cuando un pedido ya salió sin pasar por staging/verificación/carga, el administrador entra al pedido en oficina y toca **Marcar como entregado (fuera de flujo)** con el motivo. El inventario se descuenta como embarcado desde donde esté (lo surtido, lo asignado y, si falta, la existencia disponible); lo que no exista queda en una incidencia de severidad alta; el pedido pasa a SHIPPED y se libera su carril. Queda auditado con el usuario y el motivo. Permiso `orders.force_deliver`, solo del rol ADMIN.
