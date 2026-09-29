@@ -246,7 +246,12 @@ export default function OrderDetailPage() {
       </Modal>
       <Modal open={adjust.open} onClose={() => setAdjust({ ...adjust, open: false })} title={`Ajustar cantidades de ${o.order_number}`} footer={<><Button variant="secondary" onClick={() => setAdjust({ ...adjust, open: false })}>Cancelar</Button><Button onClick={() => doAdjust.mutate()} loading={doAdjust.isPending} disabled={adjust.reason.trim().length < 3 || (Object.values(adjust.qty).every((v) => v.trim() === '') && !adjust.add.some((a) => a.sku.trim() && a.qty.trim()))}>Aplicar</Button></>}>
         <div className="grid gap-3">
-          <Alert tone="info">Escribe la nueva cantidad requerida (en piezas) solo en las líneas que cambian. Si es menor a lo surtido, el sobrante regresa a existencia en una tarima nueva con tarea de acomodo. Si es mayor, la diferencia queda por asignar y surtir. Cero elimina la línea. Lo verificado se vuelve a verificar.</Alert>
+          <Alert tone="info">Escribe la nueva cantidad requerida (en piezas) solo en las líneas que cambian. Puede ser menor a lo pedido o 0. Si es menor a lo surtido, el sobrante regresa a su tarima y posición. Si es mayor, la diferencia queda por asignar y surtir. Cero quita la línea del pedido (queda en el historial). Lo verificado se vuelve a verificar.</Alert>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setAdjust({ ...adjust, qty: Object.fromEntries(o.lines.map((l) => [l.sku.code, l.picked_qty === l.required_qty ? '' : String(l.picked_qty)])) })}>Dejar solo lo surtido</Button>
+            <Button variant="secondary" onClick={() => setAdjust({ ...adjust, qty: Object.fromEntries(o.lines.map((l) => [l.sku.code, '0'])) })}>Todo en 0</Button>
+            <Button variant="secondary" onClick={() => setAdjust({ ...adjust, qty: Object.fromEntries(o.lines.map((l) => [l.sku.code, ''])) })}>Limpiar</Button>
+          </div>
           <Table
             rows={o.lines}
             rowKey={(l) => l.id}
@@ -255,7 +260,19 @@ export default function OrderDetailPage() {
               { key: 'd', header: 'Descripción', render: (l) => l.sku.description },
               { key: 'r', header: 'Requerido', render: (l) => fmtQty(l.required_qty), align: 'right' },
               { key: 'p', header: 'Surtido', render: (l) => fmtQty(l.picked_qty), align: 'right' },
-              { key: 'n', header: 'Nueva cantidad', render: (l) => <Input type="number" min={0} value={adjust.qty[l.sku.code] ?? ''} placeholder={fmtQty(l.required_qty)} onChange={(e) => setAdjust({ ...adjust, qty: { ...adjust.qty, [l.sku.code]: e.target.value } })} className="w-28 text-right" /> },
+              {
+                key: 'n',
+                header: 'Nueva cantidad',
+                render: (l) => (
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={0} value={adjust.qty[l.sku.code] ?? ''} placeholder={fmtQty(l.required_qty)} onChange={(e) => setAdjust({ ...adjust, qty: { ...adjust.qty, [l.sku.code]: e.target.value } })} className="w-28 text-right" />
+                    <button type="button" className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100" title="Dejar la línea en 0 (se quita del pedido)" onClick={() => setAdjust({ ...adjust, qty: { ...adjust.qty, [l.sku.code]: '0' } })}>0</button>
+                    {l.picked_qty !== l.required_qty && (
+                      <button type="button" className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100" title="Dejar solo lo surtido" onClick={() => setAdjust({ ...adjust, qty: { ...adjust.qty, [l.sku.code]: String(l.picked_qty) } })}>= surtido</button>
+                    )}
+                  </div>
+                ),
+              },
             ]}
           />
           <div>
