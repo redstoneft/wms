@@ -1,6 +1,6 @@
 // /board?k=<token> — the delivery whiteboard on a TV: full screen, big type, grouped by day, refreshes every 30 s.
 // No session: the token in the link is read-only and only returns the calendar.
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { dayLabel, fetchBoard, groupByDay, type Delivery } from '../api/deliveries';
 
 export default function BoardPage() {
@@ -84,14 +84,7 @@ export default function BoardPage() {
           return (
             <section key={iso} className={`flex min-h-0 flex-col rounded-xl border-2 p-2 ${isToday ? 'border-amber-400 bg-amber-400/10' : 'border-slate-700 bg-slate-900'}`}>
               <div className={`mb-1 text-[1em] font-black capitalize ${isToday ? 'text-amber-300' : 'text-slate-200'}`}>{name}{isToday ? ' · HOY' : ''}</div>
-              <ul className="flex min-h-0 flex-col gap-1 overflow-hidden" style={{ fontSize: cellFont(list.length) }}>
-                {list.map((i) => (
-                  <li key={i.id} className={`rounded-lg bg-slate-800/80 px-2 py-1 ${i.status === 'DONE' ? 'opacity-50' : ''}`}>
-                    <div className={`text-[1em] font-black leading-tight ${i.status === 'DONE' ? 'line-through' : ''}`}>{i.delivery_time && <span className="mr-1 text-amber-300">{i.delivery_time}</span>}{i.title}</div>
-                    {i.notes && <div className="text-[0.75em] leading-tight text-slate-300">{i.notes}</div>}
-                  </li>
-                ))}
-              </ul>
+              <DayList list={list} startFont={cellFont(list.length)} tick={tick} />
               <span className="hidden">{d.getDate()}</span>
             </section>
           );
@@ -100,6 +93,40 @@ export default function BoardPage() {
       {overdue.length > 0 && <div className="mt-2 text-[0.8em] font-bold text-rose-400">ATRASADAS: {overdue.map((i) => `${i.title} (${i.delivery_date.slice(8, 10)}/${i.delivery_date.slice(5, 7)})`).join(' · ')}</div>}
       {data && items.length === 0 && <div className="mt-2 text-center text-[1.2em] text-slate-400">Sin entregas programadas</div>}
     </div>
+  );
+}
+
+/** The day's deliveries, with the type shrunk until everything fits in the box (measured, not guessed from the count). */
+function DayList({ list, startFont, tick }: { list: Delivery[]; startFont: string; tick: number }) {
+  const ref = useRef<HTMLUListElement>(null);
+  const [size, setSize] = useState(0);
+  useEffect(() => {
+    const onResize = () => setSize((n) => n + 1);
+    window.addEventListener('resize', onResize);
+    const ro = typeof ResizeObserver !== 'undefined' && ref.current?.parentElement ? new ResizeObserver(onResize) : null;
+    if (ro && ref.current?.parentElement) ro.observe(ref.current.parentElement);
+    return () => { window.removeEventListener('resize', onResize); ro?.disconnect(); };
+  }, []);
+  useLayoutEffect(() => {
+    const ul = ref.current;
+    if (!ul) return;
+    ul.style.fontSize = startFont;
+    let scale = 1;
+    // shrink step by step until the content fits the box (or the type gets too small to be worth reading from afar)
+    for (let i = 0; i < 20 && ul.scrollHeight > ul.clientHeight + 1 && scale > 0.3; i++) {
+      scale *= 0.92;
+      ul.style.fontSize = `calc(${startFont} * ${scale.toFixed(3)})`;
+    }
+  }, [list, startFont, tick, size]);
+  return (
+    <ul ref={ref} className="flex min-h-0 flex-1 flex-col gap-1 overflow-hidden">
+      {list.map((i) => (
+        <li key={i.id} className={`rounded-lg bg-slate-800/80 px-2 py-1 ${i.status === 'DONE' ? 'opacity-50' : ''}`}>
+          <div className={`text-[1em] font-black leading-tight ${i.status === 'DONE' ? 'line-through' : ''}`}>{i.delivery_time && <span className="mr-1 text-amber-300">{i.delivery_time}</span>}{i.title}</div>
+          {i.notes && <div className="text-[0.75em] leading-tight text-slate-300">{i.notes}</div>}
+        </li>
+      ))}
+    </ul>
   );
 }
 
