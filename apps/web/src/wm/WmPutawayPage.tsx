@@ -148,6 +148,7 @@ function Flow() {
         <ScanInput label="Código de la ubicación" onScan={(v) => confirm(v)} disabled={busy} testId="scan-location" placeholder="LOC-…" />
       </div>
       {override && (
+        <div data-testid="override-panel">
         <SupervisorAuth
           title={`¿Ubicar en ${override.scanned} en vez de ${task.target?.code ?? '?'}?`}
           exceptionType="PUTAWAY_LOCATION_OVERRIDE"
@@ -159,6 +160,7 @@ function Flow() {
           onSelf={(reason) => confirm(override.scanned, { reason })}
           onCancel={() => setOverride(null)}
         />
+        </div>
       )}
       {options && (
         <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="location-chooser">
