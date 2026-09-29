@@ -113,15 +113,15 @@ function DayList({ list, startFont, tick }: { list: Delivery[]; startFont: strin
     ul.style.fontSize = startFont;
     let scale = 1;
     // shrink step by step until the content fits the box (or the type gets too small to be worth reading from afar)
-    for (let i = 0; i < 20 && ul.scrollHeight > ul.clientHeight + 1 && scale > 0.3; i++) {
+    for (let i = 0; i < 20 && ul.scrollHeight > ul.clientHeight + 1 && scale > 0.25; i++) {
       scale *= 0.92;
       ul.style.fontSize = `calc(${startFont} * ${scale.toFixed(3)})`;
     }
   }, [list, startFont, tick, size]);
   return (
-    <ul ref={ref} className="flex min-h-0 flex-1 flex-col gap-1 overflow-hidden">
+    <ul ref={ref} className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ gap: '0.25em' }}>
       {list.map((i) => (
-        <li key={i.id} className={`rounded-lg bg-slate-800/80 px-2 py-1 ${i.status === 'DONE' ? 'opacity-50' : ''}`}>
+        <li key={i.id} className={`rounded-lg bg-slate-800/80 ${i.status === 'DONE' ? 'opacity-50' : ''}`} style={{ padding: '0.2em 0.45em' }}>
           <div className={`text-[1em] font-black leading-tight ${i.status === 'DONE' ? 'line-through' : ''}`}>{i.delivery_time && <span className="mr-1 text-amber-300">{i.delivery_time}</span>}{i.title}</div>
           {i.notes && <div className="text-[0.75em] leading-tight text-slate-300">{i.notes}</div>}
         </li>
