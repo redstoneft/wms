@@ -771,6 +771,8 @@ export interface PickScanResult {
   remaining?: Qty;
   full_pallet?: boolean;
   picked?: Qty;
+  /** QTY step: pieces registered beyond the line that the order still needed (taken from its other lines of the product) */
+  absorbed?: Qty;
   outbound_lpn?: string;
   task_completed?: boolean;
   /** LOCATION step: the pallet had been moved in the system and was found at the scanned position */

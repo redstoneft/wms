@@ -111,6 +111,23 @@ interface CandidateBalance {
  * active RESERVE/PICKING locations is eligible (quarantine/blocked/damaged
  * can never be allocated, by construction).
  */
+/**
+ * FULL_PALLET: whole pallets first (largest that still fits what is left), and the remainder from the smallest pallet
+ * that covers it, so as few pallets as possible are broken. Re-evaluated after every take, not a fixed sort.
+ */
+function fewestBrokenPallets<T extends { qty: bigint }>(cands: T[], remaining: bigint): T[] {
+  const left = [...cands];
+  const out: T[] = [];
+  while (remaining > 0n && left.length) {
+    const fits = left.filter((c) => c.qty <= remaining);
+    const pick = fits.length ? fits.reduce((m, c) => (c.qty > m.qty ? c : m)) : left.reduce((m, c) => (c.qty < m.qty ? c : m));
+    out.push(pick);
+    left.splice(left.indexOf(pick), 1);
+    remaining -= pick.qty < remaining ? pick.qty : remaining;
+  }
+  return [...out, ...left];
+}
+
 export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id: string; strategy?: AllocationStrategy; allow_partial: boolean }) {
   const o = await lockOrder(tx, input.order_id);
   if (!['ACCEPTED', 'PARTIALLY_ALLOCATED', 'PICKED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}; only accepted orders can be allocated`);
@@ -146,11 +163,13 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
          CASE WHEN ${strategy} = 'LOCATION' THEN loc.pick_sequence END ASC NULLS LAST,
          CASE WHEN ${strategy} = 'CASE_PIECE' THEN (loc.location_type = 'PICKING') END DESC,
          CASE WHEN ${strategy} = 'FULL_PALLET' THEN (b.qty <= ${remaining}) END DESC,
-         CASE WHEN ${strategy} = 'FULL_PALLET' THEN b.qty END DESC,
+         CASE WHEN ${strategy} = 'FULL_PALLET' AND b.qty <= ${remaining} THEN b.qty END DESC,
+         CASE WHEN ${strategy} = 'FULL_PALLET' AND b.qty > ${remaining} THEN b.qty END ASC,
          l.created_at ASC, l.code ASC`;
     // Lock order everywhere is LPN → balance. Candidates are read unlocked and re-checked under the LPN lock,
     // so a concurrent allocation of the same pallet is seen (smaller AVAILABLE) instead of double-allocated.
-    for (const c of candidates) {
+    const ordered = strategy === 'FULL_PALLET' ? fewestBrokenPallets(candidates, remaining) : candidates;
+    for (const c of ordered) {
       if (remaining <= 0n) break;
       const lpn = await lockLpn(tx, c.lpn_id);
       if (lpn.status !== 'STORED') continue;

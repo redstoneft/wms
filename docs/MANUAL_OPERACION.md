@@ -68,10 +68,10 @@ Regla que se conserva: nadie puede autorizar con sus propias credenciales una ex
 ## PICKING (surtido)
 
 1. `Almacén → Surtir` → **Mis tareas** → elija la tarea (pedido) → **INICIAR**.
-2. Por cada línea, en orden de ruta:
+2. Por cada línea, en orden de ruta (o en el orden que prefiera: el botón **Elegir otro producto** muestra las líneas pendientes y se toca la que se va a surtir):
    * Escanee la **UBICACIÓN** indicada.
    * Escanee el **LPN** del pallet (o el código del producto).
-   * Teclee la **CANTIDAD** tomada (cajas/piezas).
+   * Teclee la **CANTIDAD** tomada (cajas/piezas). Si el pedido pide más de ese producto en otras líneas (por ejemplo la línea dice 64 pero la tarima trae 480 y el pedido necesita 516), se puede capturar la tarima completa: el sistema toma las piezas de las otras líneas del producto (que se recortan o desaparecen) y avisa cuántas venían de ahí. Solo rechaza cuando el pedido ya no necesita tantas o la tarima no las tiene.
 3. Si el sistema pide un pallet completo, escanee el LPN y confirme la cantidad total: ese pallet será el que se embarca.
 4. Si es parcial, el producto va al **pallet de salida** que indica la pantalla (LPN nuevo): pegue su etiqueta.
 5. Errores: `UBICACIÓN INCORRECTA`, `SKU INCORRECTO`, `CANTIDAD EXCEDIDA` bloquean y suenan. Corrija y repita. Excepción: si la ubicación escaneada **tiene una tarima del mismo producto**, el sistema no rechaza: cambia la línea a esa tarima (avisa *TARIMA CAMBIADA*) y se sigue escaneando ahí; lo ya surtido de la tarima original queda registrado y, si la nueva no alcanza, el resto sigue en la original. Si la tarima esperada fue movida en el sistema y se escanea donde está ahora, también se acepta.

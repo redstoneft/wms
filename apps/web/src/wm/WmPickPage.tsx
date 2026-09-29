@@ -39,6 +39,9 @@ function Flow() {
   const seeAll = true;
   const tasks = useQuery({ queryKey: ['pick-tasks', 'all'], queryFn: () => pickingApi.tasks({ status: 'PENDING,IN_PROGRESS', mine: 'false' }), refetchInterval: 10_000 });
   const [taskId, setTaskId] = useState<string | null>(null);
+  // the picker may choose which product to pick next instead of following the route
+  const [chosenLineId, setChosenLineId] = useState<string | null>(null);
+  const [linePicker, setLinePicker] = useState(false);
   const view = useQuery({ queryKey: ['pick-task', taskId], queryFn: () => pickingApi.task(taskId!), enabled: !!taskId });
   const [busy, setBusy] = useState(false);
   const [completed, setCompleted] = useState<PickTaskView | null>(null);
@@ -128,7 +131,7 @@ function Flow() {
       if (step === 'LOCATION' && d.relocated_from) wm.warn(`TARIMA CAMBIADA · aquí toma ${d.expected_lpn} (${fmtQty(d.relocated?.qty ?? '0')} pzas)${toBigInt(d.relocated?.leftover ?? '0') > 0n ? ` · ${fmtQty(d.relocated!.leftover)} siguen en ${d.relocated_from}` : ''}`);
       else if (step === 'LOCATION') wm.ok(`UBICACIÓN OK · toma ${d.expected_lpn}`);
       else if (step === 'LPN') wm.ok(`PALLET OK · faltan ${fmtQty(d.remaining ?? '0')}`);
-      else if (d.next === 'NEXT_LINE') wm.ok(d.task_completed ? 'PEDIDO SURTIDO COMPLETO' : 'LÍNEA COMPLETA · siguiente');
+      else if (d.next === 'NEXT_LINE') wm.ok(d.task_completed ? 'PEDIDO SURTIDO COMPLETO' : toBigInt(d.absorbed ?? '0') > 0n ? `LÍNEA COMPLETA · ${fmtQty(d.absorbed!)} pzas venían de otras líneas` : 'LÍNEA COMPLETA · siguiente');
       else wm.ok(`REGISTRADO · faltan ${fmtQty(d.remaining ?? '0')}`);
       const v = await pickingApi.task(taskId);
       qc.setQueryData(['pick-task', taskId], v);
@@ -184,7 +187,9 @@ function Flow() {
         onCancelled={() => { setTaskId(null); setCompleted(null); void qc.invalidateQueries({ queryKey: ['pick-tasks'] }); }}
       />
     );
-  const line = nextLine(v, user?.id);
+  const chosen = chosenLineId ? v.lines.find((l) => l.id === chosenLineId && (l.status === 'PENDING' || (l.status === 'IN_PROGRESS' && (!l.picker_id || l.picker_id === user?.id)))) ?? null : null;
+  const line = chosen ?? nextLine(v, user?.id);
+  const openLines = v.lines.filter((l) => (l.status === 'PENDING' || l.status === 'IN_PROGRESS') && (!l.picker_id || l.picker_id === user?.id || l.scan_step === 0));
   const busyByOthers = othersBusy(v, user?.id);
   const done = v.lines.filter((l) => l.status === 'PICKED' || l.status === 'SHORT').length;
   const head = (
@@ -258,6 +263,23 @@ function Flow() {
     <div>
       <StepBar text={stepNo === 0 ? `LÍNEA ${line.sequence} · 1 VE A LA UBICACIÓN Y ESCANÉALA` : stepNo === 1 ? `LÍNEA ${line.sequence} · 2 ESCANEA EL PALLET O PRODUCTO` : `LÍNEA ${line.sequence} · 3 CANTIDAD`} />
       {head}
+      {openLines.length > 1 && (
+        <button type="button" className="mb-2 w-full rounded-2xl border-2 border-sky-500 py-2 text-sm font-bold text-sky-300" onClick={() => setLinePicker(!linePicker)} data-testid="line-picker">
+          {linePicker ? 'Cerrar lista' : `Elegir otro producto (${openLines.length} pendientes)`}
+        </button>
+      )}
+      {linePicker && (
+        <ul className="mb-3 grid gap-1" data-testid="line-list">
+          {openLines.map((l) => (
+            <li key={l.id}>
+              <button type="button" className={`w-full rounded-xl px-3 py-2 text-left ${l.id === line.id ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-100'}`} onClick={() => { setChosenLineId(l.id); setLinePicker(false); setChooser(null); setShortDlg(null); }}>
+                <div className="font-mono text-base font-black">{l.sku_code} · {fmtQty(toBigInt(l.qty) - toBigInt(l.picked_qty))} pzas{l.full_pallet ? ' · tarima completa' : ''}</div>
+                <div className="text-xs text-slate-300">{l.sku_description} · {l.location_code} · {l.lpn_code}{l.status === 'IN_PROGRESS' ? ' · iniciada' : ''}</div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <OutboundPallets compact taskId={v.task.id} pallets={v.pallets} orderDestination={v.order.destination} busy={busy} setBusy={setBusy} onChanged={(pallets) => qc.setQueryData(['pick-task', v.task.id], { ...v, pallets })} />
       <div className="grid gap-2 sm:grid-cols-2">
         <BigValue label="Ubicación" value={line.location_code} tone={stepNo >= 1 ? 'ok' : 'accent'} testId="pick-location" />

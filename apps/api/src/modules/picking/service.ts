@@ -316,15 +316,24 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
       if (input.qty === undefined || !input.uom_code) throw new RuleError('QTY_REQUIRED', 'quantity and unit of measure are required');
       const uom = input.uom_code;
       const { base } = await toBaseQty(tx, line.sku_id, input.qty, uom);
-      const remaining = line.qty - line.picked_qty;
+      let remaining = line.qty - line.picked_qty;
+      let lineQty = line.qty;
+      let absorbed = 0n;
       if (base > remaining) {
-        throw blocked(ctx, task.id, line.id, 'QTY_EXCEEDED', `CANTIDAD EXCEDIDA — faltan ${remaining}, escaneaste ${base}`, { remaining: remaining.toString(), scanned: base.toString() });
+        // more than the line asks: fine when the ORDER still needs it and this pallet has it (the picker takes the whole
+        // pallet instead of walking to the other positions); the other pending lines of the product are trimmed
+        const extra = base - remaining;
+        const r = await absorbIntoLine(tx, ctx, { taskId: task.id, orderId: task.order_id, line, lpn: expectedLpn, extra });
+        if (!r.ok) throw blocked(ctx, task.id, line.id, 'QTY_EXCEEDED', `CANTIDAD EXCEDIDA — faltan ${remaining}, escaneaste ${base}. ${r.why}`, { remaining: remaining.toString(), scanned: base.toString(), why: r.why });
+        absorbed = extra;
+        lineQty += extra;
+        remaining = base;
       }
       let movementId: bigint;
       let outboundCode: string;
       // whole-pallet conversion only when the pallet really holds exactly what is left on the line (single SKU, all of it)
       const palletState = await tx.$queryRaw<{ total: bigint; skus: bigint }[]>`SELECT COALESCE(sum(qty),0)::bigint AS total, count(DISTINCT sku_id)::bigint AS skus FROM inventory_balances WHERE lpn_id = ${expectedLpn.id}::uuid AND qty > 0`;
-      const wholePallet = line.full_pallet && base === remaining && palletState[0]!.skus === 1n && palletState[0]!.total === remaining;
+      const wholePallet = base === remaining && palletState[0]!.skus === 1n && palletState[0]!.total === remaining;
       if (wholePallet) {
         // whole pallet becomes the outbound unit, in place
         movementId = await changeStatus(tx, ctx, { movement_type: 'PICK', lpn: expectedLpn, sku_id: line.sku_id, qty: base, from_status: 'ALLOCATED', to_status: 'PICKING', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line', reference_id: line.id });
@@ -354,13 +363,13 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
         if (left === 0) await tx.lpns.update({ where: { id: expectedLpn.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
       }
       const newPicked = line.picked_qty + base;
-      const done = newPicked === line.qty;
-      await tx.pick_task_lines.update({ where: { id: line.id }, data: { picked_qty: newPicked, status: done ? 'PICKED' : 'IN_PROGRESS', scan_step: done ? 0 : 2, picked_at: done ? new Date() : null } });
+      const done = newPicked === lineQty;
+      await tx.pick_task_lines.update({ where: { id: line.id }, data: { qty: lineQty, picked_qty: newPicked, status: done ? 'PICKED' : 'IN_PROGRESS', scan_step: done ? 0 : 2, picked_at: done ? new Date() : null } });
       await tx.allocations.update({ where: { id: line.allocation_id }, data: { picked_qty: { increment: base }, status: done ? 'PICKED' : 'ACTIVE' } });
       await tx.order_lines.update({ where: { id: line.order_line_id }, data: { picked_qty: { increment: base }, allocated_qty: { decrement: base } } });
-      await audit(tx, ctx, { action: 'pick.scan', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, sku: sku.code, qty: base.toString(), from_lpn: expectedLpn.code, to_lpn: outboundCode, movement_id: movementId.toString() } });
+      await audit(tx, ctx, { action: 'pick.scan', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, sku: sku.code, qty: base.toString(), absorbed: absorbed.toString(), from_lpn: expectedLpn.code, to_lpn: outboundCode, movement_id: movementId.toString() } });
       const completed = await maybeCompleteTask(tx, ctx, task.id);
-      return { ok: true, next: done ? 'NEXT_LINE' : 'QTY', line_id: line.id, picked: newPicked, remaining: line.qty - newPicked, outbound_lpn: outboundCode, task_completed: completed };
+      return { ok: true, next: done ? 'NEXT_LINE' : 'QTY', line_id: line.id, picked: newPicked, remaining: lineQty - newPicked, absorbed, outbound_lpn: outboundCode, task_completed: completed };
     }
   }
 }
@@ -382,6 +391,66 @@ function blocked(ctx: ActorContext, taskId: string, lineId: string, code: string
   return new RuleError(code, message, details).persistAfterRollback((tx2) =>
     audit(tx2, ctx, { action: `pick.blocked_${code.toLowerCase()}`, entity_type: 'pick_task', entity_id: taskId, after: { line: lineId, details } }),
   );
+}
+
+/**
+ * The picker registers more than the line asks (typically: takes the whole pallet). Allowed while the order still needs
+ * that much of the product: the extra comes first from the order's other untouched lines on the SAME pallet (merged into
+ * this one), then from what is AVAILABLE on this pallet (reserved here, released from the other pallets' lines, which
+ * shrink or are cancelled). Nothing moves in the ledger beyond ALLOCATE/DEALLOCATE; the pick itself follows.
+ */
+async function absorbIntoLine(
+  tx: Tx,
+  ctx: ActorContext,
+  p: { taskId: string; orderId: string; line: { id: string; qty: bigint; picked_qty: bigint; lpn_id: string; sku_id: string; allocation_id: string; order_line_id: string }; lpn: LpnRow; extra: bigint },
+): Promise<{ ok: true } | { ok: false; why: string }> {
+  const ol = await tx.order_lines.findUniqueOrThrow({ where: { id: p.line.order_line_id } });
+  const sku = await tx.skus.findUniqueOrThrow({ where: { id: p.line.sku_id }, select: { code: true } });
+  const lineRemaining = p.line.qty - p.line.picked_qty;
+  const orderNeedsBeyondLine = ol.required_qty - ol.picked_qty - lineRemaining;
+  if (p.extra > orderNeedsBeyondLine) return { ok: false, why: `El pedido solo necesita ${lineRemaining + (orderNeedsBeyondLine > 0n ? orderNeedsBeyondLine : 0n)} más de ${sku.code}.` };
+  let need = p.extra;
+  type L = { id: string; qty: bigint; allocation_id: string; lpn_id: string; full_pallet: boolean };
+  const shrinkLine = async (l: L, cut: bigint) => {
+    const left = l.qty - cut;
+    await tx.allocations.update({ where: { id: l.allocation_id }, data: left > 0n ? { qty: left } : { status: 'RELEASED' } });
+    await tx.pick_task_lines.update({ where: { id: l.id }, data: left > 0n ? { qty: left, full_pallet: false } : { status: 'CANCELLED', qty: l.qty } });
+  };
+  // 1) the order's other untouched lines on this same pallet: merged into this line (the reservation just changes hands)
+  const same = await tx.$queryRaw<L[]>`SELECT id, qty, allocation_id, lpn_id, full_pallet FROM pick_task_lines WHERE pick_task_id = ${p.taskId}::uuid AND order_line_id = ${p.line.order_line_id}::uuid AND id <> ${p.line.id}::uuid
+    AND status IN ('PENDING','IN_PROGRESS') AND picked_qty = 0 AND lpn_id = ${p.line.lpn_id}::uuid ORDER BY qty DESC FOR UPDATE`;
+  for (const l of same) {
+    if (need <= 0n) break;
+    const take = l.qty < need ? l.qty : need;
+    await shrinkLine(l, take);
+    need -= take;
+  }
+  // 2) what is still available on this pallet: reserve it here and release the same amount on the other pallets' lines
+  if (need > 0n) {
+    const avail = await getBalance(tx, p.lpn.id, p.line.sku_id, 'AVAILABLE');
+    const take = avail < need ? avail : need;
+    if (take > 0n) {
+      await changeStatus(tx, ctx, { movement_type: 'ALLOCATE', lpn: p.lpn, sku_id: p.line.sku_id, qty: take, from_status: 'AVAILABLE', to_status: 'ALLOCATED', order_id: p.orderId, task_id: p.taskId, reference_type: 'pick_line', reference_id: p.line.id, reason: `Toma de más en ${p.lpn.code}: ${take} se reservan aquí` });
+      let comp = take;
+      const others = await tx.$queryRaw<L[]>`SELECT id, qty, allocation_id, lpn_id, full_pallet FROM pick_task_lines WHERE pick_task_id = ${p.taskId}::uuid AND order_line_id = ${p.line.order_line_id}::uuid AND id <> ${p.line.id}::uuid
+        AND status IN ('PENDING','IN_PROGRESS') AND picked_qty = 0 AND lpn_id <> ${p.line.lpn_id}::uuid ORDER BY full_pallet ASC, qty ASC FOR UPDATE`;
+      for (const l of others) {
+        if (comp <= 0n) break;
+        const cut = l.qty < comp ? l.qty : comp;
+        const other = await lockLpn(tx, l.lpn_id);
+        await changeStatus(tx, ctx, { movement_type: 'DEALLOCATE', lpn: other, sku_id: p.line.sku_id, qty: cut, from_status: 'ALLOCATED', to_status: 'AVAILABLE', order_id: p.orderId, task_id: p.taskId, reference_type: 'pick_line', reference_id: l.id, reason: `Se tomó de ${p.lpn.code} en su lugar` });
+        await shrinkLine(l, cut);
+        comp -= cut;
+      }
+      // whatever was not released elsewhere covered a shortfall of the order line
+      await tx.order_lines.update({ where: { id: ol.id }, data: { allocated_qty: { increment: comp } } });
+      need -= take;
+    }
+  }
+  if (need > 0n) return { ok: false, why: `En ${p.lpn.code} solo hay ${p.extra - need} más de ${sku.code}.` };
+  await tx.allocations.update({ where: { id: p.line.allocation_id }, data: { qty: { increment: p.extra } } });
+  await audit(tx, ctx, { action: 'pick.line_absorbed', entity_type: 'pick_task', entity_id: p.taskId, after: { line: p.line.id, sku: sku.code, extra: p.extra.toString(), lpn: p.lpn.code } });
+  return { ok: true };
 }
 
 async function maybeCompleteTask(tx: Tx, ctx: ActorContext, taskId: string): Promise<boolean> {
