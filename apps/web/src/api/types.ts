@@ -773,6 +773,11 @@ export interface PickScanResult {
   picked?: Qty;
   outbound_lpn?: string;
   task_completed?: boolean;
+  /** LOCATION step: the pallet had been moved in the system and was found at the scanned position */
+  moved_from?: string;
+  /** LOCATION step: the scanned position holds the same product, so the line changed to that pallet */
+  relocated_from?: string;
+  relocated?: { line_id: Uuid; split: boolean; qty: Qty; leftover: Qty; to_lpn: string };
 }
 export interface StagingRow {
   id: Uuid;

@@ -99,7 +99,7 @@ export async function pickingRoutes(app: FastifyInstance) {
     return r.body;
   });
 
-  app.post('/picking/short', { preHandler: app.requirePermission('picking.assign') }, async (req) => {
+  app.post('/picking/short', { preHandler: app.requirePermission('picking.short') }, async (req) => {
     const body = zPickShort.parse(req.body);
     return withTx((tx) => svc.shortLine(tx, req.actor!, body));
   });

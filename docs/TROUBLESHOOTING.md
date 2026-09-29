@@ -10,7 +10,7 @@
 | `409 CONCURRENT_MODIFICATION` / `STALE_VERSION` | Otro usuario cambió el registro | Recargar y repetir |
 | `503 SERVICE_BUSY` | Pool de conexiones saturado | Reintentar; subir `max_connections`/pool; revisar bloqueos largos (`pg_stat_activity`) |
 | `422 INSUFFICIENT_INVENTORY` | Saldo AVAILABLE insuficiente en ese LPN/estado | Verificar inventario del LPN; quizá esté ALLOCATED/QUARANTINE |
-| `422 WRONG_LOCATION` | Escaneo de ubicación distinta a la indicada | Ir a la ubicación correcta o pedir autorización de override (put-away) |
+| `422 WRONG_LOCATION` | Escaneo de ubicación distinta a la indicada y sin el producto | Ir a la ubicación correcta o pedir autorización de override (put-away). En surtido, escanear una posición que sí tiene el producto cambia la línea a esa tarima en vez de rechazar |
 | `422 LOCATION_REJECTED` | Ubicación llena, bloqueada, sobrepeso, altura o incompatibilidad | Ver `details.reasons`; elegir otra ubicación o ajustar capacidad |
 | `422 RELEASE_BLOCKED` | La regla absoluta falló | Ver `blocking_reasons` (SKU faltante/sobrante/omitido, no verificado, incidencia HIGH/CRITICAL) y corregir cargando/descargando pallets |
 | `422 SAME_USER` | Surtidor intenta verificar su pedido | Otro verificador, o autorización `SAME_USER_VERIFICATION` de supervisor |

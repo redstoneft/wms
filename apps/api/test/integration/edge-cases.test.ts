@@ -306,11 +306,10 @@ describe('orders: cancellation during picking, partial allocation, short pick', 
     const t = await sup.post('/picking/tasks', { order_id: o.body.id });
     const v = await picker.post(`/picking/tasks/${t.body.task.id}/start`);
     const lines = v.body.lines as any[];
-    const noPerm = await picker.post('/picking/short', { pick_task_id: t.body.task.id, line_id: lines[0].id, reason: 'no hay producto' });
-    expect(noPerm.status).toBe(403);
+    // the picker closes the lines short from the handheld (permission picking.short); a supervisor can too
     let lastCompleted = false;
-    for (const line of lines) {
-      const short = await sup.post('/picking/short', { pick_task_id: t.body.task.id, line_id: line.id, reason: 'no hay producto' });
+    for (const [i, line] of lines.entries()) {
+      const short = await (i === 0 ? picker : sup).post('/picking/short', { pick_task_id: t.body.task.id, line_id: line.id, reason: 'no hay producto' });
       expect(short.status).toBe(200);
       lastCompleted = short.body.task_completed;
     }

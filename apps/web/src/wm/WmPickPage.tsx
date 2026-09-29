@@ -44,6 +44,33 @@ function Flow() {
   const [completed, setCompleted] = useState<PickTaskView | null>(null);
   // choosing the pallet: other pallets that hold the line's product
   const [chooser, setChooser] = useState<{ lineId: string; remaining: string; candidates: { lpn_code: string; location: string; available: string; enough: boolean; mixed: boolean }[]; selected: string } | null>(null);
+  // closing a line short from the handheld: what was not found is released and an incident is opened
+  const [shortDlg, setShortDlg] = useState<{ line: PickLine; reason: string; other: string } | null>(null);
+  const SHORT_REASONS = ['No hay producto', 'Producto dañado', 'No encuentro la tarima', 'Otro'];
+  const closeShort = async () => {
+    if (!taskId || !shortDlg) return;
+    const reason = shortDlg.reason === 'Otro' ? shortDlg.other.trim() : shortDlg.reason;
+    if (reason.length < 3) {
+      wm.warn('ESCRIBE EL MOTIVO');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await pickingApi.short({ pick_task_id: taskId, line_id: shortDlg.line.id, reason });
+      wm.warn(`FALTANTE REGISTRADO · ${fmtQty(r.deallocated)} pzas · incidencia ${r.incident}`);
+      setShortDlg(null);
+      const v = await pickingApi.task(taskId);
+      qc.setQueryData(['pick-task', taskId], v);
+      if (r.task_completed) {
+        setCompleted(v);
+        void qc.invalidateQueries({ queryKey: ['pick-tasks'] });
+      }
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   const openChooser = async (line: PickLine) => {
     if (!taskId) return;
     setBusy(true);
@@ -98,7 +125,8 @@ function Flow() {
     try {
       const r = await pickingApi.scan({ pick_task_id: taskId, line_id: line.id, step, scanned, qty, uom_code: uom }, api.newKey());
       const d = r.data;
-      if (step === 'LOCATION') wm.ok(`UBICACIÓN OK · toma ${d.expected_lpn}`);
+      if (step === 'LOCATION' && d.relocated_from) wm.warn(`TARIMA CAMBIADA · aquí toma ${d.expected_lpn} (${fmtQty(d.relocated?.qty ?? '0')} pzas)${toBigInt(d.relocated?.leftover ?? '0') > 0n ? ` · ${fmtQty(d.relocated!.leftover)} siguen en ${d.relocated_from}` : ''}`);
+      else if (step === 'LOCATION') wm.ok(`UBICACIÓN OK · toma ${d.expected_lpn}`);
       else if (step === 'LPN') wm.ok(`PALLET OK · faltan ${fmtQty(d.remaining ?? '0')}`);
       else if (d.next === 'NEXT_LINE') wm.ok(d.task_completed ? 'PEDIDO SURTIDO COMPLETO' : 'LÍNEA COMPLETA · siguiente');
       else wm.ok(`REGISTRADO · faltan ${fmtQty(d.remaining ?? '0')}`);
@@ -281,11 +309,37 @@ function Flow() {
           </button>
         )}
       </div>
+      {shortDlg && (
+        <div className="mt-3 rounded-2xl border-2 border-amber-400 bg-slate-900 p-3" data-testid="short-panel">
+          <div className="text-center text-lg font-black text-amber-300">NO HAY / FALTANTE · {shortDlg.line.sku_code}</div>
+          <div className="mt-1 text-center text-sm text-slate-300">
+            Se cierra la línea con lo surtido ({fmtQty(shortDlg.line.picked_qty)}). Faltan {fmtQty(remaining)}: se liberan de la reserva y se abre una incidencia.
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {SHORT_REASONS.map((r) => (
+              <button key={r} type="button" className={`rounded-2xl py-3 text-base font-bold ${shortDlg.reason === r ? 'bg-amber-400 text-amber-950' : 'bg-slate-700 text-white'}`} onClick={() => setShortDlg({ ...shortDlg, reason: r })}>
+                {r}
+              </button>
+            ))}
+          </div>
+          {shortDlg.reason === 'Otro' && <input className="mt-2 w-full rounded-xl bg-slate-800 px-3 py-3 text-lg text-white" placeholder="Escribe el motivo" value={shortDlg.other} onChange={(e) => setShortDlg({ ...shortDlg, other: e.target.value })} />}
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <BigButton tone="neutral" onClick={() => setShortDlg(null)}>
+              Cancelar
+            </BigButton>
+            <BigButton tone="warning" onClick={() => void closeShort()} disabled={busy} testId="short-confirm">
+              Confirmar faltante
+            </BigButton>
+          </div>
+        </div>
+      )}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <BigButton tone="neutral" onClick={() => setTaskId(null)}>
           Pausar tarea
         </BigButton>
-        <div className="rounded-2xl bg-slate-900 p-2 text-center text-xs text-slate-400">Faltantes (short) sólo por supervisor en modo oficina.</div>
+        <BigButton tone="warning" onClick={() => setShortDlg({ line, reason: 'No hay producto', other: '' })} disabled={busy || !!shortDlg || !!chooser} testId="short-open">
+          No hay / faltante
+        </BigButton>
       </div>
     </div>
   );

@@ -255,6 +255,27 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
     case 'LOCATION': {
       const scanned = (input.scanned ?? '').trim();
       if (scanned !== expectedLoc.barcode && scanned.toUpperCase() !== expectedLoc.code) {
+        const scannedLoc = await tx.locations.findFirst({ where: { warehouse_id: expectedLpn.warehouse_id, is_active: true, OR: [{ barcode: scanned }, { code: scanned.toUpperCase() }] } });
+        if (scannedLoc && expectedLpn.current_location_id === scannedLoc.id) {
+          // the pallet was moved (in the system) after the task was planned and the picker found it where it is now
+          await tx.pick_task_lines.update({ where: { id: line.id }, data: { location_id: scannedLoc.id, scan_step: 1, status: 'IN_PROGRESS', picker_id: ctx.userId } });
+          await audit(tx, ctx, { action: 'pick.line_location_updated', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, from: expectedLoc.code, to: scannedLoc.code, lpn: expectedLpn.code } });
+          return { ok: true, next: 'LPN', line_id: line.id, expected_lpn: expectedLpn.code, sku: sku.code, moved_from: expectedLoc.code };
+        }
+        if (scannedLoc) {
+          // the picker is at another position that holds the same product: the line changes to that pallet (same as "take from another pallet")
+          const remaining = line.qty - line.picked_qty;
+          const alt = await tx.$queryRaw<{ code: string; available: bigint }[]>`
+            SELECT l.code, b.qty AS available FROM lpns l JOIN inventory_balances b ON b.lpn_id = l.id AND b.sku_id = ${line.sku_id}::uuid AND b.status = 'AVAILABLE' AND b.qty > 0
+             WHERE l.current_location_id = ${scannedLoc.id}::uuid AND l.status = 'STORED' AND l.id <> ${expectedLpn.id}::uuid
+             ORDER BY (b.qty >= ${remaining}) DESC, b.qty DESC LIMIT 1`;
+          if (alt.length) {
+            const r = await relocatePickLine(tx, ctx, { pick_task_id: task.id, line_id: line.id, lpn_code: alt[0]!.code });
+            await tx.pick_task_lines.update({ where: { id: r.relocated.line_id }, data: { scan_step: 1, status: 'IN_PROGRESS', picker_id: ctx.userId } });
+            return { ok: true, next: 'LPN', line_id: r.relocated.line_id, expected_lpn: alt[0]!.code, sku: sku.code, relocated_from: expectedLpn.code, relocated: r.relocated };
+          }
+          throw blocked(ctx, task.id, line.id, 'WRONG_LOCATION', `UBICACIÓN INCORRECTA — esperada ${expectedLoc.code}; en ${scannedLoc.code} no hay ${sku.code}`, { expected: expectedLoc.code, scanned });
+        }
         throw blocked(ctx, task.id, line.id, 'WRONG_LOCATION', `UBICACIÓN INCORRECTA — esperada ${expectedLoc.code}`, { expected: expectedLoc.code, scanned });
       }
       if (expectedLpn.current_location_id !== expectedLoc.id) {
@@ -378,7 +399,7 @@ async function maybeCompleteTask(tx: Tx, ctx: ActorContext, taskId: string): Pro
 }
 
 /**
- * Supervisor closes a line short: the unpicked remainder is deallocated, an
+ * The picker (or a supervisor) closes a line short: the unpicked remainder is deallocated, an
  * incident is created, the line is SHORT. The order line keeps picked < required
  * so the release rule will block the shipment until resolved.
  */

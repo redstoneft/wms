@@ -46,6 +46,7 @@ export const PERMISSIONS = {
   'orders.adjust': 'Change the quantities of an order that was already picked (excess back to stock, shortfall picked again; admin only)',
   'picking.execute': 'Execute picking tasks',
   'picking.assign': 'Assign picking tasks',
+  'picking.short': 'Close a pick line short from the handheld: what is missing is released and an incident is opened',
   'verification.execute': 'Perform second-person verification',
   'verification.override_same_user': 'Authorize picker == verifier exception (supervisor)',
   'shipments.read': 'View shipments',
@@ -106,7 +107,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'receiving.read',
     'tasks.self_create',
   ],
-  PICKER: [...OPERATOR_COMMON, 'orders.read', 'picking.execute', 'labels.print', 'tasks.self_create'],
+  PICKER: [...OPERATOR_COMMON, 'orders.read', 'picking.execute', 'picking.short', 'labels.print', 'tasks.self_create'],
   VERIFIER: [...OPERATOR_COMMON, 'orders.read', 'verification.execute', 'shipments.read'],
   LOADER: [...OPERATOR_COMMON, 'orders.read', 'shipments.read', 'loading.execute'],
   INVENTORY_CONTROL: [

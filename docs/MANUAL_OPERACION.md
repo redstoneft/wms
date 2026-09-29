@@ -74,8 +74,8 @@ Regla que se conserva: nadie puede autorizar con sus propias credenciales una ex
    * Teclee la **CANTIDAD** tomada (cajas/piezas).
 3. Si el sistema pide un pallet completo, escanee el LPN y confirme la cantidad total: ese pallet será el que se embarca.
 4. Si es parcial, el producto va al **pallet de salida** que indica la pantalla (LPN nuevo): pegue su etiqueta.
-5. Errores: `UBICACIÓN INCORRECTA`, `SKU INCORRECTO`, `CANTIDAD EXCEDIDA` bloquean y suenan. Corrija y repita.
-6. Si no hay producto suficiente en la ubicación: **no invente cantidades**. Pulse **FALTA PRODUCTO** para avisar; el supervisor cerrará la línea como corta y se abrirá una incidencia.
+5. Errores: `UBICACIÓN INCORRECTA`, `SKU INCORRECTO`, `CANTIDAD EXCEDIDA` bloquean y suenan. Corrija y repita. Excepción: si la ubicación escaneada **tiene una tarima del mismo producto**, el sistema no rechaza: cambia la línea a esa tarima (avisa *TARIMA CAMBIADA*) y se sigue escaneando ahí; lo ya surtido de la tarima original queda registrado y, si la nueva no alcanza, el resto sigue en la original. Si la tarima esperada fue movida en el sistema y se escanea donde está ahora, también se acepta.
+6. Si no hay producto suficiente: **no invente cantidades**. Surta lo que sí haya (o nada) y, si tampoco hay en otra tarima (**Tomar de otra tarima**), pulse **NO HAY / FALTANTE**, elija el motivo (no hay producto, dañado, no encuentro la tarima, otro) y confirme. La línea se cierra con lo surtido (puede ser 0), lo que faltó se libera de la reserva, se abre una incidencia de surtido incompleto y la tarea sigue con la siguiente línea. El pedido queda con menos piezas que las pedidas; oficina decide si se ajusta el pedido (**Ajustar cantidades**) o se surte después.
 7. La tarea termina sola cuando todas las líneas están completas.
 
 ## STAGING
