@@ -367,8 +367,10 @@ export async function labelBatch(filter: LocationBatchFilter): Promise<{ title: 
   return { title, entries, first: { warehouse_id: first.warehouse_id, zone: first.zone, rack: first.rack } };
 }
 
-/** Self-contained HTML sheet (A4, 3 labels of 101.6 × 84 mm per page — the same stock as the company's other label apps) with Code128 barcodes as embedded PNGs. */
-export async function locationLabelSheetHtml(filter: LocationBatchFilter): Promise<string> {
+export type SheetPaper = 'A4' | 'LETTER';
+
+/** Self-contained HTML sheet (A4 or US Letter, 3 labels of 101.6 × 84 mm per page — the same stock as the company's other label apps) with Code128 barcodes as embedded PNGs. */
+export async function locationLabelSheetHtml(filter: LocationBatchFilter, paper: SheetPaper = 'A4'): Promise<string> {
   const { title, entries } = await labelBatch(filter);
   const rows = entries;
   const cells: string[] = [];
@@ -379,13 +381,13 @@ export async function locationLabelSheetHtml(filter: LocationBatchFilter): Promi
   }
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
-@page{size:A4;margin:8mm}body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000}
-.sheet{display:grid;grid-template-columns:101.6mm;gap:6mm;justify-content:center;padding:2mm}
+@page{size:${paper === 'LETTER' ? 'letter' : 'A4'};margin:${paper === 'LETTER' ? '5mm' : '8mm'}}body{margin:0;font-family:Helvetica,Arial,sans-serif;color:#000}
+.sheet{display:grid;grid-template-columns:101.6mm;gap:${paper === 'LETTER' ? '4mm' : '6mm'};justify-content:center;padding:${paper === 'LETTER' ? '1mm' : '2mm'}}
 .l{width:101.6mm;height:84mm;box-sizing:border-box;border:0.3mm dashed #888;padding:5mm 6mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;page-break-inside:avoid;break-inside:avoid}
 .code{font-size:11mm;font-weight:900;letter-spacing:0.3mm;font-family:Menlo,Consolas,monospace;white-space:nowrap}
 img{height:26mm;max-width:90mm}.bc{font-family:Menlo,Consolas,monospace;font-size:4.5mm}.meta{font-size:4.2mm;color:#222;text-align:center;line-height:1.35}
 .hdr{padding:4mm 6mm 0;font-size:4mm;color:#444}@media print{.hdr{display:none}}
-</style></head><body><div class="hdr">${esc(title)} · ${rows.length} etiquetas de 101.6 × 84 mm · imprimir al 100 % (sin ajustar a la página)</div><div class="sheet">${cells.join('')}</div></body></html>`;
+</style></head><body><div class="hdr">${esc(title)} · ${rows.length} etiquetas de 101.6 × 84 mm · hoja ${paper === 'LETTER' ? 'carta' : 'A4'} · imprimir al 100 % (sin ajustar a la página)</div><div class="sheet">${cells.join('')}</div></body></html>`;
 }
 
 /** Prints every location of a rack/zone on a Zebra printer, one label per position, in walking order. */

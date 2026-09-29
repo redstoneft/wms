@@ -39,12 +39,18 @@ export async function labelRoutes(app: FastifyInstance) {
         .trim()
         .optional()
         .transform((v) => (v && v.toUpperCase() === 'LPN' ? 'LPN' : 'LOCATION') as 'LOCATION' | 'LPN'),
+      /** sheet paper: A4 (default) or LETTER (carta) */
+      paper: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => (v && ['LETTER', 'CARTA'].includes(v.toUpperCase()) ? 'LETTER' : 'A4') as 'A4' | 'LETTER'),
     });
 
   /** Printable sheet (any printer / save as PDF) with one label per location of a rack or zone. */
   app.get('/labels/locations.html', { preHandler: app.requirePermission('labels.print') }, async (req, reply) => {
     const q = zBatch.parse(req.query);
-    const html = await locationLabelSheetHtml(q);
+    const html = await locationLabelSheetHtml(q, q.paper);
     await withTx((tx) => audit(tx, req.actor!, { action: 'labels.location_sheet', entity_type: 'rack', entity_id: q.rack_id ?? q.zone_id ?? q.warehouse_id ?? q.title ?? '-', after: { ...q, codes: q.codes?.length } }));
     reply.type('text/html; charset=utf-8');
     return html;

@@ -22,6 +22,10 @@ describe('location labels in batch (labelling a rack)', () => {
     const html = res.text;
     expect((html.match(/class="l"/g) ?? []).length).toBe(rackLocations);
     expect(html).toContain('data:image/png;base64,'); // Code128 embedded
+    expect(html).toContain('@page{size:A4');
+    const letter = await sup.raw('GET', `/labels/locations.html?rack_id=${rackId}&paper=letter`);
+    expect(letter.status).toBe(200);
+    expect(letter.text).toContain('@page{size:letter');
     const codes = [...html.matchAll(/<div class="code">([^<]+)<\/div>/g)].map((m) => m[1]);
     // column by column, floor up: P01 N01, P01 N02, P01 N03, P02 N01 …
     const ordered = await sql<{ code: string }>(`SELECT code FROM locations WHERE rack_id = '${rackId}' AND is_active ORDER BY position, level, code`);

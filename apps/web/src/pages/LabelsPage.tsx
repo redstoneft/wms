@@ -120,7 +120,10 @@ export default function LabelsPage() {
               Pedido para la app de etiquetas (.json)
             </a>
             <a className={`rounded-md px-3 py-2 text-center text-sm font-semibold ${looseList.length ? 'bg-slate-700 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'}`} href={labelsApi.sheetUrl({ codes: looseList.join(','), title: loose.title || undefined })} target="_blank" rel="noreferrer">
-              Hoja imprimible
+              Hoja imprimible (A4)
+            </a>
+            <a className={`rounded-md px-3 py-2 text-center text-sm font-semibold ${looseList.length ? 'bg-slate-700 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'}`} href={labelsApi.sheetUrl({ codes: looseList.join(','), title: loose.title || undefined, paper: 'LETTER' })} target="_blank" rel="noreferrer">
+              Hoja imprimible (carta)
             </a>
             <a className={`rounded-md px-3 py-2 text-center text-sm font-semibold ${looseList.length ? 'bg-slate-700 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'}`} href={labelsApi.zplUrl({ codes: looseList.join(','), title: loose.title || undefined })} download>
               Archivo ZPL
@@ -168,7 +171,10 @@ export default function LabelsPage() {
           </Field>
           <div className="flex flex-wrap items-end gap-2">
             <Button variant="secondary" disabled={!batchFilter} onClick={() => window.open(labelsApi.sheetUrl(batchFilter!), '_blank')} data-testid="labels-sheet">
-              Hoja para imprimir
+              Hoja para imprimir (A4)
+            </Button>
+            <Button variant="secondary" disabled={!batchFilter} onClick={() => window.open(labelsApi.sheetUrl({ ...batchFilter!, paper: 'LETTER' }), '_blank')}>
+              Hoja para imprimir (carta)
             </Button>
             <Button variant="secondary" disabled={!batchFilter} onClick={() => window.open(labelsApi.zplUrl(batchFilter!), '_blank')}>
               Descargar ZPL

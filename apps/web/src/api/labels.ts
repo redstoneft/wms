@@ -15,7 +15,7 @@ export const labelsApi = {
   history: (q?: { entity_id?: string; label_type?: string; limit?: number }) => api.get<LabelHistoryRow[]>('/labels/history', q),
   zpl: (id: string) => api.getText(`/labels/${id}/zpl`),
   /** Batch by rack/zone: printable sheet and ZPL are plain GET links (same-origin cookie); direct print is a POST. */
-  sheetUrl: (q: { rack_id?: string; zone_id?: string; codes?: string; title?: string; kind?: string }) => `/api/labels/locations.html?${new URLSearchParams(q as Record<string, string>)}`,
+  sheetUrl: (q: { rack_id?: string; zone_id?: string; codes?: string; title?: string; kind?: string; paper?: 'A4' | 'LETTER' }) => `/api/labels/locations.html?${new URLSearchParams(q as Record<string, string>)}`,
   zplUrl: (q: { rack_id?: string; zone_id?: string; codes?: string; title?: string; kind?: string }) => `/api/labels/locations.zpl?${new URLSearchParams(q as Record<string, string>)}`,
   embarqueUrl: (q: { rack_id?: string; zone_id?: string; codes?: string; title?: string; kind?: string }) => `/api/labels/locations.embarque.json?${new URLSearchParams(q as Record<string, string>)}`,
   /** WebUSB station (browser on the printer PC): claim queued labels and report the result. */
