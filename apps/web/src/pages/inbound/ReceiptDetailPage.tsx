@@ -261,10 +261,17 @@ function PutawayPlanCard({ receiptId }: { receiptId: string }) {
     mutationFn: () => inboundApi.closePutawayPlan(receiptId),
     onSuccess: (r) => {
       setConfirmClose(false);
-      toast.success(`Acomodo cerrado: ${r.planned.length} tarima(s)`, `${r.printed.length} etiqueta(s) enviadas a imprimir${r.failed.length ? ` · sin imprimir: ${r.failed.map((f) => `${f.lpn} (${f.error})`).join(', ')}` : ''}`);
+      if (r.failed.length) toast.error(`${r.placed.length} tarima(s) ubicadas, ${r.failed.length} no`, r.failed.map((f) => `${f.lpn} → ${f.target}: ${f.error}`).join(' · '));
+      else toast.success(`Acomodo cerrado: ${r.placed.length} tarima(s) ubicadas en su destino`);
       void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] });
+      void qc.invalidateQueries({ queryKey: ['receipt', receiptId] });
     },
     onError: (e) => toast.error('No se pudo cerrar el acomodo', e),
+  });
+  const printLabels = useMutation({
+    mutationFn: () => inboundApi.printPutawayLabels(receiptId),
+    onSuccess: (r) => (r.failed.length ? toast.error(`${r.printed.length} etiqueta(s) enviadas`, `Sin imprimir: ${r.failed.map((f) => `${f.lpn} (${f.error})`).join(', ')}`) : toast.success(`${r.printed.length} etiqueta(s) enviadas a imprimir`)),
+    onError: (e) => toast.error('No se pudieron imprimir', e),
   });
   const pallets = plan.data?.pallets ?? [];
   const pending = pallets.filter((p) => p.pending).length;
@@ -272,8 +279,8 @@ function PutawayPlanCard({ receiptId }: { receiptId: string }) {
   const q = edit?.filter.trim().toUpperCase() ?? '';
   const shown = edit ? (q ? edit.list.filter((o) => o.code.toUpperCase().includes(q) || o.code === edit.selected) : edit.list) : [];
   return (
-    <Card title={`Acomodo: dónde va cada tarima (${pending} por ubicar de ${pallets.length})`} className="mt-4" padded={false} actions={pending > 0 ? <Button onClick={() => setConfirmClose(true)} disabled={noTarget > 0} title={noTarget > 0 ? `${noTarget} tarima(s) sin destino` : undefined}>Cerrar acomodo e imprimir etiquetas</Button> : undefined}>
-      <div className="px-4 pt-3 text-xs text-slate-500">Elija aquí el destino de cada tarima. Los destinos <b>sugeridos</b> por el sistema no apartan el hueco: puede dárselo a otra tarima y la sugerida recibe otra propuesta. Un destino <b>elegido</b> sí queda apartado. El montacarguista lo confirma en el handheld (Ubicar) escaneando la tarima y la ubicación.</div>
+    <Card title={`Acomodo: dónde va cada tarima (${pending} por ubicar de ${pallets.length})`} className="mt-4" padded={false} actions={pending > 0 ? <div className="flex gap-2"><Button variant="secondary" onClick={() => printLabels.mutate()} loading={printLabels.isPending}>Imprimir etiquetas ({pending})</Button><Button onClick={() => setConfirmClose(true)} disabled={noTarget > 0} title={noTarget > 0 ? `${noTarget} tarima(s) sin destino` : undefined}>Cerrar acomodo</Button></div> : undefined}>
+      <div className="px-4 pt-3 text-xs text-slate-500">Elija aquí el destino de cada tarima. Los destinos <b>sugeridos</b> por el sistema no apartan el hueco: puede dárselo a otra tarima y la sugerida recibe otra propuesta. Un destino <b>elegido</b> sí queda apartado. Luego, o el montacarguista confirma cada tarima en el handheld (Ubicar) escaneando, o <b>Cerrar acomodo</b> las ubica todas en el sistema sin escanear.</div>
       <Table
         rows={pallets}
         rowKey={(p) => p.lpn_id}
@@ -287,7 +294,7 @@ function PutawayPlanCard({ receiptId }: { receiptId: string }) {
         ]}
       />
       <ConfirmDialog open={confirmClose} onClose={() => setConfirmClose(false)} onConfirm={() => closePlan.mutate()} title="Cerrar el acomodo de esta recepción" loading={closePlan.isPending} confirmLabel="Cerrar e imprimir">
-        Los {pending} destinos quedan fijos (los huecos se apartan) y se imprime la etiqueta de cada tarima con su destino en la impresora predeterminada.
+        Las {pending} tarima(s) pendientes quedan <b>ubicadas en su destino en el sistema</b>, igual que si se escaneara cada una en Ubicar. Hágalo cuando físicamente ya estén (o vayan) ahí. Las etiquetas no se imprimen solas: use <b>Imprimir etiquetas</b> antes si las necesita.
       </ConfirmDialog>
       <Modal open={!!edit} onClose={() => setEdit(null)} title={edit ? `Destino de ${edit.pallet.lpn_code}` : ''} footer={<><Button variant="secondary" onClick={() => save.mutate({ other: true })} loading={save.isPending}>Otra automática</Button><Button variant="secondary" onClick={() => setEdit(null)}>Cancelar</Button><Button onClick={() => save.mutate({ location_code: edit!.selected })} loading={save.isPending}>Asignar</Button></>}>
         {edit && (

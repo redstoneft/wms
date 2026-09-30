@@ -20,7 +20,10 @@ export const inboundApi = {
   /** every pallet of a receipt with its put-away destination */
   putawayPlan: (id: string) => api.get<ReceiptPutawayPlan>(`/receipts/${id}/putaway`),
   /** every pending pallet gets its destination fixed (slots reserved) and its label printed with the destination */
-  closePutawayPlan: (id: string, body: { printer_id?: string; print?: boolean } = {}) => api.post<{ planned: { lpn: string; target: string | null }[]; printed: string[]; failed: { lpn: string; error: string }[] }>(`/receipts/${id}/putaway/close`, body),
+  /** puts every pending pallet of the receipt away at its destination without scanning (what fails is reported) */
+  closePutawayPlan: (id: string) => api.post<{ placed: { lpn: string; location: string }[]; failed: { lpn: string; target: string; error: string }[] }>(`/receipts/${id}/putaway/close`, {}),
+  /** prints the labels (with destination) of the receipt's pallets still to be put away; only on request */
+  printPutawayLabels: (id: string, body: { printer_id?: string; lpn_codes?: string[] } = {}) => api.post<{ printed: string[]; failed: { lpn: string; error: string }[] }>(`/receipts/${id}/putaway/print`, body),
   receipt: (id: string) => api.get<Receipt>(`/receipts/${id}`),
   createReceipt: (body: Record<string, unknown>) => api.post<Receipt>('/receipts', body),
   /** idempotent */

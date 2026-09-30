@@ -105,20 +105,27 @@ describe('closing the plan', () => {
     const p = plan.body.pallets[0] as { lpn_code: string; task_id: string; target: string | null };
     // simulate a pallet without destination
     await sql(`UPDATE putaway_tasks SET suggested_location_id = NULL WHERE id = '${p.task_id}'`);
-    const incomplete = await fork.post(`/receipts/${r.body.id}/putaway/close`, { print: false });
+    const incomplete = await fork.post(`/receipts/${r.body.id}/putaway/close`, {});
     expect(incomplete.status).toBe(422);
     expect(incomplete.body.error).toBe('PLAN_INCOMPLETE');
     expect(incomplete.body.details.missing).toEqual([p.lpn_code]);
     // give it one and close
     const opts = await fork.get(`/putaway/tasks/${p.task_id}/options`);
     expect((await fork.post(`/putaway/tasks/${p.task_id}/choose`, { location_code: opts.body.options[0].code })).status).toBe(200);
+    // labels only when asked (never automatically); no printer in the test database → reported as not printed
+    const pr = await fork.post(`/receipts/${r.body.id}/putaway/print`, {});
+    expect(pr.status, JSON.stringify(pr.body)).toBe(200);
+    expect(pr.body.printed.length + pr.body.failed.length).toBe(1);
+    // closing puts the pallet away at its destination without scanning
     const closed = await fork.post(`/receipts/${r.body.id}/putaway/close`, {});
     expect(closed.status, JSON.stringify(closed.body)).toBe(200);
-    expect(closed.body.planned).toEqual([{ lpn: p.lpn_code, target: opts.body.options[0].code }]);
-    // no printer in the test database: the label is reported as not printed, the plan is still closed
-    expect(closed.body.printed.length + closed.body.failed.length).toBe(1);
-    const task = await sql<{ planned: boolean }>(`SELECT planned FROM putaway_tasks WHERE id = '${p.task_id}'`);
-    expect(task[0]!.planned).toBe(true);
-    expect((await fork.post(`/receipts/${r.body.id}/putaway/close`, { print: false })).status).toBe(200); // idempotent while pending
+    expect(closed.body).toEqual({ placed: [{ lpn: p.lpn_code, location: opts.body.options[0].code }], failed: [] });
+    const task = await sql<{ status: string; planned: boolean }>(`SELECT status, planned FROM putaway_tasks WHERE id = '${p.task_id}'`);
+    expect(task[0]).toMatchObject({ status: 'COMPLETED', planned: true });
+    const after = await fork.get(`/receipts/${r.body.id}/putaway`);
+    expect(after.body.pallets[0]).toMatchObject({ pending: false, current_location: opts.body.options[0].code });
+    const pendingList = await fork.get('/receipts/pending-putaway');
+    expect(pendingList.body.find((x: { id: string }) => x.id === r.body.id)).toBeUndefined();
+    expect((await fork.post(`/receipts/${r.body.id}/putaway/close`, {})).status).toBe(422); // nothing pending any more
   });
 });

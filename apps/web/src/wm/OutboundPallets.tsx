@@ -32,7 +32,6 @@ export function OutboundPallets({ taskId, pallets, orderDestination, onChanged, 
       wm.ok(`TARIMA ${r.lpn_code} CERRADA · ${fmtQty(r.qty)} PZAS${r.destination ? ` · ${r.destination}` : ''} · LO SIGUIENTE VA EN UNA NUEVA`);
       setClosing(null);
       onChanged(r.pallets);
-      await print(r.lpn_code);
     } catch (e) {
       wm.fail(e);
     } finally {

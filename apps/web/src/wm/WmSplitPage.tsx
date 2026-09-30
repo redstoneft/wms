@@ -56,9 +56,6 @@ function Flow() {
       const r = await pickingApi.splitPallet({ from_lpn_code: src.code, sku_code: sku.sku_code, qty: qty.qty, uom_code: qty.uom, to_lpn_code: target.mode === 'EXISTING' ? target.lpn : undefined, destination: target.destination.trim() || undefined }, api.newKey());
       setResult(r.data);
       wm.ok(r.replayed ? 'YA REGISTRADO' : `${fmtQty(r.data.qty)} PZAS DE ${r.data.sku} → ${r.data.to_lpn}${r.data.created ? ' (NUEVA)' : ''}`);
-      if (r.data.created) {
-        try { await labelsApi.print({ label_type: 'LPN', entity_id: r.data.to_lpn }); wm.ok(`ETIQUETA ${r.data.to_lpn} ENVIADA`); } catch (e) { wm.fail(e); }
-      }
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -81,7 +78,7 @@ function Flow() {
         {result.destination && <div className="mt-2 text-center text-violet-300">Entrega: {result.destination}</div>}
         {result.from_left === '0' && <div className="mt-2 text-center text-sm text-amber-300">La tarima de origen quedó vacía: ya no se usa.</div>}
         <div className="mt-3 grid gap-2">
-          <BigButton tone="primary" onClick={() => void print(result.to_lpn)} disabled={busy}>Reimprimir etiqueta de {result.to_lpn}</BigButton>
+          <BigButton tone="primary" onClick={() => void print(result.to_lpn)} disabled={busy}>Imprimir etiqueta de {result.to_lpn}</BigButton>
           {result.from_left !== '0' && <BigButton tone="neutral" onClick={() => void print(result.from_lpn)} disabled={busy}>Reimprimir etiqueta de {result.from_lpn}</BigButton>}
           <BigButton tone="neutral" onClick={() => { const keep = src; reset(); if (keep && result.from_left !== '0') void load(keep.code); }} testId="split-again">Dividir otra vez</BigButton>
           <BigButton tone="neutral" onClick={() => nav('/wm/stage')}>Ir a staging</BigButton>

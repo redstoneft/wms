@@ -44,10 +44,23 @@ function Flow() {
     setBusy(true);
     try {
       const r = await inboundApi.closePutawayPlan(receiptId);
-      wm.ok(`ACOMODO CERRADO · ${r.planned.length} tarimas · ${r.printed.length} etiquetas enviadas${r.failed.length ? ` · ${r.failed.length} sin imprimir` : ''}`);
-      if (r.failed.length) wm.warn(`SIN IMPRIMIR: ${r.failed.map((f) => f.lpn).join(', ')} (${r.failed[0]!.error})`);
+      if (r.failed.length) wm.warn(`${r.placed.length} TARIMAS UBICADAS · NO SE PUDO: ${r.failed.map((f) => `${f.lpn} (${f.error})`).join(' · ')}`);
+      else wm.ok(`ACOMODO CERRADO · ${r.placed.length} TARIMAS UBICADAS EN SU DESTINO`);
       void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] });
       void qc.invalidateQueries({ queryKey: ['receipts-pending-putaway'] });
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const printLabels = async () => {
+    if (!receiptId) return;
+    setBusy(true);
+    try {
+      const r = await inboundApi.printPutawayLabels(receiptId);
+      if (r.failed.length) wm.warn(`${r.printed.length} ETIQUETAS ENVIADAS · SIN IMPRIMIR: ${r.failed.map((f) => f.lpn).join(', ')} (${r.failed[0]!.error})`);
+      else wm.ok(`${r.printed.length} ETIQUETAS ENVIADAS A IMPRIMIR`);
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -124,6 +137,7 @@ function Flow() {
   return (
     <div>
       <StepBar text={`${plan.data?.receipt.receipt_number ?? ''} · TOCA UNA TARIMA PARA ELEGIR SU DESTINO`} />
+      <div className="mb-2 rounded-2xl bg-slate-900 px-3 py-2 text-xs text-slate-400">Cerrar acomodo ubica en el sistema todas las tarimas pendientes en su destino, sin escanearlas. Hazlo cuando ya estén (o vayan) físicamente ahí.</div>
       <div className="mb-2 flex items-center justify-between rounded-2xl bg-slate-800 px-4 py-2">
         <span className="text-sm text-slate-300">{pallets.length} tarima(s)</span>
         <span className="text-sm font-bold text-amber-300">{pending} por ubicar</span>
@@ -157,9 +171,14 @@ function Flow() {
         )}
       />
       {pending > 0 && (
-        <BigButton tone="success" className="mt-3" onClick={() => void closePlan()} disabled={busy || pallets.some((p) => p.pending && !p.target)} testId="plan-close">
-          Cerrar acomodo e imprimir etiquetas ({pending})
-        </BigButton>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <BigButton tone="success" onClick={() => void closePlan()} disabled={busy || pallets.some((p) => p.pending && !p.target)} testId="plan-close">
+            Cerrar acomodo ({pending})
+          </BigButton>
+          <BigButton tone="primary" onClick={() => void printLabels()} disabled={busy} testId="plan-print">
+            Imprimir etiquetas ({pending})
+          </BigButton>
+        </div>
       )}
       {pallets.some((p) => p.pending && !p.target) && <div className="mt-1 text-center text-sm text-amber-300">Hay tarimas sin destino: asígnales uno para poder cerrar.</div>}
       <BigButton tone="neutral" className="mt-3" onClick={() => setReceiptId(null)} disabled={busy}>
