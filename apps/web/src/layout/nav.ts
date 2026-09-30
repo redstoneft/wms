@@ -82,6 +82,7 @@ export const WM_NAV: NavItem[] = [
   { to: '/wm/return', label: 'Devolución', icon: '↩', perms: ['returns.manage'], wm: true },
   { to: '/wm/deliveries', label: 'Entregas', icon: '📅', perms: ['deliveries.manage'], wm: true },
   { to: '/wm/putaway', label: 'Ubicar', icon: '⇲', perms: ['putaway.execute'], wm: true },
+  { to: '/wm/putaway-plan', label: 'Acomodo por recepción', icon: '⊞', perms: ['putaway.execute'], wm: true },
   { to: '/wm/transfer', label: 'Traslados', icon: '⇄', perms: ['transfers.execute'], wm: true },
   { to: '/wm/assembly', label: 'Armado', icon: '⚒', perms: ['assembly.execute'], wm: true },
   { to: '/wm/replenish', label: 'Reabasto', icon: '⇈', perms: ['replenishment.execute'], wm: true },

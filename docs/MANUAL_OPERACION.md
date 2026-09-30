@@ -48,6 +48,9 @@ Sustituye al pizarrón de la puerta: `Almacén → Entregas`.
 
 ## PUT-AWAY (ubicar pallets)
 
+**Planear el acomodo de toda una recepción** (sin escanear una por una): en oficina, en la recepción, la tarjeta **Acomodo: dónde va cada tarima** lista todas las tarimas con su contenido, dónde están y su destino; con **Elegir destino** se busca la ubicación (por código, ej. R03-N02 o PISO-B) y se asigna. En el handheld está lo mismo en `Almacén → Acomodo por recepción`: se elige la recepción, se toca cada tarima y se le pone destino. Después el montacarguista confirma cada tarima en **Ubicar** escaneando la tarima y la ubicación asignada.
+
+
 1. `Almacén → Ubicar`. Escanee el **LPN** del pallet.
 2. La pantalla muestra en grande la **ubicación destino** (p. ej. `A-03-R05-N02-P04`) y el contenido.
 3. Lleve el pallet y escanee la **etiqueta de la ubicación**.

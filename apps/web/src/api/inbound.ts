@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Attachment, Container, Paged, PurchaseOrder, Receipt, ReceiveScanResult, ReceiveUndoResult } from './types';
+import type { Attachment, Container, Paged, PurchaseOrder, Receipt, ReceiptPutawayPlan, ReceiveScanResult, ReceiveUndoResult } from './types';
 
 export const inboundApi = {
   purchaseOrders: (q?: { status?: string; limit?: number }) => api.get<PurchaseOrder[]>('/purchase-orders', q),
@@ -15,6 +15,10 @@ export const inboundApi = {
     return api.upload<Attachment>(`/containers/${id}/photos`, fd);
   },
   receipts: (q?: { status?: string; container_id?: string; limit?: number }) => api.get<Receipt[]>('/receipts', q),
+  /** receipts that still have pallets waiting to be put away */
+  pendingPutaway: () => api.get<{ id: string; receipt_number: string; status: string; closed_at: string | null; container_number: string | null; pending: string; total: string }[]>('/receipts/pending-putaway'),
+  /** every pallet of a receipt with its put-away destination */
+  putawayPlan: (id: string) => api.get<ReceiptPutawayPlan>(`/receipts/${id}/putaway`),
   receipt: (id: string) => api.get<Receipt>(`/receipts/${id}`),
   createReceipt: (body: Record<string, unknown>) => api.post<Receipt>('/receipts', body),
   /** idempotent */

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { inboundApi } from '../../api/inbound';
+import { putawayApi } from '../../api/storage';
+import type { PutawayOption, ReceiptPutawayPallet } from '../../api/types';
 import { incidentsApi } from '../../api/incidents';
 import { ApiError } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
@@ -185,6 +187,8 @@ export default function ReceiptDetailPage() {
         />
       </Card>
 
+      {(r.lpns?.length ?? 0) > 0 && can('putaway.execute') && <PutawayPlanCard receiptId={r.id} />}
+
       <Card title={`Incidencias (${incidents.data?.total ?? 0})`} className="mt-4" padded={false}>
         <Table
           rows={incidents.data?.items}
@@ -233,5 +237,60 @@ export default function ReceiptDetailPage() {
         )}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/** Where each pallet of the receipt goes: the whole receipt on one table, destinations chosen here, confirmed by scanning in the handheld. */
+function PutawayPlanCard({ receiptId }: { receiptId: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const plan = useQuery({ queryKey: ['receipt-putaway', receiptId], queryFn: () => inboundApi.putawayPlan(receiptId), refetchInterval: 20_000 });
+  const [edit, setEdit] = useState<{ pallet: ReceiptPutawayPallet; list: PutawayOption[]; selected: string; filter: string } | null>(null);
+  const open = useMutation({
+    mutationFn: async (p: ReceiptPutawayPallet) => ({ p, r: await putawayApi.options(p.task_id!) }),
+    onSuccess: ({ p, r }) => (r.options.length ? setEdit({ pallet: p, list: r.options, selected: r.current ?? r.options[0]!.code, filter: '' }) : toast.error('Sin ubicación libre', `Ninguna ubicación acepta ${p.lpn_code}`)),
+    onError: (e) => toast.error('No se pudieron cargar las ubicaciones', e),
+  });
+  const save = useMutation({
+    mutationFn: (body: { location_code?: string; other?: boolean }) => putawayApi.choose(edit!.pallet.task_id!, body),
+    onSuccess: (r) => { toast.success(`${edit!.pallet.lpn_code} → ${r.target.code}`); setEdit(null); void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] }); },
+    onError: (e) => toast.error('No se pudo asignar', e),
+  });
+  const pallets = plan.data?.pallets ?? [];
+  const pending = pallets.filter((p) => p.pending).length;
+  const q = edit?.filter.trim().toUpperCase() ?? '';
+  const shown = edit ? (q ? edit.list.filter((o) => o.code.toUpperCase().includes(q) || o.code === edit.selected) : edit.list) : [];
+  return (
+    <Card title={`Acomodo: dónde va cada tarima (${pending} por ubicar de ${pallets.length})`} className="mt-4" padded={false}>
+      <div className="px-4 pt-3 text-xs text-slate-500">Elija aquí el destino de cada tarima. El montacarguista lo confirma en el handheld (Ubicar) escaneando la tarima y la ubicación; también puede cambiarlo ahí.</div>
+      <Table
+        rows={pallets}
+        rowKey={(p) => p.lpn_id}
+        empty="Sin tarimas"
+        columns={[
+          { key: 'l', header: 'LPN', render: (p) => <span className="font-mono font-semibold">{p.lpn_code}</span> },
+          { key: 'c', header: 'Contenido', render: (p) => p.contents.map((c) => `${c.sku} × ${fmtQty(c.qty)}`).join(', ') || '—' },
+          { key: 'w', header: 'Está en', render: (p) => <span className="font-mono">{p.current_location ?? '—'}</span> },
+          { key: 'd', header: 'Destino', render: (p) => (p.pending ? <span className="font-mono font-semibold text-violet-700">{p.target ?? 'sin destino'}</span> : <span className="text-emerald-700">ubicada</span>) },
+          { key: 'a', header: '', render: (p) => (p.pending ? <Button variant="secondary" onClick={() => open.mutate(p)} loading={open.isPending && open.variables?.lpn_id === p.lpn_id}>Elegir destino</Button> : null) },
+        ]}
+      />
+      <Modal open={!!edit} onClose={() => setEdit(null)} title={edit ? `Destino de ${edit.pallet.lpn_code}` : ''} footer={<><Button variant="secondary" onClick={() => save.mutate({ other: true })} loading={save.isPending}>Otra automática</Button><Button variant="secondary" onClick={() => setEdit(null)}>Cancelar</Button><Button onClick={() => save.mutate({ location_code: edit!.selected })} loading={save.isPending}>Asignar</Button></>}>
+        {edit && (
+          <div className="grid gap-3">
+            <div className="text-sm text-slate-600">{edit.pallet.contents.map((c) => `${c.sku} × ${fmtQty(c.qty)}`).join(' · ')} · destino actual <span className="font-mono">{edit.pallet.target ?? '—'}</span></div>
+            <Input value={edit.filter} onChange={(e) => setEdit({ ...edit, filter: e.target.value })} placeholder={`Buscar entre ${edit.list.length} ubicaciones (ej. R03-N02 o PISO-B)`} className="font-mono" />
+            <select value={edit.selected} onChange={(e) => setEdit({ ...edit, selected: e.target.value })} size={Math.min(12, Math.max(3, shown.length))} className="w-full rounded-md border border-slate-300 p-1 font-mono text-sm">
+              {shown.map((o) => (
+                <option key={o.code} value={o.code}>
+                  {o.code}{o.has_same_sku ? ' · ya tiene este producto' : ''}{o.pallet_capacity > 0 ? ` · ${o.lpn_count}/${o.pallet_capacity}` : ''}{o.is_current ? ' (actual)' : ''}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-slate-500">{shown.length} de {edit.list.length} ubicaciones · primero las que ya tienen el producto</div>
+          </div>
+        )}
+      </Modal>
+    </Card>
   );
 }

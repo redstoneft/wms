@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReason, zReceiveScan, zReceiveUndo, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
-import { trainingWhere } from '../../lib/training-scope.js';
+import { includeTraining, trainingWhere } from '../../lib/training-scope.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
@@ -107,6 +107,33 @@ export async function inboundRoutes(app: FastifyInstance) {
     ]);
     // backwards compatible: array response with pagination metadata attached
     return Object.assign(items, { total }) as unknown as typeof items & { total: number };
+  });
+  /** Receipts (closed or being closed) that still have pallets waiting for put-away: the handheld's "acomodo por recepción" list. */
+  app.get('/receipts/pending-putaway', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
+    const rows = await db.$queryRaw<{ id: string; receipt_number: string; status: string; closed_at: Date | null; container_number: string | null; pending: bigint; total: bigint }[]>`
+      SELECT r.id, r.receipt_number, r.status, r.closed_at, c.container_number,
+             count(*) FILTER (WHERE EXISTS (SELECT 1 FROM putaway_tasks t WHERE t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')))::bigint AS pending,
+             count(*)::bigint AS total
+        FROM receipts r JOIN lpns l ON l.receipt_id = r.id LEFT JOIN containers c ON c.id = r.container_id
+       WHERE r.status <> 'CANCELLED' AND l.status IN ('OPEN','STORED') AND (${await includeTraining(req)}::boolean OR r.is_training = false)
+       GROUP BY r.id, c.container_number HAVING count(*) FILTER (WHERE EXISTS (SELECT 1 FROM putaway_tasks t WHERE t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS'))) > 0
+       ORDER BY r.closed_at DESC NULLS LAST, r.created_at DESC LIMIT 100`;
+    return rows.map((r) => ({ ...r, pending: r.pending.toString(), total: r.total.toString() }));
+  });
+  /** Every pallet of a receipt with where it is and where it is going (its put-away task), to plan the whole receipt at once. */
+  app.get('/receipts/:id/putaway', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const r = await db.receipts.findUnique({ where: { id }, select: { id: true, receipt_number: true, status: true } });
+    if (!r) throw new NotFoundError('receipt', id);
+    const rows = await db.$queryRaw<{ lpn_id: string; lpn_code: string; lpn_status: string; current_location: string | null; task_id: string | null; task_status: string | null; target: string | null; contents: { sku: string; qty: string }[] | null }[]>`
+      SELECT l.id AS lpn_id, l.code AS lpn_code, l.status AS lpn_status, cur.code AS current_location, t.id AS task_id, t.status AS task_status, sug.code AS target,
+             (SELECT json_agg(json_build_object('sku', s.code, 'qty', b.qty::text) ORDER BY s.code) FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = l.id AND b.qty > 0) AS contents
+        FROM lpns l LEFT JOIN locations cur ON cur.id = l.current_location_id
+        LEFT JOIN LATERAL (SELECT * FROM putaway_tasks t WHERE t.lpn_id = l.id ORDER BY (t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')) DESC, t.created_at DESC LIMIT 1) t ON true
+        LEFT JOIN locations sug ON sug.id = t.suggested_location_id
+       WHERE l.receipt_id = ${id}::uuid AND l.status <> 'CANCELLED'
+       ORDER BY l.code`;
+    return { receipt: r, pallets: rows.map((x) => ({ ...x, contents: x.contents ?? [], pending: !!x.task_status && ['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(x.task_status) })) };
   });
   app.get('/receipts/:id', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

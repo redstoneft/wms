@@ -388,6 +388,21 @@ export interface ReceiveUndoResult {
   line: { expected_qty: Qty; received_qty: Qty; status: string } | null;
   movements: string[];
 }
+export interface ReceiptPutawayPallet {
+  lpn_id: Uuid;
+  lpn_code: string;
+  lpn_status: string;
+  current_location: string | null;
+  task_id: Uuid | null;
+  task_status: string | null;
+  target: string | null;
+  contents: { sku: string; qty: Qty }[];
+  pending: boolean;
+}
+export interface ReceiptPutawayPlan {
+  receipt: { id: Uuid; receipt_number: string; status: string };
+  pallets: ReceiptPutawayPallet[];
+}
 export interface PutawayOption {
   location_id: Uuid;
   code: string;
