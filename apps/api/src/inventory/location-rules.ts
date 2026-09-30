@@ -48,7 +48,13 @@ export interface LocationOccupancy {
   compatibility_groups: (string | null)[];
 }
 
-export async function locationOccupancy(tx: Tx, locationId: string, excludeLpnId?: string): Promise<LocationOccupancy> {
+/**
+ * Reservations: a pallet on its way (put-away IN_PROGRESS, transfer in transit) or a destination a person planned always
+ * count. An engine-only suggestion (PENDING, not planned) is soft: counted by default so automatic suggestions spread out,
+ * ignored when a person is choosing (softReservations: false) so no slot is blocked by a mere suggestion.
+ */
+export async function locationOccupancy(tx: Tx, locationId: string, excludeLpnId?: string, opts: { softReservations?: boolean } = {}): Promise<LocationOccupancy> {
+  const soft = opts.softReservations !== false;
   const occ = await tx.$queryRaw<{ lpn_id: string; sku_id: string; compatibility_group: string | null; weight: string }[]>`
     SELECT l.id AS lpn_id, b.sku_id, s.compatibility_group, (b.qty * s.unit_weight_kg)::text AS weight
       FROM lpns l JOIN inventory_balances b ON b.lpn_id = l.id AND b.qty > 0 JOIN skus s ON s.id = b.sku_id
@@ -56,6 +62,7 @@ export async function locationOccupancy(tx: Tx, locationId: string, excludeLpnId
   const res = await tx.$queryRaw<{ n: bigint }[]>`
     SELECT count(*) AS n FROM (
       SELECT lpn_id FROM putaway_tasks WHERE suggested_location_id = ${locationId}::uuid AND status IN ('PENDING','ASSIGNED','IN_PROGRESS')
+        AND (${soft}::boolean OR status = 'IN_PROGRESS' OR planned)
         AND lpn_id IS DISTINCT FROM ${excludeLpnId ?? null}::uuid
       UNION ALL
       SELECT lpn_id FROM transfers WHERE to_location_id = ${locationId}::uuid AND status = 'IN_TRANSIT'
@@ -105,7 +112,7 @@ export function evaluateFit(location: LocationRow, occ: LocationOccupancy, profi
 }
 
 /** Full check for a concrete LPN → location, inside a transaction (location must be locked by caller). */
-export async function checkLocationAccepts(tx: Tx, location: LocationRow, lpn: LpnRow): Promise<LocationFit> {
-  const [occ, profile] = await Promise.all([locationOccupancy(tx, location.id, lpn.id), lpnProfile(tx, lpn)]);
+export async function checkLocationAccepts(tx: Tx, location: LocationRow, lpn: LpnRow, opts: { softReservations?: boolean } = {}): Promise<LocationFit> {
+  const [occ, profile] = await Promise.all([locationOccupancy(tx, location.id, lpn.id, opts), lpnProfile(tx, lpn)]);
   return evaluateFit(location, occ, profile);
 }

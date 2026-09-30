@@ -39,6 +39,21 @@ function Flow() {
       setBusy(false);
     }
   };
+  const closePlan = async () => {
+    if (!receiptId) return;
+    setBusy(true);
+    try {
+      const r = await inboundApi.closePutawayPlan(receiptId);
+      wm.ok(`ACOMODO CERRADO · ${r.planned.length} tarimas · ${r.printed.length} etiquetas enviadas${r.failed.length ? ` · ${r.failed.length} sin imprimir` : ''}`);
+      if (r.failed.length) wm.warn(`SIN IMPRIMIR: ${r.failed.map((f) => f.lpn).join(', ')} (${r.failed[0]!.error})`);
+      void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] });
+      void qc.invalidateQueries({ queryKey: ['receipts-pending-putaway'] });
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   const save = async (body: { location_code?: string; other?: boolean }) => {
     if (!editing?.pallet.task_id) return;
     setBusy(true);
@@ -128,8 +143,8 @@ function Flow() {
             <div className="shrink-0 text-right">
               {p.pending ? (
                 <>
-                  <div className="font-mono text-lg font-black text-violet-300">{p.target ?? 'sin destino'}</div>
-                  <div className="text-xs text-slate-400">toca para cambiar</div>
+                  <div className={`font-mono text-lg font-black ${p.planned ? 'text-emerald-300' : 'text-violet-300'}`}>{p.target ?? 'sin destino'}</div>
+                  <div className="text-xs text-slate-400">{p.planned ? 'elegido · toca para cambiar' : 'sugerido · toca para elegir'}</div>
                 </>
               ) : (
                 <>
@@ -141,6 +156,12 @@ function Flow() {
           </div>
         )}
       />
+      {pending > 0 && (
+        <BigButton tone="success" className="mt-3" onClick={() => void closePlan()} disabled={busy || pallets.some((p) => p.pending && !p.target)} testId="plan-close">
+          Cerrar acomodo e imprimir etiquetas ({pending})
+        </BigButton>
+      )}
+      {pallets.some((p) => p.pending && !p.target) && <div className="mt-1 text-center text-sm text-amber-300">Hay tarimas sin destino: asígnales uno para poder cerrar.</div>}
       <BigButton tone="neutral" className="mt-3" onClick={() => setReceiptId(null)} disabled={busy}>
         Volver a recepciones
       </BigButton>

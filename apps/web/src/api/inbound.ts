@@ -19,6 +19,8 @@ export const inboundApi = {
   pendingPutaway: () => api.get<{ id: string; receipt_number: string; status: string; closed_at: string | null; container_number: string | null; pending: string; total: string }[]>('/receipts/pending-putaway'),
   /** every pallet of a receipt with its put-away destination */
   putawayPlan: (id: string) => api.get<ReceiptPutawayPlan>(`/receipts/${id}/putaway`),
+  /** every pending pallet gets its destination fixed (slots reserved) and its label printed with the destination */
+  closePutawayPlan: (id: string, body: { printer_id?: string; print?: boolean } = {}) => api.post<{ planned: { lpn: string; target: string | null }[]; printed: string[]; failed: { lpn: string; error: string }[] }>(`/receipts/${id}/putaway/close`, body),
   receipt: (id: string) => api.get<Receipt>(`/receipts/${id}`),
   createReceipt: (body: Record<string, unknown>) => api.post<Receipt>('/receipts', body),
   /** idempotent */

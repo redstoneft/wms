@@ -395,6 +395,8 @@ export interface ReceiptPutawayPallet {
   current_location: string | null;
   task_id: Uuid | null;
   task_status: string | null;
+  /** destination chosen by a person (reserves the slot); false = engine suggestion (does not block it) */
+  planned: boolean | null;
   target: string | null;
   contents: { sku: string; qty: Qty }[];
   pending: boolean;

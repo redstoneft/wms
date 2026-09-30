@@ -675,6 +675,7 @@ model putaway_tasks {
   final_location_id     String?   @db.Uuid
   status                String    @default("PENDING") @db.VarChar(20) // PENDING | ASSIGNED | IN_PROGRESS | COMPLETED | CANCELLED
   explanation           Json?     // why the engine chose the slot
+  planned               Boolean   @default(false) // destination chosen by a person (hard reservation); false = engine suggestion (soft, does not block the slot)
   override_reason       String?
   override_by           String?   @db.Uuid
   assigned_to           String?   @db.Uuid

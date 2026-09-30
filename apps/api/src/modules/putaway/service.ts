@@ -77,7 +77,9 @@ async function loadWeights(tx: Tx, profile: LpnProfile, abc: string): Promise<Sl
  * actual reservation happens when the task is created, and the fit is
  * re-validated with locks at confirmation time.
  */
-export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternatives?: boolean } = {}): Promise<SlottingExplanation> {
+export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternatives?: boolean; softReservations?: boolean } = {}): Promise<SlottingExplanation> {
+  // engine suggestions of other pallets count by default (so automatic suggestions spread out); a person planning ignores them
+  const soft = opts.softReservations !== false;
   const profile = await lpnProfile(tx, lpn);
   if (profile.sku_ids.length === 0) throw new RuleError('EMPTY_LPN', `LPN ${lpn.code} has no inventory`);
   const skuMeta = await tx.$queryRaw<{ abc_class: string }[]>`SELECT abc_class FROM skus WHERE id = ANY(${profile.sku_ids}::uuid[]) ORDER BY abc_class LIMIT 1`;
@@ -97,6 +99,7 @@ export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternativ
     ), res AS (
       SELECT x.location_id, count(*) AS reserved_count FROM (
         SELECT suggested_location_id AS location_id FROM putaway_tasks WHERE status IN ('PENDING','ASSIGNED','IN_PROGRESS') AND lpn_id <> ${lpn.id}::uuid AND suggested_location_id IS NOT NULL
+           AND (${soft}::boolean OR status = 'IN_PROGRESS' OR planned)
         UNION ALL SELECT to_location_id FROM transfers WHERE status = 'IN_TRANSIT' AND lpn_id <> ${lpn.id}::uuid
       ) x GROUP BY x.location_id
     ), rack_stats AS (
@@ -234,6 +237,16 @@ export async function startPutaway(tx: Tx, ctx: ActorContext, lpnCode: string) {
   if (task.assigned_to && task.assigned_to !== ctx.userId && task.status === 'IN_PROGRESS') {
     throw new ConflictError('TASK_TAKEN', 'Another operator is already moving this pallet');
   }
+  if (task.suggested_location_id && task.status !== 'IN_PROGRESS') {
+    // the destination was only suggested (or planned) so far: someone may have taken the slot meanwhile → re-check now
+    const target = await tx.locations.findUnique({ where: { id: task.suggested_location_id } });
+    const fit = target && target.is_active && target.admin_status === 'ACTIVE' ? await checkLocationAccepts(tx, target, lpn, { softReservations: false }) : { ok: false, reasons: ['LOCATION_BLOCKED'] };
+    if (!fit.ok) {
+      const s = await suggestLocation(tx, lpn);
+      await audit(tx, ctx, { action: 'putaway.target_taken', entity_type: 'putaway_task', entity_id: task.id, before: { target: target?.code ?? null, planned: task.planned }, after: { target: s.chosen?.code ?? null, reasons: fit.reasons } });
+      task = await tx.putaway_tasks.update({ where: { id: task.id }, data: { suggested_location_id: s.chosen?.location_id ?? null, planned: false, explanation: JSON.parse(JSON.stringify(s)) } });
+    }
+  }
   if (!task.suggested_location_id) {
     // try again — maybe space freed up
     const s = await suggestLocation(tx, lpn);
@@ -293,7 +306,7 @@ export async function confirmPutaway(
     if (!overrideReason) throw new RuleError('REASON_REQUIRED', 'Override requires a reason');
   }
 
-  const fit = await checkLocationAccepts(tx, scanned, lpn);
+  const fit = await checkLocationAccepts(tx, scanned, lpn, { softReservations: false });
   if (!fit.ok) throw new RuleError('LOCATION_REJECTED', `Location ${scanned.code} cannot accept LPN ${lpn.code}: ${fit.reasons.join(', ')}`, fit);
   if (scanned.location_type !== 'RESERVE' && scanned.location_type !== 'PICKING') {
     throw new RuleError('LOCATION_TYPE', `Location ${scanned.code} is ${scanned.location_type}; put-away requires a storage location`);
@@ -353,7 +366,7 @@ export async function putawayOptions(tx: Tx, taskId: string) {
   if (!['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(t.status)) throw new RuleError('TASK_STATUS', `Task is ${t.status}`);
   const lpn = await lockLpn(tx, t.lpn_id);
   // every location the engine accepts (the stored explanation keeps only the top 25, the operator gets the full list)
-  const s = await suggestLocation(tx, lpn, { allAlternatives: true });
+  const s = await suggestLocation(tx, lpn, { allAlternatives: true, softReservations: false });
   const current = t.suggested_location_id ? await tx.locations.findUnique({ where: { id: t.suggested_location_id }, select: { id: true, code: true } }) : null;
   const options = [
     ...(s.chosen ? [{ location_id: s.chosen.location_id, code: s.chosen.code, score: s.chosen.score, has_same_sku: s.factors.some((f) => f.factor === 'same_sku'), lpn_count: -1, pallet_capacity: -1, level: null as number | null }] : []),
@@ -382,12 +395,9 @@ export async function chooseLocation(tx: Tx, ctx: ActorContext, taskId: string, 
     const loc = await lockLocation(tx, found.id);
     if (loc.location_type !== 'RESERVE' && loc.location_type !== 'PICKING') throw new RuleError('LOCATION_TYPE', `Location ${loc.code} is ${loc.location_type}; put-away requires a storage location`);
     if (!loc.is_active || loc.admin_status !== 'ACTIVE') throw new RuleError('LOCATION_BLOCKED', `Location ${loc.code} is not active`);
-    const fit = await checkLocationAccepts(tx, loc, lpn);
+    // a person choosing ignores the engine's soft suggestions for other pallets: only pallets on their way or planned by a person block the slot
+    const fit = await checkLocationAccepts(tx, loc, lpn, { softReservations: false });
     if (!fit.ok) throw new RuleError('LOCATION_REJECTED', `Location ${loc.code} cannot accept LPN ${lpn.code}: ${fit.reasons.join(', ')}`, fit);
-    // capacity counting other pending put-aways headed there
-    const reserved = await tx.putaway_tasks.count({ where: { suggested_location_id: loc.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] }, id: { not: t.id } } });
-    const occ = await locationOccupancy(tx, loc.id, lpn.id);
-    if (occ.lpn_count + reserved >= loc.pallet_capacity) throw new RuleError('LOCATION_FULL', `Location ${loc.code} is full or already reserved`, { lpn_count: occ.lpn_count, reserved, capacity: loc.pallet_capacity });
     targetId = loc.id;
   } else if (input.other) {
     const s = await suggestLocation(tx, lpn);
@@ -397,7 +407,23 @@ export async function chooseLocation(tx: Tx, ctx: ActorContext, taskId: string, 
   } else {
     throw new RuleError('CHOICE_REQUIRED', 'location_code or other=true is required');
   }
-  const updated = await tx.putaway_tasks.update({ where: { id: t.id }, data: { suggested_location_id: targetId, version: { increment: 1 } } });
+  const updated = await tx.putaway_tasks.update({ where: { id: t.id }, data: { suggested_location_id: targetId, planned: !!input.location_code, version: { increment: 1 } } });
+  if (input.location_code) {
+    // engine suggestions of other pallets that no longer fit here lose the slot and get a new suggestion
+    const loc = await tx.locations.findUniqueOrThrow({ where: { id: targetId } });
+    const chosenCode = loc.code;
+    const occ = await locationOccupancy(tx, loc.id, lpn.id, { softReservations: false });
+    let room = loc.pallet_capacity - occ.lpn_count - occ.reserved_count - 1;
+    const soft = await tx.$queryRaw<{ id: string; lpn_id: string }[]>`SELECT id, lpn_id FROM putaway_tasks WHERE suggested_location_id = ${targetId}::uuid AND status IN ('PENDING','ASSIGNED') AND NOT planned AND id <> ${t.id}::uuid ORDER BY created_at DESC FOR UPDATE`;
+    for (const o of soft) {
+      if (room > 0) { room--; continue; }
+      const other = await lockLpn(tx, o.lpn_id);
+      await tx.putaway_tasks.update({ where: { id: o.id }, data: { suggested_location_id: null } });
+      const s = await suggestLocation(tx, other);
+      await tx.putaway_tasks.update({ where: { id: o.id }, data: { suggested_location_id: s.chosen?.location_id ?? null, explanation: JSON.parse(JSON.stringify(s)) } });
+      await audit(tx, ctx, { action: 'putaway.bumped', entity_type: 'putaway_task', entity_id: o.id, before: { target: chosenCode }, after: { target: s.chosen?.code ?? null, taken_by: lpn.code } });
+    }
+  }
   const target = await tx.locations.findUniqueOrThrow({ where: { id: targetId }, select: { id: true, code: true, barcode: true } });
   await audit(tx, ctx, { action: 'putaway.choose_location', entity_type: 'putaway_task', entity_id: t.id, before: { suggested: t.suggested_location_id }, after: { target: target.code, by: input.location_code ? 'operator' : 'engine_other' } });
   return { task: updated, target };

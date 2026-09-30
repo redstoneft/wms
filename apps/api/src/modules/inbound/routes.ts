@@ -125,8 +125,8 @@ export async function inboundRoutes(app: FastifyInstance) {
     const id = zUuid.parse((req.params as { id: string }).id);
     const r = await db.receipts.findUnique({ where: { id }, select: { id: true, receipt_number: true, status: true } });
     if (!r) throw new NotFoundError('receipt', id);
-    const rows = await db.$queryRaw<{ lpn_id: string; lpn_code: string; lpn_status: string; current_location: string | null; task_id: string | null; task_status: string | null; target: string | null; contents: { sku: string; qty: string }[] | null }[]>`
-      SELECT l.id AS lpn_id, l.code AS lpn_code, l.status AS lpn_status, cur.code AS current_location, t.id AS task_id, t.status AS task_status, sug.code AS target,
+    const rows = await db.$queryRaw<{ lpn_id: string; lpn_code: string; lpn_status: string; current_location: string | null; task_id: string | null; task_status: string | null; planned: boolean | null; target: string | null; contents: { sku: string; qty: string }[] | null }[]>`
+      SELECT l.id AS lpn_id, l.code AS lpn_code, l.status AS lpn_status, cur.code AS current_location, t.id AS task_id, t.status AS task_status, t.planned, sug.code AS target,
              (SELECT json_agg(json_build_object('sku', s.code, 'qty', b.qty::text) ORDER BY s.code) FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = l.id AND b.qty > 0) AS contents
         FROM lpns l LEFT JOIN locations cur ON cur.id = l.current_location_id
         LEFT JOIN LATERAL (SELECT * FROM putaway_tasks t WHERE t.lpn_id = l.id ORDER BY (t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')) DESC, t.created_at DESC LIMIT 1) t ON true
@@ -134,6 +134,41 @@ export async function inboundRoutes(app: FastifyInstance) {
        WHERE l.receipt_id = ${id}::uuid AND l.status <> 'CANCELLED'
        ORDER BY l.code`;
     return { receipt: r, pallets: rows.map((x) => ({ ...x, contents: x.contents ?? [], pending: !!x.task_status && ['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(x.task_status) })) };
+  });
+  /**
+   * Closing the put-away plan of a receipt: every pending pallet must have a destination; all of them become planned
+   * (the slots are reserved from here on) and the pallet labels are printed again, now showing the destination.
+   */
+  app.post('/receipts/:id/putaway/close', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const body = z.object({ printer_id: zUuid.optional(), print: z.boolean().default(true) }).parse(req.body ?? {});
+    const planned = await withTx(async (tx) => {
+      const r = await tx.receipts.findUnique({ where: { id }, select: { id: true, receipt_number: true } });
+      if (!r) throw new NotFoundError('receipt', id);
+      const rows = await tx.$queryRaw<{ task_id: string; lpn_code: string; target: string | null }[]>`
+        SELECT t.id AS task_id, l.code AS lpn_code, sug.code AS target FROM lpns l JOIN putaway_tasks t ON t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')
+          LEFT JOIN locations sug ON sug.id = t.suggested_location_id WHERE l.receipt_id = ${id}::uuid AND l.status <> 'CANCELLED' ORDER BY l.code FOR UPDATE OF t`;
+      if (!rows.length) throw new RuleError('NOTHING_PENDING', `La recepción ${r.receipt_number} no tiene tarimas por acomodar`);
+      const missing = rows.filter((x) => !x.target).map((x) => x.lpn_code);
+      if (missing.length) throw new RuleError('PLAN_INCOMPLETE', `Faltan destinos: ${missing.join(', ')}`, { missing });
+      await tx.putaway_tasks.updateMany({ where: { id: { in: rows.map((x) => x.task_id) } }, data: { planned: true } });
+      await audit(tx, req.actor!, { action: 'receipt.putaway_closed', entity_type: 'receipt', entity_id: id, after: { receipt: r.receipt_number, pallets: rows.map((x) => ({ lpn: x.lpn_code, target: x.target })) } });
+      return rows;
+    });
+    // labels after the plan is committed: the LPN label shows "→ DESTINO <ubicación>" from the pending task
+    const printed: string[] = [];
+    const failed: { lpn: string; error: string }[] = [];
+    if (body.print) {
+      for (const p of planned) {
+        try {
+          await printLabel(req.actor!, { label_type: 'LPN', entity_id: p.lpn_code, copies: 1, printer_id: body.printer_id, reprint_reason: 'Acomodo cerrado: etiqueta con destino' }, 'PRINT', { allowReprint: true });
+          printed.push(p.lpn_code);
+        } catch (e) {
+          failed.push({ lpn: p.lpn_code, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    }
+    return { planned: planned.map((p) => ({ lpn: p.lpn_code, target: p.target })), printed, failed };
   });
   app.get('/receipts/:id', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

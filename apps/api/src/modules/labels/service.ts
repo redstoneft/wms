@@ -192,7 +192,7 @@ export interface PrintRequest {
  * (a previous successful print of the same entity exists), require the
  * `labels.reprint` permission and a reason, and are audited.
  */
-export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PRINT' | 'PREVIEW') {
+export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PRINT' | 'PREVIEW', opts: { allowReprint?: boolean } = {}) {
   const db = getDb();
   const result = await withTx(async (tx) => {
     const model = await buildLabelModel(tx, req.label_type, req.entity_id);
@@ -204,7 +204,7 @@ export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PR
     const lpnId = req.label_type === 'LPN' ? (await tx.lpns.findFirst({ where: { code: model.title } }))?.id ?? null : null;
     const previous = await tx.label_prints.count({ where: { label_type: req.label_type, entity_id: model.title, status: { in: ['SENT', 'QUEUED'] } } });
     const isReprint = previous > 0;
-    if (mode === 'PRINT' && isReprint) {
+    if (mode === 'PRINT' && isReprint && !opts.allowReprint) {
       if (!ctx.permissions.has('labels.reprint')) throw new ForbiddenError('Reprinting labels requires the labels.reprint permission');
       if (!req.reprint_reason) throw new RuleError('REPRINT_REASON_REQUIRED', 'A reason is required to reprint a label');
     }

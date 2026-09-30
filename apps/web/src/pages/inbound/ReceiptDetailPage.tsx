@@ -256,13 +256,24 @@ function PutawayPlanCard({ receiptId }: { receiptId: string }) {
     onSuccess: (r) => { toast.success(`${edit!.pallet.lpn_code} → ${r.target.code}`); setEdit(null); void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] }); },
     onError: (e) => toast.error('No se pudo asignar', e),
   });
+  const [confirmClose, setConfirmClose] = useState(false);
+  const closePlan = useMutation({
+    mutationFn: () => inboundApi.closePutawayPlan(receiptId),
+    onSuccess: (r) => {
+      setConfirmClose(false);
+      toast.success(`Acomodo cerrado: ${r.planned.length} tarima(s)`, `${r.printed.length} etiqueta(s) enviadas a imprimir${r.failed.length ? ` · sin imprimir: ${r.failed.map((f) => `${f.lpn} (${f.error})`).join(', ')}` : ''}`);
+      void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] });
+    },
+    onError: (e) => toast.error('No se pudo cerrar el acomodo', e),
+  });
   const pallets = plan.data?.pallets ?? [];
   const pending = pallets.filter((p) => p.pending).length;
+  const noTarget = pallets.filter((p) => p.pending && !p.target).length;
   const q = edit?.filter.trim().toUpperCase() ?? '';
   const shown = edit ? (q ? edit.list.filter((o) => o.code.toUpperCase().includes(q) || o.code === edit.selected) : edit.list) : [];
   return (
-    <Card title={`Acomodo: dónde va cada tarima (${pending} por ubicar de ${pallets.length})`} className="mt-4" padded={false}>
-      <div className="px-4 pt-3 text-xs text-slate-500">Elija aquí el destino de cada tarima. El montacarguista lo confirma en el handheld (Ubicar) escaneando la tarima y la ubicación; también puede cambiarlo ahí.</div>
+    <Card title={`Acomodo: dónde va cada tarima (${pending} por ubicar de ${pallets.length})`} className="mt-4" padded={false} actions={pending > 0 ? <Button onClick={() => setConfirmClose(true)} disabled={noTarget > 0} title={noTarget > 0 ? `${noTarget} tarima(s) sin destino` : undefined}>Cerrar acomodo e imprimir etiquetas</Button> : undefined}>
+      <div className="px-4 pt-3 text-xs text-slate-500">Elija aquí el destino de cada tarima. Los destinos <b>sugeridos</b> por el sistema no apartan el hueco: puede dárselo a otra tarima y la sugerida recibe otra propuesta. Un destino <b>elegido</b> sí queda apartado. El montacarguista lo confirma en el handheld (Ubicar) escaneando la tarima y la ubicación.</div>
       <Table
         rows={pallets}
         rowKey={(p) => p.lpn_id}
@@ -271,10 +282,13 @@ function PutawayPlanCard({ receiptId }: { receiptId: string }) {
           { key: 'l', header: 'LPN', render: (p) => <span className="font-mono font-semibold">{p.lpn_code}</span> },
           { key: 'c', header: 'Contenido', render: (p) => p.contents.map((c) => `${c.sku} × ${fmtQty(c.qty)}`).join(', ') || '—' },
           { key: 'w', header: 'Está en', render: (p) => <span className="font-mono">{p.current_location ?? '—'}</span> },
-          { key: 'd', header: 'Destino', render: (p) => (p.pending ? <span className="font-mono font-semibold text-violet-700">{p.target ?? 'sin destino'}</span> : <span className="text-emerald-700">ubicada</span>) },
+          { key: 'd', header: 'Destino', render: (p) => (p.pending ? <span className={cls('font-mono font-semibold', p.planned ? 'text-emerald-700' : 'text-violet-700')}>{p.target ?? 'sin destino'}{p.planned ? ' · elegido' : ' · sugerido'}</span> : <span className="text-emerald-700">ubicada</span>) },
           { key: 'a', header: '', render: (p) => (p.pending ? <Button variant="secondary" onClick={() => open.mutate(p)} loading={open.isPending && open.variables?.lpn_id === p.lpn_id}>Elegir destino</Button> : null) },
         ]}
       />
+      <ConfirmDialog open={confirmClose} onClose={() => setConfirmClose(false)} onConfirm={() => closePlan.mutate()} title="Cerrar el acomodo de esta recepción" loading={closePlan.isPending} confirmLabel="Cerrar e imprimir">
+        Los {pending} destinos quedan fijos (los huecos se apartan) y se imprime la etiqueta de cada tarima con su destino en la impresora predeterminada.
+      </ConfirmDialog>
       <Modal open={!!edit} onClose={() => setEdit(null)} title={edit ? `Destino de ${edit.pallet.lpn_code}` : ''} footer={<><Button variant="secondary" onClick={() => save.mutate({ other: true })} loading={save.isPending}>Otra automática</Button><Button variant="secondary" onClick={() => setEdit(null)}>Cancelar</Button><Button onClick={() => save.mutate({ location_code: edit!.selected })} loading={save.isPending}>Asignar</Button></>}>
         {edit && (
           <div className="grid gap-3">
