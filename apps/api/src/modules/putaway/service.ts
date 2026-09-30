@@ -239,11 +239,11 @@ export async function startPutaway(tx: Tx, ctx: ActorContext, lpnCode: string) {
   }
   if (task.suggested_location_id && task.status !== 'IN_PROGRESS') {
     // the destination was only suggested (or planned) so far: someone may have taken the slot meanwhile → re-check now
-    const target = await tx.locations.findUnique({ where: { id: task.suggested_location_id } });
-    const fit = target && target.is_active && target.admin_status === 'ACTIVE' ? await checkLocationAccepts(tx, target, lpn, { softReservations: false }) : { ok: false, reasons: ['LOCATION_BLOCKED'] };
+    const target = await lockLocation(tx, task.suggested_location_id);
+    const fit = target.is_active && target.admin_status === 'ACTIVE' ? await checkLocationAccepts(tx, target, lpn, { softReservations: false }) : { ok: false, reasons: ['LOCATION_BLOCKED'] };
     if (!fit.ok) {
       const s = await suggestLocation(tx, lpn);
-      await audit(tx, ctx, { action: 'putaway.target_taken', entity_type: 'putaway_task', entity_id: task.id, before: { target: target?.code ?? null, planned: task.planned }, after: { target: s.chosen?.code ?? null, reasons: fit.reasons } });
+      await audit(tx, ctx, { action: 'putaway.target_taken', entity_type: 'putaway_task', entity_id: task.id, before: { target: target.code, planned: task.planned }, after: { target: s.chosen?.code ?? null, reasons: fit.reasons } });
       task = await tx.putaway_tasks.update({ where: { id: task.id }, data: { suggested_location_id: s.chosen?.location_id ?? null, planned: false, explanation: JSON.parse(JSON.stringify(s)) } });
     }
   }
