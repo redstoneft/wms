@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ALLOCATION_STRATEGIES } from '@wms/shared';
 import { adminApi } from '../../api/admin';
 import { ApiError } from '../../api/client';
+import { masterdataApi } from '../../api/masterdata';
 import { ordersApi, pickingApi, verificationApi } from '../../api/orders';
+import type { Sku } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { useToast } from '../../components/Toast';
 import { Alert, Button, Card, Checkbox, ConfirmDialog, Field, Input, KV, Modal, PageHeader, Select, Skeleton, StatusChip, Table, Textarea } from '../../components/ui';
@@ -52,6 +54,34 @@ export default function OrderDetailPage() {
     onError: (e) => toast.error('No se pudo crear la tarea', e),
   });
   const [adjust, setAdjust] = useState<{ open: boolean; reason: string; qty: Record<string, string>; add: { sku: string; qty: string }[] }>({ open: false, reason: '', qty: {}, add: [] });
+  // swapping the model of a line: the old line goes to 0 (its picked pieces return to their pallets) and the new model is added (or increased) and gets picked
+  const [swap, setSwap] = useState<{ open: boolean; lineId: string | null; q: string; hits: Sku[]; pick: Sku | null; qty: string; reason: string }>({ open: false, lineId: null, q: '', hits: [], pick: null, qty: '', reason: '' });
+  useEffect(() => {
+    const term = swap.q.trim();
+    if (!swap.open || term.length < 1) return;
+    const t = window.setTimeout(() => {
+      masterdataApi.skus({ q: term, limit: 8, active: 'true' }).then((r) => setSwap((s) => (s.q === swap.q ? { ...s, hits: r.items } : s))).catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [swap.q, swap.open]);
+  const doSwap = useMutation({
+    mutationFn: () => {
+      const line = o!.lines.find((l) => l.id === swap.lineId)!;
+      const existing = o!.lines.find((l) => l.sku.code === swap.pick!.code);
+      const qty = BigInt(swap.qty.trim());
+      return ordersApi.adjust({
+        order_id: o!.id,
+        reason: swap.reason.trim(),
+        lines: [{ sku_code: line.sku.code, qty: '0' }, { sku_code: swap.pick!.code, qty: (existing ? toBigInt(existing.required_qty) + qty : qty).toString() }],
+      });
+    },
+    onSuccess: (r) => {
+      toast.success(`Modelo cambiado · ${es(r.status)}`, r.changes.map((c) => `${c.sku}: ${c.before} → ${c.after}${c.returned_to_stock !== '0' ? ` · ${c.returned_to_stock} regresan a existencia` : ''}${c.to_pick !== '0' ? ` · ${c.to_pick} por surtir` : ''}`).join(' · '));
+      setSwap({ open: false, lineId: null, q: '', hits: [], pick: null, qty: '', reason: '' });
+      void qc.invalidateQueries({ queryKey: ['order', id] });
+    },
+    onError: (e) => toast.error('No se pudo cambiar el modelo', e),
+  });
   const doAdjust = useMutation({
     mutationFn: () =>
       ordersApi.adjust({
@@ -156,9 +186,37 @@ export default function OrderDetailPage() {
             { key: 'ld', header: 'CARGADO', render: (l) => <Cell v={l.loaded_qty} req={l.required_qty} tone="emerald" />, align: 'right' },
             { key: 'b', header: 'Desglose', render: (l) => fmtUom(l.required_qty, l.sku.uoms) },
             { key: 'a', header: 'Asignaciones', render: (l) => (l.allocations ?? []).filter((a) => a.status !== 'RELEASED').map((a) => `${a.lpn.code}@${a.lpn.current_location?.code ?? '?'} (${fmtQty(a.qty)})`).join(', ') || '—' },
+            ...(can('orders.adjust') && !['SHIPPED', 'CANCELLED', 'LOADING', 'LOADED'].includes(o.status) && !o.shipment
+              ? [{ key: 'x', header: '', render: (l: (typeof o.lines)[number]) => <Button size="sm" variant="secondary" onClick={() => setSwap({ open: true, lineId: l.id, q: '', hits: [], pick: null, qty: toBigInt(l.required_qty).toString(), reason: '' })}>Cambiar modelo</Button> }]
+              : []),
           ]}
         />
       </Card>
+      <Modal open={swap.open} onClose={() => setSwap({ ...swap, open: false })} title={`Cambiar modelo de la línea ${o.lines.find((l) => l.id === swap.lineId)?.sku.code ?? ''}`} footer={<><Button variant="secondary" onClick={() => setSwap({ ...swap, open: false })}>Cancelar</Button><Button onClick={() => doSwap.mutate()} loading={doSwap.isPending} disabled={!swap.pick || !/^[0-9]+$/.test(swap.qty.trim()) || BigInt(swap.qty.trim() || '0') <= 0n || swap.reason.trim().length < 3 || swap.pick.code === o.lines.find((l) => l.id === swap.lineId)?.sku.code}>Cambiar</Button></>}>
+        <div className="grid gap-3">
+          <Alert tone="info">La línea actual queda en 0: lo que ya se surtió regresa a su tarima y posición. El modelo nuevo entra al pedido (si ya estaba, se le suma) y queda por asignar y surtir. Queda auditado y se abre una incidencia.</Alert>
+          <Field label="Modelo nuevo (clave o nombre)" required>
+            <Input value={swap.pick ? `${swap.pick.code} · ${swap.pick.description}` : swap.q} onChange={(e) => setSwap({ ...swap, q: e.target.value, pick: null })} placeholder="Escribe parte de la clave o del nombre" className="font-mono" autoFocus />
+            {!swap.pick && swap.q.trim() && (
+              <div className="mt-1 max-h-56 overflow-auto rounded-md border border-slate-200">
+                {swap.hits.length === 0 && <div className="px-3 py-2 text-sm text-slate-500">Sin coincidencias</div>}
+                {swap.hits.map((h) => (
+                  <button key={h.id} type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100" onClick={() => setSwap({ ...swap, pick: h, hits: [] })}>
+                    <span className="font-mono font-semibold">{h.code}</span> <span className="text-slate-600">{h.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Field>
+          {swap.pick && o.lines.some((l) => l.sku.code === swap.pick!.code) && <Alert tone="warn">{swap.pick.code} ya está en el pedido: las piezas se sumarán a esa línea.</Alert>}
+          <Field label="Piezas del modelo nuevo" required>
+            <Input type="number" min={1} value={swap.qty} onChange={(e) => setSwap({ ...swap, qty: e.target.value })} className="w-40" />
+          </Field>
+          <Field label="Motivo (mín. 3)" required>
+            <Textarea value={swap.reason} onChange={(e) => setSwap({ ...swap, reason: e.target.value })} placeholder="El cliente cambió el modelo" />
+          </Field>
+        </div>
+      </Modal>
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <Card title="Surtido">
           <dl className="grid gap-2">

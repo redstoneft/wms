@@ -114,3 +114,31 @@ describe('adjusting an order that is not picked yet', () => {
     await expectReconciled();
   });
 });
+
+describe('swapping the model of a picked line', () => {
+  it('old line to 0 (pieces back to their pallet) and the new model added in the same call; the new model is then picked', async () => {
+    await storedPallet(f, 0, f.reserve[3]!.id, 40n);
+    await storedPallet(f, 2, f.reserve[4]!.id, 40n);
+    const o = await sup.post('/orders', { order_number: `SWAP-${f.tag}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 12, uom_code: 'PIECE' }] });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
+    await sup.post(`/orders/${o.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const t = await sup.post('/picking/tasks', { order_id: o.body.id });
+    await pickAll(t.body.task.id);
+    expect((await sup.get(`/orders/${o.body.id}`)).body.status).toBe('PICKED');
+    const total0 = await skuTotal(f.skus[0]!.id);
+    const r = await adminC.post('/orders/adjust', { order_id: o.body.id, reason: 'el cliente cambió el modelo', lines: [{ sku_code: f.skus[0]!.code, qty: 0 }, { sku_code: f.skus[2]!.code, qty: 12 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.status).toBe('PARTIALLY_ALLOCATED');
+    expect(r.body.changes.find((c: { sku: string }) => c.sku === f.skus[0]!.code)).toMatchObject({ before: '12', after: '0', returned_to_stock: '12' });
+    expect(r.body.changes.find((c: { sku: string }) => c.sku === f.skus[2]!.code)).toMatchObject({ before: '0', after: '12', to_pick: '12' });
+    expect(await skuTotal(f.skus[0]!.id)).toBe(total0);
+    const od = await sup.get(`/orders/${o.body.id}`);
+    expect(od.body.lines.map((l: { sku: { code: string }; required_qty: string; picked_qty: string }) => [l.sku.code, l.required_qty, l.picked_qty])).toEqual([[f.skus[2]!.code, '12', '0']]);
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const t2 = await sup.post('/picking/tasks', { order_id: o.body.id });
+    await pickAll(t2.body.task.id);
+    expect((await sup.get(`/orders/${o.body.id}`)).body.status).toBe('PICKED');
+    await expectReconciled();
+  });
+});
