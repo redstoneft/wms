@@ -230,7 +230,24 @@ function Flow() {
       wm.fail(e);
     }
   };
+  // put every new pallet away at its destination without scanning (same as closing the batch in Acomodo por lote)
+  const [closed, setClosed] = useState<{ placed: { lpn: string; location: string }[]; failed: { lpn: string; target: string; error: string }[] } | null>(null);
+  const closePutaway = async () => {
+    if (!result || result.for_order) return;
+    setBusy(true);
+    try {
+      const r = await putawayApi.closeBatch('ASSEMBLY', result.id);
+      setClosed(r);
+      if (r.failed.length) wm.warn(`${r.placed.length} TARIMAS UBICADAS · NO SE PUDO: ${r.failed.map((f) => `${f.lpn} (${f.error})`).join(' · ')}`);
+      else wm.ok(`ACOMODO CERRADO · ${r.placed.length} TARIMAS UBICADAS EN SU DESTINO`);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   const reset = () => {
+    setClosed(null);
     setStep('HOME');
     setFlow('ONESHOT');
     setForOrder('');
@@ -698,7 +715,7 @@ function Flow() {
         <StepBar text={`ARMADO ${result.code} · IMPRIME Y PEGA LAS ETIQUETAS`} />
         <div className="grid gap-2">
           {result.produced.map((p) => (
-            <PalletCard key={p.lpn} lpn={p.lpn} detail={`${p.cases} cajas × ${p.pieces_per_case}${p.partial_pieces ? ` + 1 caja con ${p.partial_pieces}` : ''} = ${fmtQty(p.qty)} pzas${p.defective ? ` · ${p.defective} defectuosas` : ''}`} taskId={p.putaway_task_id} destination={p.suggested_location} placed={false} busy={busy} setBusy={setBusy} onPrint={print} onChanged={(code) => setResult({ ...result, produced: result.produced.map((x) => (x.lpn === p.lpn ? { ...x, suggested_location: code } : x)) })} />
+            <PalletCard key={p.lpn} lpn={p.lpn} detail={`${p.cases} cajas × ${p.pieces_per_case}${p.partial_pieces ? ` + 1 caja con ${p.partial_pieces}` : ''} = ${fmtQty(p.qty)} pzas${p.defective ? ` · ${p.defective} defectuosas` : ''}`} taskId={p.putaway_task_id} destination={closed?.placed.find((x) => x.lpn === p.lpn)?.location ?? p.suggested_location} placed={!!closed?.placed.some((x) => x.lpn === p.lpn)} busy={busy} setBusy={setBusy} onPrint={print} onChanged={(code) => setResult({ ...result, produced: result.produced.map((x) => (x.lpn === p.lpn ? { ...x, suggested_location: code } : x)) })} />
           ))}
         </div>
         {result.warnings.length > 0 && <div className="mt-3 rounded-lg bg-amber-900/60 p-3 text-amber-200">{result.warnings.join(' · ')}</div>}
@@ -707,7 +724,14 @@ function Flow() {
             Tarimas surtidas para el pedido <b>{result.for_order.order_number}</b>. Pega las etiquetas y llévalas al carril de staging <b>{result.for_order.staging ?? '(sin carril libre: escanea uno en Staging)'}</b>.
           </div>
         ) : (
-          <div className="mt-3 text-sm text-slate-300">Las tarimas nuevas ya tienen tarea de acomodo: ve a Ubicar, escanea cada LPN y llévalo a donde te indique.</div>
+          <div className="mt-3 grid gap-2">
+            {!closed && (
+              <BigButton tone="success" onClick={() => void closePutaway()} disabled={busy || result.produced.some((p) => !p.suggested_location)} testId="asm-close-putaway">
+                Cerrar acomodo: ubicar las {result.produced.length} tarimas en su destino (sin escanear)
+              </BigButton>
+            )}
+            <div className="text-sm text-slate-300">{closed ? `${closed.placed.length} tarima(s) ya ubicadas en el sistema.` : 'O ve a Ubicar y escanea cada LPN en su lugar. Las etiquetas se imprimen solo con el botón.'}</div>
+          </div>
         )}
         <BigButton tone="primary" className="mt-3" onClick={reset} testId="again">
           Otro armado

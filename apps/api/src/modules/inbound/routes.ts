@@ -7,9 +7,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import { saveAttachment } from '../attachments/service.js';
-import { printLabel } from '../labels/service.js';
-import { confirmPutaway } from '../putaway/service.js';
-import { getSettings } from '../settings/routes.js';
+import * as plan from '../putaway/plan.js';
 import * as svc from './service.js';
 
 export async function inboundRoutes(app: FastifyInstance) {
@@ -109,82 +107,16 @@ export async function inboundRoutes(app: FastifyInstance) {
     // backwards compatible: array response with pagination metadata attached
     return Object.assign(items, { total }) as unknown as typeof items & { total: number };
   });
-  /** Receipts (closed or being closed) that still have pallets waiting for put-away: the handheld's "acomodo por recepción" list. */
-  app.get('/receipts/pending-putaway', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
-    const rows = await db.$queryRaw<{ id: string; receipt_number: string; status: string; closed_at: Date | null; container_number: string | null; pending: bigint; total: bigint }[]>`
-      SELECT r.id, r.receipt_number, r.status, r.closed_at, c.container_number,
-             count(*) FILTER (WHERE EXISTS (SELECT 1 FROM putaway_tasks t WHERE t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')))::bigint AS pending,
-             count(*)::bigint AS total
-        FROM receipts r JOIN lpns l ON l.receipt_id = r.id LEFT JOIN containers c ON c.id = r.container_id
-       WHERE r.status <> 'CANCELLED' AND l.status IN ('OPEN','STORED') AND (${await includeTraining(req)}::boolean OR r.is_training = false)
-       GROUP BY r.id, c.container_number HAVING count(*) FILTER (WHERE EXISTS (SELECT 1 FROM putaway_tasks t WHERE t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS'))) > 0
-       ORDER BY r.closed_at DESC NULLS LAST, r.created_at DESC LIMIT 100`;
-    return rows.map((r) => ({ ...r, pending: r.pending.toString(), total: r.total.toString() }));
-  });
-  /** Every pallet of a receipt with where it is and where it is going (its put-away task), to plan the whole receipt at once. */
+  // put-away planned per receipt (shared with assembly orders: see putaway/plan.ts)
+  app.get('/receipts/pending-putaway', { preHandler: app.requirePermission('putaway.execute') }, async (req) => (await plan.listBatches(await includeTraining(req))).filter((b) => b.kind === 'RECEIPT').map((b) => ({ ...b, receipt_number: b.number, container_number: b.label })));
   app.get('/receipts/:id/putaway', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
-    const id = zUuid.parse((req.params as { id: string }).id);
-    const r = await db.receipts.findUnique({ where: { id }, select: { id: true, receipt_number: true, status: true } });
-    if (!r) throw new NotFoundError('receipt', id);
-    const rows = await db.$queryRaw<{ lpn_id: string; lpn_code: string; lpn_status: string; current_location: string | null; task_id: string | null; task_status: string | null; planned: boolean | null; target: string | null; contents: { sku: string; qty: string }[] | null }[]>`
-      SELECT l.id AS lpn_id, l.code AS lpn_code, l.status AS lpn_status, cur.code AS current_location, t.id AS task_id, t.status AS task_status, t.planned, sug.code AS target,
-             (SELECT json_agg(json_build_object('sku', s.code, 'qty', b.qty::text) ORDER BY s.code) FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = l.id AND b.qty > 0) AS contents
-        FROM lpns l LEFT JOIN locations cur ON cur.id = l.current_location_id
-        LEFT JOIN LATERAL (SELECT * FROM putaway_tasks t WHERE t.lpn_id = l.id ORDER BY (t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')) DESC, t.created_at DESC LIMIT 1) t ON true
-        LEFT JOIN locations sug ON sug.id = t.suggested_location_id
-       WHERE l.receipt_id = ${id}::uuid AND l.status <> 'CANCELLED'
-       ORDER BY l.code`;
-    return { receipt: r, pallets: rows.map((x) => ({ ...x, contents: x.contents ?? [], pending: !!x.task_status && ['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(x.task_status) })) };
+    const r = await plan.batchPallets('RECEIPT', zUuid.parse((req.params as { id: string }).id));
+    return { ...r, receipt: { id: r.batch.id, receipt_number: r.batch.number, status: r.batch.status } };
   });
-  /**
-   * Closing the put-away of a receipt: every pending pallet must have a destination, and each one is put away THERE in
-   * the system without scanning (same effect as confirming it in Ubicar: PUTAWAY movement, task completed, pallet stored).
-   * One transaction per pallet: what fails (slot taken meanwhile, blocked…) is reported and the rest still lands.
-   */
-  app.post('/receipts/:id/putaway/close', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
-    const id = zUuid.parse((req.params as { id: string }).id);
-    const r = await db.receipts.findUnique({ where: { id }, select: { id: true, receipt_number: true } });
-    if (!r) throw new NotFoundError('receipt', id);
-    const rows = await db.$queryRaw<{ task_id: string; lpn_code: string; target: string | null; target_barcode: string | null }[]>`
-      SELECT t.id AS task_id, l.code AS lpn_code, sug.code AS target, sug.barcode AS target_barcode FROM lpns l JOIN putaway_tasks t ON t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')
-        LEFT JOIN locations sug ON sug.id = t.suggested_location_id WHERE l.receipt_id = ${id}::uuid AND l.status <> 'CANCELLED' ORDER BY l.code`;
-    if (!rows.length) throw new RuleError('NOTHING_PENDING', `La recepción ${r.receipt_number} no tiene tarimas por acomodar`);
-    const missing = rows.filter((x) => !x.target).map((x) => x.lpn_code);
-    if (missing.length) throw new RuleError('PLAN_INCOMPLETE', `Faltan destinos: ${missing.join(', ')}`, { missing });
-    const placed: { lpn: string; location: string }[] = [];
-    const failed: { lpn: string; target: string; error: string }[] = [];
-    for (const p of rows) {
-      try {
-        const done = await withTx((tx) => confirmPutaway(tx, req.actor!, { task_id: p.task_id, lpn_code: p.lpn_code, location_barcode: p.target_barcode! }));
-        placed.push({ lpn: p.lpn_code, location: done.location });
-      } catch (e) {
-        failed.push({ lpn: p.lpn_code, target: p.target!, error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    await audit(db, req.actor!, { action: 'receipt.putaway_closed', entity_type: 'receipt', entity_id: id, after: { receipt: r.receipt_number, placed, failed } });
-    return { placed, failed };
-  });
-  /** Prints (on request only, never automatically) the label of every pallet of the receipt still to be put away; the label shows "→ DESTINO <ubicación>". */
+  app.post('/receipts/:id/putaway/close', { preHandler: app.requirePermission('putaway.execute') }, async (req) => plan.closeBatch(req.actor!, 'RECEIPT', zUuid.parse((req.params as { id: string }).id)));
   app.post('/receipts/:id/putaway/print', { preHandler: app.requirePermission('labels.print') }, async (req) => {
-    const id = zUuid.parse((req.params as { id: string }).id);
     const body = z.object({ printer_id: zUuid.optional(), lpn_codes: z.array(z.string().trim().min(1).max(40)).max(500).optional() }).parse(req.body ?? {});
-    const rows = await db.$queryRaw<{ lpn_code: string }[]>`
-      SELECT l.code AS lpn_code FROM lpns l WHERE l.receipt_id = ${id}::uuid AND l.status <> 'CANCELLED'
-         AND EXISTS (SELECT 1 FROM putaway_tasks t WHERE t.lpn_id = l.id AND t.status IN ('PENDING','ASSIGNED','IN_PROGRESS')) ORDER BY l.code`;
-    const wanted = body.lpn_codes ? new Set(body.lpn_codes.map((c) => c.toUpperCase())) : null;
-    const printed: string[] = [];
-    const failed: { lpn: string; error: string }[] = [];
-    for (const p of rows) {
-      if (wanted && !wanted.has(p.lpn_code)) continue;
-      try {
-        await printLabel(req.actor!, { label_type: 'LPN', entity_id: p.lpn_code, copies: 1, printer_id: body.printer_id, reprint_reason: 'Etiqueta con destino de acomodo' }, 'PRINT', { allowReprint: true });
-        printed.push(p.lpn_code);
-      } catch (e) {
-        failed.push({ lpn: p.lpn_code, error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    await audit(db, req.actor!, { action: 'receipt.putaway_labels_printed', entity_type: 'receipt', entity_id: id, after: { printed, failed: failed.length } });
-    return { printed, failed };
+    return plan.printBatchLabels(req.actor!, 'RECEIPT', zUuid.parse((req.params as { id: string }).id), body);
   });
   app.get('/receipts/:id', { preHandler: app.requirePermission('receiving.read') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
@@ -211,13 +143,7 @@ export async function inboundRoutes(app: FastifyInstance) {
     }));
     reply.status(r.status);
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
-    // Automatic LPN label on pallet creation (best effort, after commit; failures are recorded in label_prints)
-    if (!r.replayed && r.body.lpn?.is_new) {
-      const actor = req.actor!;
-      void getSettings()
-        .then((s) => (s.auto_print_lpn_labels === false ? null : printLabel(actor, { label_type: 'LPN', entity_id: r.body.lpn.code, copies: 1 }, 'PRINT')))
-        .catch((e: Error) => req.log.warn({ err: e.message, lpn: r.body.lpn.code }, 'auto label print failed'));
-    }
+    // no automatic label: the operator prints it from the screen when needed
     return r.body;
   });
 

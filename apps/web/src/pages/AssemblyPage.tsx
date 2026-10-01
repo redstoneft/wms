@@ -6,6 +6,7 @@ import { assemblyApi, type AssemblyOrder, type AssemblyResult } from '../api/ass
 import { inventoryApi } from '../api/inventory';
 import { labelsApi } from '../api/labels';
 import { masterdataApi } from '../api/masterdata';
+import { PutawayPlanCard } from '../components/PutawayPlanCard';
 import { useToast } from '../components/Toast';
 import { Alert, Button, Card, Field, Input, PageHeader, StatusChip, Table, Textarea } from '../components/ui';
 import { fmtDateTime, fmtQty } from '../lib/format';
@@ -271,6 +272,7 @@ export default function AssemblyPage() {
               </ul>
             </div>
           </div>
+          <PutawayPlanCard kind="ASSEMBLY" id={result.id} />
           {result.warnings.length > 0 && (
             <Alert tone="warn" className="mt-3">
               {result.warnings.join(' · ')}

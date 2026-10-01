@@ -29,6 +29,11 @@ describe('put-away plan per receipt', () => {
     const list = await fork.get('/receipts/pending-putaway');
     expect(list.status).toBe(200);
     expect(list.body.find((x: { id: string }) => x.id === r.body.id)).toMatchObject({ pending: '2', total: '2' });
+    const batches = await fork.get('/putaway/batches');
+    expect(batches.body.find((x: { kind: string; id: string }) => x.kind === 'RECEIPT' && x.id === r.body.id)).toMatchObject({ pending: '2', total: '2' });
+    const generic = await fork.get(`/putaway/batches/receipt/${r.body.id}`);
+    expect(generic.status).toBe(200);
+    expect(generic.body.batch).toMatchObject({ kind: 'RECEIPT', id: r.body.id });
     const plan = await fork.get(`/receipts/${r.body.id}/putaway`);
     expect(plan.status, JSON.stringify(plan.body)).toBe(200);
     expect(plan.body.pallets).toHaveLength(2);

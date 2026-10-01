@@ -1,9 +1,8 @@
-// /wm/putaway-plan — put-away by receipt: every pallet of a receipt on one screen, choose where each one goes
+// /wm/putaway-plan — put-away by batch (receipt or assembly order): every pallet of the batch on one screen, choose where each one goes
 // (no scanning here; the forklift still confirms each pallet in "Ubicar" by scanning LPN + location).
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { inboundApi } from '../api/inbound';
-import { putawayApi } from '../api/storage';
+import { putawayApi, type PutawayBatch } from '../api/storage';
 import type { PutawayOption, ReceiptPutawayPallet } from '../api/types';
 import { fmtQty } from '../lib/format';
 import { LocationPicker } from './LocationPicker';
@@ -11,7 +10,7 @@ import { BigButton, StepBar, useWm, WmList, WmShell } from './WmShell';
 
 export default function WmPutawayPlanPage() {
   return (
-    <WmShell title="Acomodo por recepción">
+    <WmShell title="Acomodo por lote">
       <Flow />
     </WmShell>
   );
@@ -20,11 +19,11 @@ export default function WmPutawayPlanPage() {
 function Flow() {
   const wm = useWm();
   const qc = useQueryClient();
-  const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [batch, setBatch] = useState<PutawayBatch | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{ pallet: ReceiptPutawayPallet; list: PutawayOption[]; selected: string } | null>(null);
-  const receipts = useQuery({ queryKey: ['receipts-pending-putaway'], queryFn: inboundApi.pendingPutaway, refetchInterval: 15_000 });
-  const plan = useQuery({ queryKey: ['receipt-putaway', receiptId], queryFn: () => inboundApi.putawayPlan(receiptId!), enabled: !!receiptId, refetchInterval: 15_000 });
+  const batches = useQuery({ queryKey: ['putaway-batches'], queryFn: putawayApi.batches, refetchInterval: 15_000 });
+  const plan = useQuery({ queryKey: ['putaway-batch', batch?.kind, batch?.id], queryFn: () => putawayApi.batch(batch!.kind, batch!.id), enabled: !!batch, refetchInterval: 15_000 });
 
   const open = async (p: ReceiptPutawayPallet) => {
     if (!p.task_id) return;
@@ -40,14 +39,14 @@ function Flow() {
     }
   };
   const closePlan = async () => {
-    if (!receiptId) return;
+    if (!batch) return;
     setBusy(true);
     try {
-      const r = await inboundApi.closePutawayPlan(receiptId);
+      const r = await putawayApi.closeBatch(batch.kind, batch.id);
       if (r.failed.length) wm.warn(`${r.placed.length} TARIMAS UBICADAS · NO SE PUDO: ${r.failed.map((f) => `${f.lpn} (${f.error})`).join(' · ')}`);
       else wm.ok(`ACOMODO CERRADO · ${r.placed.length} TARIMAS UBICADAS EN SU DESTINO`);
-      void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] });
-      void qc.invalidateQueries({ queryKey: ['receipts-pending-putaway'] });
+      void qc.invalidateQueries({ queryKey: ['putaway-batch'] });
+      void qc.invalidateQueries({ queryKey: ['putaway-batches'] });
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -55,10 +54,10 @@ function Flow() {
     }
   };
   const printLabels = async () => {
-    if (!receiptId) return;
+    if (!batch) return;
     setBusy(true);
     try {
-      const r = await inboundApi.printPutawayLabels(receiptId);
+      const r = await putawayApi.printBatchLabels(batch.kind, batch.id);
       if (r.failed.length) wm.warn(`${r.printed.length} ETIQUETAS ENVIADAS · SIN IMPRIMIR: ${r.failed.map((f) => f.lpn).join(', ')} (${r.failed[0]!.error})`);
       else wm.ok(`${r.printed.length} ETIQUETAS ENVIADAS A IMPRIMIR`);
     } catch (e) {
@@ -74,7 +73,7 @@ function Flow() {
       const r = await putawayApi.choose(editing.pallet.task_id, body);
       wm.ok(`${editing.pallet.lpn_code} → ${r.target.code}`);
       setEditing(null);
-      void qc.invalidateQueries({ queryKey: ['receipt-putaway', receiptId] });
+      void qc.invalidateQueries({ queryKey: ['putaway-batch'] });
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -82,21 +81,21 @@ function Flow() {
     }
   };
 
-  if (!receiptId)
+  if (!batch)
     return (
       <div>
-        <StepBar text="RECEPCIONES CON TARIMAS POR ACOMODAR · ELIGE UNA" />
+        <StepBar text="RECEPCIONES Y ARMADOS CON TARIMAS POR ACOMODAR · ELIGE UNO" />
         <WmList
-          items={receipts.data}
-          keyOf={(r) => r.id}
-          onSelect={(r) => setReceiptId(r.id)}
+          items={batches.data}
+          keyOf={(r) => `${r.kind}:${r.id}`}
+          onSelect={(r) => setBatch(r)}
           empty="No hay tarimas pendientes de acomodo"
           testId="receipt-list"
           render={(r) => (
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-mono text-xl font-black">{r.receipt_number}</div>
-                <div className="text-sm text-slate-300">{r.container_number ?? 'sin contenedor'}</div>
+                <div className="font-mono text-xl font-black">{r.number}</div>
+                <div className="text-sm text-slate-300">{r.kind === 'RECEIPT' ? 'Recepción' : 'Armado'}{r.label ? ` · ${r.label}` : ''}</div>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-black text-amber-300">{r.pending}</div>
@@ -136,7 +135,7 @@ function Flow() {
   const pending = pallets.filter((p) => p.pending).length;
   return (
     <div>
-      <StepBar text={`${plan.data?.receipt.receipt_number ?? ''} · TOCA UNA TARIMA PARA ELEGIR SU DESTINO`} />
+      <StepBar text={`${batch.kind === 'RECEIPT' ? 'RECEPCIÓN' : 'ARMADO'} ${batch.number} · TOCA UNA TARIMA PARA ELEGIR SU DESTINO`} />
       <div className="mb-2 rounded-2xl bg-slate-900 px-3 py-2 text-xs text-slate-400">Cerrar acomodo ubica en el sistema todas las tarimas pendientes en su destino, sin escanearlas. Hazlo cuando ya estén (o vayan) físicamente ahí.</div>
       <div className="mb-2 flex items-center justify-between rounded-2xl bg-slate-800 px-4 py-2">
         <span className="text-sm text-slate-300">{pallets.length} tarima(s)</span>
@@ -146,7 +145,7 @@ function Flow() {
         items={plan.data ? pallets : undefined}
         keyOf={(p) => p.lpn_id}
         onSelect={(p) => (p.pending ? void open(p) : wm.warn(`${p.lpn_code} YA ESTÁ UBICADA EN ${p.current_location ?? '?'}`))}
-        empty="Esta recepción no tiene tarimas"
+        empty="Este lote no tiene tarimas"
         testId="plan-list"
         render={(p) => (
           <div className="flex items-center justify-between gap-2">
@@ -181,8 +180,8 @@ function Flow() {
         </div>
       )}
       {pallets.some((p) => p.pending && !p.target) && <div className="mt-1 text-center text-sm text-amber-300">Hay tarimas sin destino: asígnales uno para poder cerrar.</div>}
-      <BigButton tone="neutral" className="mt-3" onClick={() => setReceiptId(null)} disabled={busy}>
-        Volver a recepciones
+      <BigButton tone="neutral" className="mt-3" onClick={() => setBatch(null)} disabled={busy}>
+        Volver a la lista
       </BigButton>
     </div>
   );

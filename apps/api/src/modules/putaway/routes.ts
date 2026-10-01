@@ -7,6 +7,7 @@ import { NotFoundError } from '../../errors.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import { lockLpnByCode } from '../../inventory/ledger.js';
 import * as svc from './service.js';
+import * as plan from './plan.js';
 
 export async function putawayRoutes(app: FastifyInstance) {
   const db = getDb();
@@ -54,6 +55,23 @@ export async function putawayRoutes(app: FastifyInstance) {
   });
 
   /** Choosing the destination: options the engine accepts, and the operator's pick (or "another one"). */
+  // put-away planned per batch (receipt or assembly order): list, pallets with destinations, close (put away without scanning), labels on request
+  const zKind = z.enum(['RECEIPT', 'ASSEMBLY']);
+  app.get('/putaway/batches', { preHandler: app.requirePermission('putaway.execute') }, async (req) => plan.listBatches(await includeTraining(req)));
+  app.get('/putaway/batches/:kind/:id', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
+    const p = req.params as { kind: string; id: string };
+    return plan.batchPallets(zKind.parse(p.kind.toUpperCase()), zUuid.parse(p.id));
+  });
+  app.post('/putaway/batches/:kind/:id/close', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
+    const p = req.params as { kind: string; id: string };
+    return plan.closeBatch(req.actor!, zKind.parse(p.kind.toUpperCase()), zUuid.parse(p.id));
+  });
+  app.post('/putaway/batches/:kind/:id/print', { preHandler: app.requirePermission('labels.print') }, async (req) => {
+    const p = req.params as { kind: string; id: string };
+    const body = z.object({ printer_id: zUuid.optional(), lpn_codes: z.array(z.string().trim().min(1).max(40)).max(500).optional() }).parse(req.body ?? {});
+    return plan.printBatchLabels(req.actor!, zKind.parse(p.kind.toUpperCase()), zUuid.parse(p.id), body);
+  });
+
   app.get('/putaway/tasks/:id/options', { preHandler: app.requirePermission('putaway.execute') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
     return withTx((tx) => svc.putawayOptions(tx, id));

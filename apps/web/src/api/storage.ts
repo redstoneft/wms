@@ -1,8 +1,17 @@
 // put-away, transfers, replenishment, cycle counts
 import { api } from './client';
-import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult, PutawayOption } from './types';
+import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult, PutawayOption, ReceiptPutawayPallet } from './types';
 
+export type PutawayBatchKind = 'RECEIPT' | 'ASSEMBLY';
+export interface PutawayBatch { kind: PutawayBatchKind; id: string; number: string; status: string; label: string | null; closed_at: string | null; pending: string; total: string }
 export const putawayApi = {
+  /** receipts and assembly orders that still have pallets waiting to be put away */
+  batches: () => api.get<PutawayBatch[]>('/putaway/batches'),
+  batch: (kind: PutawayBatchKind, id: string) => api.get<{ batch: { kind: PutawayBatchKind; id: string; number: string; status: string }; pallets: ReceiptPutawayPallet[] }>(`/putaway/batches/${kind}/${id}`),
+  /** puts every pending pallet of the batch away at its destination without scanning (what fails is reported) */
+  closeBatch: (kind: PutawayBatchKind, id: string) => api.post<{ placed: { lpn: string; location: string }[]; failed: { lpn: string; target: string; error: string }[] }>(`/putaway/batches/${kind}/${id}/close`, {}),
+  /** labels (with destination) of the batch's pending pallets; only on request */
+  printBatchLabels: (kind: PutawayBatchKind, id: string, body: { printer_id?: string; lpn_codes?: string[] } = {}) => api.post<{ printed: string[]; failed: { lpn: string; error: string }[] }>(`/putaway/batches/${kind}/${id}/print`, body),
   tasks: (status?: string) => api.get<PutawayTaskRow[]>('/putaway/tasks', { status }),
   task: (id: string) => api.get<Record<string, unknown>>(`/putaway/tasks/${id}`),
   suggest: (lpn_code: string) => api.post<Record<string, unknown>>('/putaway/suggest', { lpn_code }),

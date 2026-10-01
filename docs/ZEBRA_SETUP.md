@@ -30,7 +30,7 @@ Si la Zebra está conectada por USB a una PC, no hace falta red ni IP. Dar de al
 | `STAGING` | Carril + pedido asignado + cliente + destino |
 | `SHIPMENT` | Embarque, transportista, unidad, placas, chofer, pedidos, destino |
 
-Nada se imprime automáticamente: las etiquetas salen solo al pulsar **Imprimir** (recepción, detalle de LPN, tarimas de salida, acomodo por recepción o la pantalla **Etiquetas**). El setting `auto_print_lpn_labels` (por defecto apagado) puede reactivar la impresión al crear un LPN en recepción, si algún día se quisiera.
+Nada se imprime automáticamente: las etiquetas salen solo al pulsar **Imprimir** (recepción, detalle de LPN, tarimas de salida, armado, acomodo por lote o la pantalla **Etiquetas**).
 
 ## Previsualización
 `POST /api/labels/preview` genera el ZPL y un PNG del código de barras y del QR (bwip-js) a partir del mismo modelo. La pantalla muestra la etiqueta renderizada y el ZPL. Opcionalmente puede pegarse el ZPL en https://labelary.com para ver el render exacto de Zebra.
