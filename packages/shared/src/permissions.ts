@@ -44,6 +44,7 @@ export const PERMISSIONS = {
   'orders.allocate': 'Allocate inventory to orders',
   'orders.force_deliver': 'Mark an order as delivered outside the normal flow (inventory leaves as shipped; admin only)',
   'orders.adjust': 'Change the quantities of an order that was already picked (excess back to stock, shortfall picked again; admin only)',
+  'orders.reopen': 'Reopen a cancelled or delivered order (what was shipped comes back onto its pallets; admin only)',
   'picking.execute': 'Execute picking tasks',
   'picking.assign': 'Assign picking tasks',
   'picking.short': 'Close a pick line short from the handheld: what is missing is released and an incident is opened',
@@ -86,7 +87,7 @@ const OPERATOR_COMMON: Permission[] = [
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ADMIN: ALL_PERMISSIONS,
-  SUPERVISOR: ALL_PERMISSIONS.filter((p) => p !== 'users.manage' && p !== 'settings.manage' && p !== 'orders.force_deliver' && p !== 'orders.adjust' && p !== 'receiving.cancel_received'),
+  SUPERVISOR: ALL_PERMISSIONS.filter((p) => p !== 'users.manage' && p !== 'settings.manage' && p !== 'orders.force_deliver' && p !== 'orders.adjust' && p !== 'orders.reopen' && p !== 'receiving.cancel_received'),
   RECEIVING: [
     ...OPERATOR_COMMON,
     'containers.read',

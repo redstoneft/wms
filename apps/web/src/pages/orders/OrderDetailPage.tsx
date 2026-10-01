@@ -102,6 +102,16 @@ export default function OrderDetailPage() {
     },
     onError: (e) => toast.error('No se pudo ajustar', e),
   });
+  const [reopen, setReopen] = useState<{ open: boolean; reason: string }>({ open: false, reason: '' });
+  const doReopen = useMutation({
+    mutationFn: () => ordersApi.reopen({ order_id: id, reason: reopen.reason }),
+    onSuccess: (r) => {
+      toast.success(`Pedido reabierto · ${es(r.status)}`, r.restored.length ? `Regresa: ${r.restored.map((x) => `${x.lpn} ${x.sku} ${fmtQty(x.qty)}${x.location ? ` en ${x.location}` : ''}`).join(' · ')}` : 'Listo para asignar inventario');
+      setReopen({ open: false, reason: '' });
+      void qc.invalidateQueries({ queryKey: ['order', id] });
+    },
+    onError: (e) => toast.error('No se pudo reabrir', e),
+  });
   const [force, setForce] = useState<{ open: boolean; reason: string }>({ open: false, reason: '' });
   const doForce = useMutation({
     mutationFn: () => ordersApi.forceDeliver({ order_id: id, reason: force.reason }),
@@ -157,6 +167,11 @@ export default function OrderDetailPage() {
             {can('orders.adjust') && !['SHIPPED', 'CANCELLED', 'LOADING', 'LOADED'].includes(o.status) && !o.shipment && (
               <Button variant="secondary" onClick={() => setAdjust({ open: true, reason: '', qty: Object.fromEntries(o.lines.map((l) => [l.sku.code, ''])), add: [] })}>
                 Ajustar cantidades
+              </Button>
+            )}
+            {can('orders.reopen') && ['SHIPPED', 'CANCELLED'].includes(o.status) && (
+              <Button variant="secondary" onClick={() => setReopen({ open: true, reason: '' })}>
+                Reabrir pedido
               </Button>
             )}
             {can('orders.force_deliver') && !['SHIPPED', 'CANCELLED'].includes(o.status) && (
@@ -348,6 +363,18 @@ export default function OrderDetailPage() {
           </Field>
         </div>
       </Modal>
+      <ConfirmDialog open={reopen.open} onClose={() => setReopen({ open: false, reason: '' })} onConfirm={() => doReopen.mutate()} title={`Reabrir ${o.order_number}`} danger loading={doReopen.isPending} confirmLabel="Reabrir">
+        <div className="grid gap-3">
+          <Alert tone="warn">
+            {o.status === 'CANCELLED'
+              ? 'El pedido vuelve a ACEPTADO con sus líneas, listo para asignar inventario y surtir de nuevo.'
+              : 'Todo lo que salió de este pedido regresa a sus tarimas: lo surtido vuelve a sus tarimas de salida (en su carril si siguen ahí) y lo que se descontó de existencia vuelve como disponible. El pedido queda surtido, parcial o aceptado según lo que regrese. Si el camión ya salió con un embarque, no se puede reabrir.'}
+          </Alert>
+          <Field label="Motivo (mín. 3)" required>
+            <Textarea value={reopen.reason} onChange={(e) => setReopen({ ...reopen, reason: e.target.value })} />
+          </Field>
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog open={force.open} onClose={() => setForce({ open: false, reason: '' })} onConfirm={() => doForce.mutate()} title={`Marcar ${o.order_number} como entregado`} danger loading={doForce.isPending} confirmLabel="Marcar como entregado">
         <div className="grid gap-3">
           <Alert tone="warn">

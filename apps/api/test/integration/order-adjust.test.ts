@@ -142,3 +142,37 @@ describe('swapping the model of a picked line', () => {
     await expectReconciled();
   });
 });
+
+describe('reopening a closed order (admin)', () => {
+  it('a cancelled order comes back as ACCEPTED; a force-delivered picked order gets its pallets and stock back', async () => {
+    await storedPallet(f, 1, f.reserve[5]!.id, 60n);
+    const o = await sup.post('/orders', { order_number: `REO-${f.tag}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[1]!.code, qty: 20, uom_code: 'PIECE' }] });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
+    await sup.post(`/orders/${o.body.id}/accept`);
+    expect((await sup.post('/orders/cancel', { order_id: o.body.id, reason: 'cancelado por error' })).status).toBe(200);
+    expect((await sup.post('/orders/reopen', { order_id: o.body.id, reason: 'no debía cancelarse' })).status).toBe(403);
+    const r1 = await adminC.post('/orders/reopen', { order_id: o.body.id, reason: 'no debía cancelarse' });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+    expect(r1.body.status).toBe('ACCEPTED');
+    // pick it, deliver it out of flow, then reopen: inventory comes back onto the outbound pallet, order is PICKED again
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const t = await sup.post('/picking/tasks', { order_id: o.body.id });
+    await pickAll(t.body.task.id);
+    const total1 = await skuTotal(f.skus[1]!.id);
+    const fd = await adminC.post('/orders/force-deliver', { order_id: o.body.id, reason: 'se fue sin flujo' });
+    expect(fd.status, JSON.stringify(fd.body)).toBe(200);
+    expect(await skuTotal(f.skus[1]!.id)).toBe(total1 - 20n);
+    const r2 = await adminC.post('/orders/reopen', { order_id: o.body.id, reason: 'el cliente lo regresó al andén' });
+    expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+    expect(r2.body.status).toBe('PICKED');
+    expect(r2.body.restored).toHaveLength(1);
+    expect(r2.body.restored[0]).toMatchObject({ sku: f.skus[1]!.code, qty: '20', status: 'PICKING' });
+    expect(await skuTotal(f.skus[1]!.id)).toBe(total1);
+    const od = await sup.get(`/orders/${o.body.id}`);
+    expect(od.body.lines[0]).toMatchObject({ required_qty: '20', picked_qty: '20', allocated_qty: '0', verified_qty: '0' });
+    expect(od.body.lpns.map((l: { code: string; status: string }) => l.status)).toEqual(['PICKING']);
+    // reopening twice does nothing (nothing left to bring back)
+    expect((await adminC.post('/orders/reopen', { order_id: o.body.id, reason: 'otra vez' })).status).toBe(422);
+    await expectReconciled();
+  });
+});

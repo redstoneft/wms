@@ -4,7 +4,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { getSkuByCode, toBaseQty } from '../../lib/lookup.js';
-import { createLpn, getBalance, lockBalances, lockLpn, recordMovement, removeInventory, transferBetweenLpns } from '../../inventory/ledger.js';
+import { createInventory, createLpn, getBalance, lockBalances, lockLpn, recordMovement, removeInventory, transferBetweenLpns } from '../../inventory/ledger.js';
 import { createPutawayTask } from '../putaway/service.js';
 import { consumeAuthorization } from '../authorizations/routes.js';
 import { getSettings } from '../settings/routes.js';
@@ -302,6 +302,73 @@ export async function orderDetail(tx: Tx, orderId: string) {
  * the order holds (picked, staged, loaded pallets) is shipped; what was never picked leaves from its allocated pallet,
  * or from available stock when nothing was allocated. Missing stock is not invented: it is recorded on an incident.
  */
+/**
+ * Reopen a closed order (admin). CANCELLED → ACCEPTED with its lines (nothing was reserved any more). SHIPPED → every SHIP
+ * movement of the order not yet undone comes back onto the same pallet (own outbound pallets keep their picked/staged/
+ * loaded state; stock pallets consumed by force-deliver return as AVAILABLE); lines, pallets and the staging lane are
+ * rebuilt from what came back. An order whose truck already departed cannot be reopened here.
+ */
+export async function reopenOrder(tx: Tx, ctx: ActorContext, input: { order_id: string; reason: string }) {
+  const o = await lockOrder(tx, input.order_id);
+  if (!['SHIPPED', 'CANCELLED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}; only delivered or cancelled orders can be reopened`);
+  const prev = await tx.orders.findUniqueOrThrow({ where: { id: o.id }, select: { notes: true, shipment_id: true } });
+  const lines = await tx.order_lines.findMany({ where: { order_id: o.id }, include: { sku: true }, orderBy: { line_no: 'asc' } });
+  if (!lines.length) throw new RuleError('NO_LINES', `Order ${o.order_number} has no lines left to reopen`);
+  if (o.status === 'CANCELLED') {
+    await tx.order_lines.updateMany({ where: { order_id: o.id }, data: { allocated_qty: 0n, picked_qty: 0n, verified_qty: 0n, loaded_qty: 0n } });
+    await tx.orders.update({ where: { id: o.id }, data: { status: 'ACCEPTED', picker_id: null, verifier_id: null, verified_at: null, shipment_id: null, version: { increment: 1 }, notes: [prev.notes, `[REABIERTO] ${input.reason}`].filter(Boolean).join('\n') } });
+    const inc = await createIncident(tx, ctx, { incident_type: 'OTHER', severity: 'LOW', title: `Pedido ${o.order_number} reabierto (estaba cancelado)`, description: input.reason, entity_type: 'order', entity_id: o.id, order_id: o.id });
+    await audit(tx, ctx, { action: 'order.reopen', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status: 'ACCEPTED', incident_id: inc.id }, reason: input.reason });
+    return { order_id: o.id, order_number: o.order_number, status: 'ACCEPTED', restored: [], incident_id: inc.id };
+  }
+  if (prev.shipment_id) {
+    const sh = await tx.shipments.findUnique({ where: { id: prev.shipment_id }, select: { status: true, shipment_number: true } });
+    if (sh?.status === 'DEPARTED') throw new RuleError('SHIPMENT_DEPARTED', `El embarque ${sh.shipment_number} ya salió; el pedido no se puede reabrir desde aquí`);
+  }
+  const ships = await tx.$queryRaw<{ id: bigint; sku_id: string; qty: bigint; from_lpn_id: string; from_status: string; from_location_id: string | null }[]>`
+    SELECT m.id, m.sku_id, m.qty, m.from_lpn_id, m.from_status, m.from_location_id FROM inventory_movements m
+     WHERE m.order_id = ${o.id}::uuid AND m.movement_type = 'SHIP'
+       AND NOT EXISTS (SELECT 1 FROM inventory_movements u WHERE u.movement_type = 'SHIP_UNDO' AND u.reference_type = 'ship_movement' AND u.reference_id = m.id::text)
+     ORDER BY m.id`;
+  if (!ships.length) throw new RuleError('NOTHING_TO_RESTORE', `Order ${o.order_number} has no shipped inventory to bring back`);
+  const restored: { lpn: string; sku: string; qty: string; status: string; location: string | null }[] = [];
+  const ownPicked = new Map<string, bigint>();
+  for (const s of ships) {
+    const lpn = await lockLpn(tx, s.from_lpn_id);
+    const own = lpn.order_id === o.id;
+    const status = own ? (s.from_status as 'PICKING' | 'STAGING' | 'LOADED') : 'AVAILABLE';
+    const locationId = lpn.current_location_id ?? s.from_location_id;
+    if (!locationId) throw new RuleError('NO_LOCATION', `LPN ${lpn.code} has no location to return to`);
+    const lpnStatus = own ? (status === 'LOADED' ? 'LOADED' : status === 'STAGING' ? 'STAGED' : 'PICKING') : 'STORED';
+    // the pallet must accept inventory again before the movement (the ledger refuses SHIPPED pallets)
+    await tx.lpns.update({ where: { id: lpn.id }, data: { status: lpnStatus, current_location_id: locationId, ...(own ? { shipment_id: null } : {}), version: { increment: 1 } } });
+    await createInventory(tx, ctx, { movement_type: 'SHIP_UNDO', to_lpn: { ...lpn, status: lpnStatus, current_location_id: locationId }, sku_id: s.sku_id, qty: s.qty, status, location_id: locationId, order_id: o.id, reference_type: 'ship_movement', reference_id: s.id.toString(), reason: input.reason, note: `Pedido ${o.order_number} reabierto` });
+    if (own) ownPicked.set(s.sku_id, (ownPicked.get(s.sku_id) ?? 0n) + s.qty);
+    const loc = await tx.locations.findUnique({ where: { id: locationId }, select: { code: true, location_type: true } });
+    restored.push({ lpn: lpn.code, sku: lines.find((l) => l.sku_id === s.sku_id)?.sku.code ?? s.sku_id, qty: s.qty.toString(), status, location: loc?.code ?? null });
+  }
+  // lines: what sits on the order's own pallets counts as picked; nothing is reserved or verified any more
+  let allPicked = true;
+  let anyPicked = false;
+  for (const line of lines) {
+    const picked = ownPicked.get(line.sku_id) ?? 0n;
+    const p = picked > line.required_qty ? line.required_qty : picked;
+    if (p < line.required_qty) allPicked = false;
+    if (p > 0n) anyPicked = true;
+    await tx.order_lines.update({ where: { id: line.id }, data: { picked_qty: p, allocated_qty: 0n, verified_qty: 0n, loaded_qty: 0n } });
+  }
+  // reservations force-deliver marked as picked on stock pallets are released (the stock is available again)
+  await tx.$executeRaw`UPDATE allocations a SET status = 'RELEASED' FROM order_lines ol, lpns l WHERE a.order_line_id = ol.id AND ol.order_id = ${o.id}::uuid AND a.lpn_id = l.id AND a.status = 'PICKED' AND l.order_id IS DISTINCT FROM ${o.id}::uuid`;
+  // the lane: if the order's pallets sit in a staging lane, that lane is the order's again
+  const lane = await tx.$queryRaw<{ id: string; code: string }[]>`SELECT loc.id, loc.code FROM lpns l JOIN locations loc ON loc.id = l.current_location_id WHERE l.order_id = ${o.id}::uuid AND l.status = 'STAGED' AND loc.location_type = 'STAGING' AND NOT EXISTS (SELECT 1 FROM staging_assignments sa WHERE sa.location_id = loc.id AND sa.released_at IS NULL) LIMIT 1`;
+  if (lane[0]) await tx.staging_assignments.create({ data: { order_id: o.id, location_id: lane[0].id } });
+  const status = allPicked ? (lane[0] ? 'STAGED' : 'PICKED') : anyPicked ? 'PARTIALLY_ALLOCATED' : 'ACCEPTED';
+  await tx.orders.update({ where: { id: o.id }, data: { status, verifier_id: null, verified_at: null, shipment_id: null, version: { increment: 1 }, notes: [prev.notes, `[REABIERTO] ${input.reason}`].filter(Boolean).join('\n') } });
+  const inc = await createIncident(tx, ctx, { incident_type: 'OTHER', severity: 'MEDIUM', title: `Pedido ${o.order_number} reabierto: ${restored.length} movimiento(s) de salida revertidos`, description: `${input.reason}. Regresa: ${restored.map((r) => `${r.lpn} ${r.sku} ${r.qty} (${r.status}${r.location ? ` en ${r.location}` : ''})`).join(', ')}`, entity_type: 'order', entity_id: o.id, order_id: o.id });
+  await audit(tx, ctx, { action: 'order.reopen', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status, restored, incident_id: inc.id }, reason: input.reason });
+  return { order_id: o.id, order_number: o.order_number, status, restored, incident_id: inc.id };
+}
+
 export async function forceDeliver(tx: Tx, ctx: ActorContext, input: { order_id: string; reason: string }) {
   const o = await lockOrder(tx, input.order_id);
   if (['SHIPPED', 'CANCELLED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}`);

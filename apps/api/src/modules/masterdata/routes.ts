@@ -33,6 +33,8 @@ export async function masterDataRoutes(app: FastifyInstance) {
   /** Resolve a scanned barcode (or SKU code) to its SKU, packaging level and UoM table — read-only, for handheld screens. */
   app.get('/skus/by-barcode/:barcode', { preHandler: app.requireAuth }, async (req) => {
     const barcode = (req.params as { barcode: string }).barcode;
+    if (/^LOC-/i.test(barcode.trim())) throw new RuleError('NOT_A_PRODUCT', `ESO ES UNA UBICACIÓN (${barcode.trim()}), NO UN PRODUCTO: escanea la caja o la pieza`, { scanned: barcode.trim(), kind: 'LOCATION' });
+    if (/^PLT-/i.test(barcode.trim())) throw new RuleError('NOT_A_PRODUCT', `ESO ES UNA TARIMA (${barcode.trim()}), NO UN PRODUCTO: escanea la caja o la pieza`, { scanned: barcode.trim(), kind: 'LPN' });
     const { resolveSkuBarcode, uomTableFor } = await import('../../lib/lookup.js');
     return withTx(async (tx) => {
       const r = await resolveSkuBarcode(tx, barcode);
