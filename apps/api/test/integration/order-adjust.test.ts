@@ -55,13 +55,17 @@ describe('adjusting a picked order', () => {
     expect(src[0]).toMatchObject({ status: 'STORED', loc: f.reserve[0]!.code, qty: 82n, tasks: 0n });
     expect(await skuTotal(f.skus[0]!.id)).toBe(total0);
     const lines = await sql<{ required_qty: bigint; picked_qty: bigint; allocated_qty: bigint }>(`SELECT required_qty, picked_qty, allocated_qty FROM order_lines WHERE order_id = '${o.body.id}' ORDER BY line_no`);
-    expect(lines).toEqual([{ required_qty: 18n, picked_qty: 18n, allocated_qty: 0n }, { required_qty: 26n, picked_qty: 20n, allocated_qty: 0n }, { required_qty: 5n, picked_qty: 0n, allocated_qty: 0n }]);
-    // the rest is allocated and picked like any order; the order ends PICKED and stages normally
+    // the 6 more of sku1 were allocated at once and a new pick task holds them; sku2 has no stock yet → short, still pending
+    expect(lines).toEqual([{ required_qty: 18n, picked_qty: 18n, allocated_qty: 0n }, { required_qty: 26n, picked_qty: 20n, allocated_qty: 6n }, { required_qty: 5n, picked_qty: 0n, allocated_qty: 0n }]);
+    expect(r.body.picking).toMatchObject({ allocated: true, added: 1 });
+    expect(r.body.picking.task_id).toBeTruthy();
+    expect(r.body.picking.short).toEqual([`${f.skus[2]!.code}: faltan 5`]);
+    // stock for sku2 arrives: allocating appends its line to the open task; the order ends PICKED and stages normally
     await storedPallet(f, 2, f.reserve[2]!.id, 50n);
-    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
-    const t2 = await sup.post('/picking/tasks', { order_id: o.body.id });
-    expect(t2.status, JSON.stringify(t2.body)).toBe(201);
-    await pickAll(t2.body.task.id);
+    const more = await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' });
+    expect(more.status, JSON.stringify(more.body)).toBe(200);
+    expect(more.body.appended).toMatchObject({ task_id: r.body.picking.task_id, added: 1 });
+    await pickAll(r.body.picking.task_id);
     const od = await sup.get(`/orders/${o.body.id}`);
     expect(od.body.status).toBe('PICKED');
     expect(od.body.lines.map((l: { picked_qty: string; required_qty: string }) => [l.required_qty, l.picked_qty])).toEqual([['18', '18'], ['26', '26'], ['5', '5']]);
@@ -104,8 +108,8 @@ describe('adjusting an order that is not picked yet', () => {
     const tl = await sql<{ qty: bigint; status: string }>(`SELECT qty, status FROM pick_task_lines WHERE pick_task_id = '${t.body.task.id}' ORDER BY qty`);
     expect(tl).toEqual([{ qty: 10n, status: 'PENDING' }]);
     // the released pieces are available again
-    const bal = await sql<{ status: string; qty: bigint }>(`SELECT status, sum(qty)::bigint AS qty FROM inventory_balances WHERE sku_id = '${f.skus[1]!.id}' GROUP BY status`);
-    expect(bal.find((b) => b.status === 'ALLOCATED')?.qty ?? 0n).toBe(0n);
+    const act = await sql<{ n: bigint }>(`SELECT count(*)::bigint AS n FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id WHERE ol.order_id = '${o.body.id}' AND a.sku_id = '${f.skus[1]!.id}' AND a.status = 'ACTIVE'`);
+    expect(act[0]!.n).toBe(0n);
     // the picker can finish the trimmed task and the order ends PICKED with 10
     await pickAll(t.body.task.id);
     const od = await sup.get(`/orders/${o.body.id}`);
@@ -129,15 +133,14 @@ describe('swapping the model of a picked line', () => {
     const total0 = await skuTotal(f.skus[0]!.id);
     const r = await adminC.post('/orders/adjust', { order_id: o.body.id, reason: 'el cliente cambió el modelo', lines: [{ sku_code: f.skus[0]!.code, qty: 0 }, { sku_code: f.skus[2]!.code, qty: 12 }] });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body.status).toBe('PARTIALLY_ALLOCATED');
+    expect(r.body.status).toBe('ALLOCATED'); // the new model was allocated at once and its pick task created
+    expect(r.body.picking).toMatchObject({ allocated: true, added: 1, short: [] });
     expect(r.body.changes.find((c: { sku: string }) => c.sku === f.skus[0]!.code)).toMatchObject({ before: '12', after: '0', returned_to_stock: '12' });
     expect(r.body.changes.find((c: { sku: string }) => c.sku === f.skus[2]!.code)).toMatchObject({ before: '0', after: '12', to_pick: '12' });
     expect(await skuTotal(f.skus[0]!.id)).toBe(total0);
     const od = await sup.get(`/orders/${o.body.id}`);
     expect(od.body.lines.map((l: { sku: { code: string }; required_qty: string; picked_qty: string }) => [l.sku.code, l.required_qty, l.picked_qty])).toEqual([[f.skus[2]!.code, '12', '0']]);
-    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
-    const t2 = await sup.post('/picking/tasks', { order_id: o.body.id });
-    await pickAll(t2.body.task.id);
+    await pickAll(r.body.picking.task_id);
     expect((await sup.get(`/orders/${o.body.id}`)).body.status).toBe('PICKED');
     await expectReconciled();
   });
@@ -173,6 +176,33 @@ describe('reopening a closed order (admin)', () => {
     expect(od.body.lpns.map((l: { code: string; status: string }) => l.status)).toEqual(['PICKING']);
     // reopening twice does nothing (nothing left to bring back)
     expect((await adminC.post('/orders/reopen', { order_id: o.body.id, reason: 'otra vez' })).status).toBe(422);
+    await expectReconciled();
+  });
+});
+
+describe('adjusting while the picker is on the order', () => {
+  it('new and raised lines are allocated at once and appended to the open pick task', async () => {
+    await storedPallet(f, 0, f.reserve[6]!.id, 50n);
+    await storedPallet(f, 2, f.reserve[7]!.id, 50n);
+    const o = await sup.post('/orders', { order_number: `ADJT-${f.tag}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 10, uom_code: 'PIECE' }] });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
+    await sup.post(`/orders/${o.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const t = await sup.post('/picking/tasks', { order_id: o.body.id });
+    const v = await picker.post(`/picking/tasks/${t.body.task.id}/start`);
+    expect(v.body.lines).toHaveLength(1);
+    // office raises sku0 to 15 and adds sku2 × 7 while the task is open
+    const r = await adminC.post('/orders/adjust', { order_id: o.body.id, reason: 'el cliente agregó modelo', lines: [{ sku_code: f.skus[0]!.code, qty: 15 }, { sku_code: f.skus[2]!.code, qty: 7 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.status).toBe('PICKING');
+    expect(r.body.picking).toMatchObject({ allocated: true, task_id: t.body.task.id, added: 2, short: [] });
+    const v2 = await picker.get(`/picking/tasks/${t.body.task.id}`);
+    const open = (v2.body.lines as { sku_code: string; qty: string; status: string }[]).filter((l) => l.status === 'PENDING' || l.status === 'IN_PROGRESS');
+    expect(open.map((l) => [l.sku_code, l.qty]).sort()).toEqual([[f.skus[0]!.code, '10'], [f.skus[0]!.code, '5'], [f.skus[2]!.code, '7']].sort());
+    await pickAll(t.body.task.id);
+    const od = await sup.get(`/orders/${o.body.id}`);
+    expect(od.body.status).toBe('PICKED');
+    expect(od.body.lines.map((l: { sku: { code: string }; required_qty: string; picked_qty: string }) => [l.sku.code, l.required_qty, l.picked_qty])).toEqual([[f.skus[0]!.code, '15', '15'], [f.skus[2]!.code, '7', '7']]);
     await expectReconciled();
   });
 });

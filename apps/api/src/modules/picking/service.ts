@@ -43,6 +43,34 @@ export async function createPickTask(tx: Tx, ctx: ActorContext, orderId: string,
   return { task, lines: allocs.length, staging };
 }
 
+/**
+ * Allocations made while the order already has an open pick task (quantities raised, a model swapped, inventory allocated
+ * later) are added to that task as new lines, so the picker sees them without anyone creating a second task.
+ */
+export async function appendAllocationsToActiveTask(tx: Tx, ctx: ActorContext, orderId: string): Promise<{ task_id: string; added: number } | null> {
+  const task = await tx.pick_tasks.findFirst({ where: { order_id: orderId, status: { in: ['PENDING', 'IN_PROGRESS'] }, mode: 'ALLOCATED' } });
+  if (!task) return null;
+  const allocs = await tx.$queryRaw<{ id: string; order_line_id: string; lpn_id: string; sku_id: string; qty: bigint; picked_qty: bigint; location_id: string; lpn_total: bigint; single_sku: boolean }[]>`
+    SELECT a.id, a.order_line_id, a.lpn_id, a.sku_id, a.qty, a.picked_qty, l.current_location_id AS location_id,
+           (SELECT sum(b.qty) FROM inventory_balances b WHERE b.lpn_id = l.id AND b.qty > 0)::bigint AS lpn_total,
+           NOT EXISTS (SELECT 1 FROM inventory_balances b WHERE b.lpn_id = l.id AND b.qty > 0 AND b.sku_id <> a.sku_id) AS single_sku
+      FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id JOIN lpns l ON l.id = a.lpn_id JOIN locations loc ON loc.id = l.current_location_id
+     WHERE ol.order_id = ${orderId}::uuid AND a.status = 'ACTIVE' AND a.qty > a.picked_qty
+       AND NOT EXISTS (SELECT 1 FROM pick_task_lines x WHERE x.allocation_id = a.id AND x.status IN ('PENDING','IN_PROGRESS','PICKED'))
+     ORDER BY loc.pick_sequence NULLS LAST, loc.code, l.code`;
+  if (!allocs.length) return { task_id: task.id, added: 0 };
+  const seqRow = await tx.$queryRaw<{ n: number }[]>`SELECT COALESCE(max(sequence),0)::int AS n FROM pick_task_lines WHERE pick_task_id = ${task.id}::uuid`;
+  let seq = seqRow[0]!.n;
+  for (const a of allocs) {
+    const fullPallet = a.single_sku && a.qty - a.picked_qty === a.lpn_total;
+    await tx.pick_task_lines.create({ data: { pick_task_id: task.id, order_line_id: a.order_line_id, allocation_id: a.id, sequence: ++seq, location_id: a.location_id, lpn_id: a.lpn_id, sku_id: a.sku_id, qty: a.qty - a.picked_qty, full_pallet: fullPallet } });
+  }
+  // a task the system had already closed as complete stays open for the new lines
+  if (task.status === 'COMPLETED') await tx.pick_tasks.update({ where: { id: task.id }, data: { status: 'IN_PROGRESS', completed_at: null } });
+  await audit(tx, ctx, { action: 'pick.task_lines_added', entity_type: 'pick_task', entity_id: task.id, after: { added: allocs.length } });
+  return { task_id: task.id, added: allocs.length };
+}
+
 /** Picks a free STAGING location (no active assignment, no pallets), locking it so two orders never share one. */
 export async function assignStaging(tx: Tx, ctx: ActorContext, orderId: string): Promise<{ id: string; code: string; barcode: string } | null> {
   const current = await tx.staging_assignments.findFirst({ where: { order_id: orderId, released_at: null }, include: { location: true } });

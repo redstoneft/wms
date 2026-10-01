@@ -348,7 +348,7 @@ describe('A12/A13/A14/A15 — smaller rules', () => {
     // QTY without uom_code is a validation error
     expect((await picker.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: line.id, step: 'QTY', qty: 6 }, idem())).status).toBe(400);
   });
-  it('A14: allocating more while a pick task is active is refused; a second wave is possible after it completes', async () => {
+  it('A14: allocating more while a pick task is active appends the new lines to that task (no second wave needed)', async () => {
     const p = await makeFixture({ skus: 1, reserveBays: 3, levels: 1 });
     await storedPallet(p, 0, p.reserve[0]!.id, 12n);
     const o = await sup.post('/orders', { order_number: `A-${p.tag}-wave`, customer_code: p.customer.code, lines: [{ sku_code: p.skus[0]!.code, qty: 4, uom_code: 'CASE' }] });
@@ -357,15 +357,12 @@ describe('A12/A13/A14/A15 — smaller rules', () => {
     expect(first.body.status).toBe('PARTIALLY_ALLOCATED');
     const t = await sup.post('/picking/tasks', { order_id: o.body.id });
     await storedPallet(p, 0, p.reserve[1]!.id, 12n);
-    const blocked = await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: true });
-    expect(blocked.status).toBe(422);
-    expect(blocked.body.error).toBe('PICK_TASK_ACTIVE');
+    const more = await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: true });
+    expect(more.status, JSON.stringify(more.body)).toBe(200);
+    expect(more.body.status).toBe('PICKING');
+    expect(more.body.appended).toMatchObject({ task_id: t.body.task.id, added: 1 });
+    expect((await sup.post('/picking/tasks', { order_id: o.body.id })).status).not.toBe(201); // still one task
     await pickAll(t.body.task.id, picker);
-    const second = await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: true });
-    expect(second.status).toBe(200);
-    const t2 = await sup.post('/picking/tasks', { order_id: o.body.id });
-    expect(t2.status).toBe(201);
-    await pickAll(t2.body.task.id, picker);
     const od = await sup.get(`/orders/${o.body.id}`);
     expect(od.body.lines[0].picked_qty).toBe('24');
     expect(od.body.status).toBe('PICKED');

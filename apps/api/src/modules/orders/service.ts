@@ -9,7 +9,7 @@ import { createPutawayTask } from '../putaway/service.js';
 import { consumeAuthorization } from '../authorizations/routes.js';
 import { getSettings } from '../settings/routes.js';
 import { createIncident } from '../incidents/service.js';
-import { returnPickedToSource, unpickOrder } from '../picking/service.js';
+import { appendAllocationsToActiveTask, createPickTask, returnPickedToSource, unpickOrder } from '../picking/service.js';
 
 export interface CreateOrderInput {
   order_number: string;
@@ -130,9 +130,9 @@ function fewestBrokenPallets<T extends { qty: bigint }>(cands: T[], remaining: b
 
 export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id: string; strategy?: AllocationStrategy; allow_partial: boolean }) {
   const o = await lockOrder(tx, input.order_id);
-  if (!['ACCEPTED', 'PARTIALLY_ALLOCATED', 'PICKED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}; only accepted orders can be allocated`);
+  if (!['ACCEPTED', 'PARTIALLY_ALLOCATED', 'PICKED', 'PICKING'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}; only accepted orders can be allocated`);
+  // an open pick task is no obstacle: what gets allocated now is appended to it as new lines
   const activeTask = await tx.pick_tasks.count({ where: { order_id: o.id, status: { in: ['PENDING', 'IN_PROGRESS'] } } });
-  if (activeTask) throw new RuleError('PICK_TASK_ACTIVE', 'Order has an active pick task; wait for it to finish before allocating more');
   const settings = await getSettings(tx);
   const strategy = input.strategy ?? (settings.allocation_strategy as AllocationStrategy);
   const lines = await tx.order_lines.findMany({ where: { order_id: o.id }, include: { sku: true }, orderBy: { line_no: 'asc' } });
@@ -206,10 +206,15 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
   if (anyShort && !input.allow_partial) {
     throw new RuleError('INSUFFICIENT_INVENTORY', 'Not enough available inventory to allocate the full order', { lines: result.map((r) => ({ ...r, required: r.required.toString(), allocated_before: r.allocated_before.toString(), allocated_now: r.allocated_now.toString(), short: r.short.toString() })) });
   }
-  const status = anyShort ? 'PARTIALLY_ALLOCATED' : 'ALLOCATED';
+  let status = anyShort ? 'PARTIALLY_ALLOCATED' : 'ALLOCATED';
+  let appended: { task_id: string; added: number } | null = null;
+  if (activeTask) {
+    appended = await appendAllocationsToActiveTask(tx, ctx, o.id);
+    status = 'PICKING';
+  }
   await tx.orders.update({ where: { id: o.id }, data: { status, version: { increment: 1 } } });
-  await audit(tx, ctx, { action: 'order.allocate', entity_type: 'order', entity_id: o.id, after: { status, strategy, result } });
-  return { order_id: o.id, status, strategy, lines: result };
+  await audit(tx, ctx, { action: 'order.allocate', entity_type: 'order', entity_id: o.id, after: { status, strategy, result, appended } });
+  return { order_id: o.id, status, strategy, lines: result, appended };
 }
 
 /** Releases ALL active allocations of an order back to AVAILABLE. */
@@ -568,7 +573,22 @@ export async function adjustOrderLines(tx: Tx, ctx: ActorContext, input: { order
   }
   const prev = await tx.orders.findUniqueOrThrow({ where: { id: o.id }, select: { notes: true } });
   await tx.orders.update({ where: { id: o.id }, data: { status, version: { increment: 1 }, notes: [prev.notes, `[AJUSTE DE CANTIDADES] ${input.reason}: ${changes.map((c) => `${c.sku} ${c.before}→${c.after}`).join(', ')}`].filter(Boolean).join('\n') } });
+  // what is now needed gets allocated and put in front of the picker right away: appended to the open task, or a new task
+  let picking: { allocated: boolean; task_id: string | null; added: number; short: string[] } = { allocated: false, task_id: null, added: 0, short: [] };
+  if (needsPick && ['PICKING', 'PARTIALLY_ALLOCATED', 'PICKED', 'ACCEPTED'].includes(status)) {
+    const alloc = await allocateOrder(tx, ctx, { order_id: o.id, allow_partial: true });
+    const short = alloc.lines.filter((l) => l.short > 0n).map((l) => `${l.sku}: faltan ${l.short}`);
+    let taskId = alloc.appended?.task_id ?? null;
+    let added = alloc.appended?.added ?? 0;
+    if (!taskId && alloc.lines.some((l) => l.allocated_now > 0n)) {
+      const t = await createPickTask(tx, ctx, o.id);
+      taskId = t.task.id;
+      added = t.lines;
+    }
+    status = (await tx.orders.findUniqueOrThrow({ where: { id: o.id }, select: { status: true } })).status;
+    picking = { allocated: true, task_id: taskId, added, short };
+  }
   const inc = await createIncident(tx, ctx, { incident_type: 'OTHER', severity: 'LOW', title: `Pedido ${o.order_number}: cantidades cambiadas después de surtir`, description: `${input.reason} · ${changes.map((c) => `${c.sku} ${c.before}→${c.after}${c.returned_to_stock !== '0' ? ` (${c.returned_to_stock} a existencia: ${c.new_lpns.join(', ')})` : ''}${c.to_pick !== '0' ? ` (${c.to_pick} por surtir)` : ''}`).join('; ')}`, entity_type: 'order', entity_id: o.id, order_id: o.id });
-  await audit(tx, ctx, { action: 'order.adjust_lines', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status, changes, incident_id: inc.id }, reason: input.reason });
-  return { order_id: o.id, order_number: o.order_number, status, changes, incident_id: inc.id };
+  await audit(tx, ctx, { action: 'order.adjust_lines', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status, changes, picking, incident_id: inc.id }, reason: input.reason });
+  return { order_id: o.id, order_number: o.order_number, status, changes, picking, incident_id: inc.id };
 }

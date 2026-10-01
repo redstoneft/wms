@@ -94,7 +94,7 @@ export default function OrderDetailPage() {
       }),
     onSuccess: (r) => {
       toast.success(
-        r.changes.length ? `Pedido ajustado · ${es(r.status)}` : 'Sin cambios',
+        r.changes.length ? `Pedido ajustado · ${es(r.status)}${r.picking?.added ? ` · ${r.picking.added} línea(s) ya en la tarea del surtidor` : ''}${r.picking?.short.length ? ` · sin existencia: ${r.picking.short.join(', ')}` : ''}` : 'Sin cambios',
         r.changes.map((c) => `${c.sku} ${fmtQty(c.before)}→${fmtQty(c.after)}${c.returned_to_stock !== '0' ? ` · ${fmtQty(c.returned_to_stock)} a existencia (${c.new_lpns.join(', ')})` : ''}${c.to_pick !== '0' ? ` · ${fmtQty(c.to_pick)} por surtir` : ''}`).join(' | '),
       );
       setAdjust({ open: false, reason: '', qty: {}, add: [] });
@@ -157,7 +157,7 @@ export default function OrderDetailPage() {
                 Aceptar
               </Button>
             )}
-            {can('orders.allocate') && ['IMPORTED', 'ACCEPTED', 'PARTIALLY_ALLOCATED'].includes(o.status) && <Button onClick={() => setAlloc({ ...alloc, open: true })}>Asignar inventario</Button>}
+            {can('orders.allocate') && (['IMPORTED', 'ACCEPTED', 'PARTIALLY_ALLOCATED'].includes(o.status) || (o.status === 'PICKING' && o.lines.some((l) => toBigInt(l.required_qty) > toBigInt(l.allocated_qty) + toBigInt(l.picked_qty)))) && <Button onClick={() => setAlloc({ ...alloc, open: true })}>Asignar inventario</Button>}
             {can('picking.assign') && ['ALLOCATED', 'PARTIALLY_ALLOCATED'].includes(o.status) && !activePick && <Button variant="success" onClick={() => setPick({ open: true, user: '' })}>Crear tarea de surtido</Button>}
             {can('orders.manage') && !['SHIPPED', 'LOADED', 'LOADING', 'CANCELLED'].includes(o.status) && (
               <Button variant="danger" onClick={() => setCancel({ open: true, reason: '', auth: '' })}>
