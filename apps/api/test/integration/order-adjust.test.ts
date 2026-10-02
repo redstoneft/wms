@@ -229,3 +229,42 @@ describe('delivered without touching stock', () => {
     await expectReconciled();
   });
 });
+
+describe('re-receiving an outbound pallet (short box)', () => {
+  it('the missing pieces leave the outbound pallet, the line is short again and gets planned into the open task', async () => {
+    const src = await storedPallet(f, 2, f.reserve[9]!.id, 60n);
+    const o = await sup.post('/orders', { order_number: `BOX-${f.tag}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[2]!.code, qty: 24, uom_code: 'PIECE' }] });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
+    await sup.post(`/orders/${o.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const t = await sup.post('/picking/tasks', { order_id: o.body.id });
+    await pickAll(t.body.task.id);
+    const od = await sup.get(`/orders/${o.body.id}`);
+    expect(od.body.status).toBe('PICKED');
+    const outbound = od.body.lpns[0].code as string;
+    const total = await skuTotal(f.skus[2]!.id);
+    // the loader finds 4 pieces missing in a box: the picker re-receives the outbound pallet with 20
+    const r = await picker.post('/wm/lpn-recount', { lpn_code: outbound, purpose: 'caja venía con 4 piezas de menos', lines: [{ sku_code: f.skus[2]!.code, qty: 20, uom_code: 'PIECE' }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.mode).toBe('OUTBOUND');
+    expect(r.body.deltas[0]).toMatchObject({ system: '24', counted: '20', delta: '-4' });
+    expect(r.body.replanned.added).toBe(1);
+    expect(r.body.replanned.task_id).toBeTruthy();
+    expect(await skuTotal(f.skus[2]!.id)).toBe(total - 4n); // the 4 never existed
+    const od2 = await sup.get(`/orders/${o.body.id}`);
+    expect(od2.body.lines[0]).toMatchObject({ required_qty: '24', picked_qty: '20' });
+    const bal = await sql<{ status: string; qty: bigint }>(`SELECT b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${outbound}' AND b.qty > 0`);
+    expect(bal).toEqual([{ status: 'PICKING', qty: 20n }]);
+    // the picker goes for the 4 from the source pallet and the order is picked again
+    await pickAll(r.body.replanned.task_id);
+    const od3 = await sup.get(`/orders/${o.body.id}`);
+    expect(od3.body.status).toBe('PICKED');
+    expect(od3.body.lines[0]).toMatchObject({ picked_qty: '24' });
+    expect(src.code).toBeTruthy();
+    // more pieces than registered are not accepted here
+    const more = await picker.post('/wm/lpn-recount', { lpn_code: outbound, purpose: 'trae más', lines: [{ sku_code: f.skus[2]!.code, qty: 30, uom_code: 'PIECE' }] });
+    expect(more.status).toBe(422);
+    expect(more.body.error).toBe('MORE_THAN_PICKED');
+    await expectReconciled();
+  });
+});

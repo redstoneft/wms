@@ -159,6 +159,8 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 ## RE-RECIBIR UNA TARIMA (tarima revuelta o mal capturada)
 
+**Caja incompleta ya surtida (protocolo):** si el surtidor o el cargador encuentra que una caja ya surtida trae menos piezas, en `Almacén → Re-recibir tarima` escanea la **tarima de salida** del pedido, escanea el producto y teclea las piezas que de verdad trae, con el motivo. El sistema descuenta de la tarima de salida las piezas que no existen, baja lo surtido de esa línea, vuelve a planear la diferencia y la mete a la tarea abierta del surtidor (o crea la tarea) para que vaya por ellas; queda incidencia de caja incompleta. Si se descubre antes de capturar la cantidad, basta con capturar las piezas reales y completar con *Tomar el resto de otra tarima*. Las piezas de más no se registran aquí (se capturan surtiendo).
+
 `Almacén → Re-recibir tarima` (también desde Nueva tarea): escanee el **LPN**, luego escanee **cada producto que trae de verdad** y teclee su cantidad (lo que no escanee se toma como que no está), escriba el motivo y registre. Si su rol aprueba ajustes (supervisor, control de inventarios), el sistema corrige la tarima al momento, con incidencia y auditoría. Si no, queda como **conteo terminado** en esa ubicación: otra persona lo recuenta en `Conteo` y el supervisor lo aprueba; el inventario cambia hasta entonces.
 
 **Nueva recepción desde el handheld**: `Nueva tarea → Recibir mercancía`, escriba el motivo y listo: la recepción se abre en el andén de recibo del almacén (el que esté libre) y pasa directo a `Recibir`. No hay que escanear el andén.

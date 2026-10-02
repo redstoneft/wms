@@ -15,12 +15,15 @@ export interface SelfTaskResult {
   dock?: string;
 }
 export interface LpnRecountResult {
-  mode: 'APPLIED' | 'COUNT';
+  mode: 'APPLIED' | 'COUNT' | 'OUTBOUND';
   lpn: string;
   location: string;
   deltas: { sku: string; system: string; counted: string; delta: string }[];
   task_id: string | null;
   status: string;
+  order_number?: string;
+  order_status?: string;
+  replanned?: { task_id: string | null; added: number; short: string[] };
 }
 export interface HandheldOrderResult {
   order_id: string;

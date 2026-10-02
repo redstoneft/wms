@@ -31,7 +31,7 @@ export default function WmRecountPage() {
 function Flow() {
   const wm = useWm();
   const nav = useNavigate();
-  const [lpn, setLpn] = useState<{ code: string; location: string; contents: { sku_code: string; description: string; qty: string }[] } | null>(null);
+  const [lpn, setLpn] = useState<{ code: string; location: string; outbound: string | null; contents: { sku_code: string; description: string; qty: string }[] } | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [pending, setPending] = useState<Omit<Line, 'qty' | 'uom_code'> | null>(null);
   const [purpose, setPurpose] = useState('');
@@ -45,9 +45,10 @@ function Flow() {
     try {
       const d = await inventoryApi.lpn(code);
       const contents = d.balances.filter((b) => Number(b.qty) > 0).map((b) => ({ sku_code: b.sku.code, description: b.sku.description, qty: String(b.qty) }));
-      setLpn({ code: d.code, location: d.current_location?.code ?? '', contents });
+      const outbound = (d.status === 'PICKING' || d.status === 'STAGED') && d.order ? d.order.order_number : null;
+      setLpn({ code: d.code, location: d.current_location?.code ?? '', outbound, contents });
       setStep('LINES');
-      wm.ok(`${d.code} · el sistema tiene ${contents.length} producto(s)`);
+      wm.ok(outbound ? `${d.code} · TARIMA DE SALIDA del pedido ${outbound}` : `${d.code} · el sistema tiene ${contents.length} producto(s)`);
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -73,7 +74,7 @@ function Flow() {
       const r = await wmTasksApi.recountLpn({ lpn_code: lpn.code, purpose: purpose.trim(), lines: lines.map((l) => ({ sku_code: l.sku_code, qty: l.qty, uom_code: l.uom_code })) });
       setResult(r);
       setStep('DONE');
-      wm.ok(r.mode === 'APPLIED' ? 'TARIMA CORREGIDA EN EL SISTEMA' : 'RECUENTO REGISTRADO · FALTA SEGUNDA CUENTA Y APROBACIÓN');
+      wm.ok(r.mode === 'OUTBOUND' ? `PEDIDO ${r.order_number} CORREGIDO · ${r.replanned?.added ?? 0} LÍNEA(S) POR SURTIR DE NUEVO` : r.mode === 'APPLIED' ? 'TARIMA CORREGIDA EN EL SISTEMA' : 'RECUENTO REGISTRADO · FALTA SEGUNDA CUENTA Y APROBACIÓN');
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -100,6 +101,7 @@ function Flow() {
   if (step === 'LINES' && lpn)
     return (
       <div>
+        {lpn.outbound && <div className="mb-2 rounded-2xl border-2 border-amber-400 bg-amber-900/40 px-3 py-2 text-sm text-amber-100">TARIMA DE SALIDA del pedido <b>{lpn.outbound}</b>: teclea las piezas que de verdad trae. Lo que falte sale de la tarima, baja lo surtido del pedido y se vuelve a planear para que vayan por ello.</div>}
         <StepBar text={pending ? `CANTIDAD REAL DE ${pending.sku_code}` : `2 · ESCANEA LO QUE TRAE LA TARIMA (${lines.length} producto${lines.length === 1 ? '' : 's'})`} />
         <div className="mb-2 flex items-center justify-between rounded-2xl bg-slate-800 px-4 py-2">
           <div>
@@ -182,7 +184,7 @@ function Flow() {
   if (step === 'DONE' && result)
     return (
       <div>
-        <StepBar text={result.mode === 'APPLIED' ? 'TARIMA CORREGIDA' : 'RECUENTO REGISTRADO'} />
+        <StepBar text={result.mode === 'OUTBOUND' ? `PEDIDO ${result.order_number} CORREGIDO` : result.mode === 'APPLIED' ? 'TARIMA CORREGIDA' : 'RECUENTO REGISTRADO'} />
         <BigValue label="Tarima" value={`${result.lpn} · ${result.location}`} tone="ok" />
         <ul className="mt-3 grid gap-1 font-mono text-base" data-testid="recount-deltas">
           {result.deltas.map((d) => (
@@ -195,7 +197,9 @@ function Flow() {
           ))}
         </ul>
         <div className="mt-3 text-sm text-slate-300">
-          {result.mode === 'APPLIED' ? 'Los ajustes ya están en el inventario, con incidencia y auditoría a tu nombre.' : 'Como tu rol no aprueba ajustes, quedó como conteo terminado: otra persona debe recontar (Conteo) y el supervisor aprobar. El inventario cambia hasta entonces.'}
+          {result.mode === 'OUTBOUND'
+            ? `Las piezas que faltaban salieron de la tarima de salida y el pedido vuelve a necesitarlas: ${result.replanned?.added ? `${result.replanned.added} línea(s) nuevas en la tarea de surtido, ve por ellas.` : 'no hay existencia para volver a planearlas; quedan pendientes.'}${result.replanned?.short.length ? ` Sin existencia: ${result.replanned.short.join(', ')}.` : ''} Queda incidencia por la caja incompleta.`
+            : result.mode === 'APPLIED' ? 'Los ajustes ya están en el inventario, con incidencia y auditoría a tu nombre.' : 'Como tu rol no aprueba ajustes, quedó como conteo terminado: otra persona debe recontar (Conteo) y el supervisor aprobar. El inventario cambia hasta entonces.'}
         </div>
         <div className="mt-4 grid gap-2">
           <BigButton tone="primary" onClick={reset}>
