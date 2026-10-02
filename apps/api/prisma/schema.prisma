@@ -322,6 +322,9 @@ model skus {
   description_locked Boolean  @default(false) // edited by hand in the WMS: the SAE sync must not overwrite it
   family             String?  @db.VarChar(60)
   color              String?  @db.VarChar(20) // product colour on the 3D map (hex); null = derived from the name
+  merged_into_id     String?  @db.Uuid // this SKU was the same product as another one: every lookup lands there; the SAE sync never resurrects it
+  merged_into        skus?    @relation("sku_merge", fields: [merged_into_id], references: [id])
+  merged_from        skus[]   @relation("sku_merge")
   compatibility_group String? @db.VarChar(60) // SKUs in different incompatible groups never share a location
   abc_class          String   @default("C") @db.VarChar(1)
   base_uom           String   @default("PIECE") @db.VarChar(10)

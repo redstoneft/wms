@@ -376,10 +376,18 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
       seen.add(p.model);
       try {
         await withTx(async (tx) => {
-          const existing =
+          let existing =
             (p.gtin ? await tx.skus.findUnique({ where: { gtin: p.gtin } }) : null) ??
             (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: p.model } })) ??
             (await tx.skus.findUnique({ where: { code: p.code } }));
+          // a SKU merged by hand into another product is only a pointer: this SAE product lives on the survivor, untouched
+          let mergedTarget: { id: string; code: string } | null = null;
+          for (let hop = 0; existing?.merged_into_id && hop < 5; hop++) {
+            const target = await tx.skus.findUnique({ where: { id: existing.merged_into_id } });
+            if (!target) break;
+            mergedTarget = { id: target.id, code: target.code };
+            existing = target;
+          }
           const a = p.base;
           const data = {
             description: (a.descr ?? p.model).trim().slice(0, 300) || p.model,
@@ -394,7 +402,10 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
             is_active: p.keys.some((k) => key(k.article.status) === 'A'),
           };
           let sku: { id: string; code: string };
-          if (existing) {
+          if (mergedTarget) {
+            sku = mergedTarget;
+            c.updated++;
+          } else if (existing) {
             if (existing.gtin && p.gtin && existing.gtin !== p.gtin) c.errors.push({ ref: p.model, message: `el WMS tiene GTIN ${existing.gtin} y SAE/plataforma ${p.gtin}; se actualizó al de la plataforma` });
             // a name fixed by hand in the WMS wins over SAE's description
             const { description: _saeDescription, ...rest } = data;
@@ -475,20 +486,31 @@ export async function resolveSaeKey(tx: Tx, saeKey: string, gtin?: string | null
   const k = key(saeKey);
   const bc = saeKeyBarcode(k);
   if (bc) {
-    const b = await tx.sku_barcodes.findUnique({ where: { barcode: bc }, include: { sku: { select: { id: true, code: true, is_active: true } } } });
-    if (b) return { ...b.sku, uom_code: b.uom_code };
+    const b = await tx.sku_barcodes.findUnique({ where: { barcode: bc }, include: { sku: { select: { id: true, code: true, is_active: true, merged_into_id: true } } } });
+    if (b) return { ...(await survivor(tx, b.sku)), uom_code: b.uom_code };
   }
   if (gtin && GTIN_RE.test(key(gtin))) {
-    const s = await tx.skus.findUnique({ where: { gtin: key(gtin) }, select: { id: true, code: true, is_active: true } });
-    if (s) return { ...s, uom_code: 'PIECE' };
-    const b = await tx.sku_barcodes.findUnique({ where: { barcode: key(gtin) }, include: { sku: { select: { id: true, code: true, is_active: true } } } });
-    if (b) return { ...b.sku, uom_code: 'PIECE' };
+    const s = await tx.skus.findUnique({ where: { gtin: key(gtin) }, select: { id: true, code: true, is_active: true, merged_into_id: true } });
+    if (s) return { ...(await survivor(tx, s)), uom_code: 'PIECE' };
+    const b = await tx.sku_barcodes.findUnique({ where: { barcode: key(gtin) }, include: { sku: { select: { id: true, code: true, is_active: true, merged_into_id: true } } } });
+    if (b) return { ...(await survivor(tx, b.sku)), uom_code: 'PIECE' };
   }
   for (const cnd of [...new Set([k, stripDots(k)])].filter(Boolean)) {
-    const s = (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: cnd }, select: { id: true, code: true, is_active: true } })) ?? (await tx.skus.findUnique({ where: { code: saeKeyBarcode(cnd) }, select: { id: true, code: true, is_active: true } }));
-    if (s) return { ...s, uom_code: 'PIECE' };
+    const s = (await tx.skus.findFirst({ where: { external_source: 'SAE', external_ref: cnd }, select: { id: true, code: true, is_active: true, merged_into_id: true } })) ?? (await tx.skus.findUnique({ where: { code: saeKeyBarcode(cnd) }, select: { id: true, code: true, is_active: true, merged_into_id: true } }));
+    if (s) return { ...(await survivor(tx, s)), uom_code: 'PIECE' };
   }
   return null;
+}
+
+/** A SKU merged into another one answers with the survivor. */
+async function survivor(tx: Tx, s: { id: string; code: string; is_active: boolean; merged_into_id: string | null }): Promise<{ id: string; code: string; is_active: boolean }> {
+  let cur = s;
+  for (let hop = 0; cur.merged_into_id && hop < 5; hop++) {
+    const t = await tx.skus.findUnique({ where: { id: cur.merged_into_id }, select: { id: true, code: true, is_active: true, merged_into_id: true } });
+    if (!t) break;
+    cur = t;
+  }
+  return { id: cur.id, code: cur.code, is_active: cur.is_active };
 }
 
 // ---------------------------------------------------------------------------

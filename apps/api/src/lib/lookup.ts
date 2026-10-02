@@ -16,20 +16,33 @@ export interface SkuRow {
   requires_expiry: boolean;
 }
 
+/** A SKU merged into another one is only a pointer: whoever asks for it gets the surviving SKU. */
+async function followMerge(tx: Tx, r: SkuRow & { merged_into_id?: string | null }): Promise<SkuRow> {
+  let cur = r;
+  for (let hop = 0; cur.merged_into_id && hop < 5; hop++) {
+    const rows = await tx.$queryRaw<(SkuRow & { merged_into_id: string | null })[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
+      allow_negative, is_active, requires_lot, requires_expiry, merged_into_id FROM skus WHERE id = ${cur.merged_into_id}::uuid`;
+    if (!rows[0]) break;
+    cur = rows[0];
+  }
+  const { merged_into_id: _m, ...sku } = cur;
+  return sku;
+}
+
 export async function getSkuByCode(tx: Tx, code: string): Promise<SkuRow> {
-  const rows = await tx.$queryRaw<SkuRow[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
-      allow_negative, is_active, requires_lot, requires_expiry FROM skus WHERE code = ${code.trim()}`;
+  const rows = await tx.$queryRaw<(SkuRow & { merged_into_id: string | null })[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
+      allow_negative, is_active, requires_lot, requires_expiry, merged_into_id FROM skus WHERE code = ${code.trim()}`;
   const r = rows[0];
   if (!r) throw new NotFoundError('SKU', code);
-  return r;
+  return followMerge(tx, r);
 }
 
 export async function getSkuById(tx: Tx, id: string): Promise<SkuRow> {
-  const rows = await tx.$queryRaw<SkuRow[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
-      allow_negative, is_active, requires_lot, requires_expiry FROM skus WHERE id = ${id}::uuid`;
+  const rows = await tx.$queryRaw<(SkuRow & { merged_into_id: string | null })[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
+      allow_negative, is_active, requires_lot, requires_expiry, merged_into_id FROM skus WHERE id = ${id}::uuid`;
   const r = rows[0];
   if (!r) throw new NotFoundError('SKU', id);
-  return r;
+  return followMerge(tx, r);
 }
 
 /** Resolve a scanned barcode (SKU code or any registered barcode) to a SKU + packaging level. */
@@ -50,12 +63,12 @@ export async function resolveSkuBarcode(tx: Tx, scanned: string): Promise<{ sku:
   const rows = await tx.$queryRaw<{ sku_id: string; uom_code: UomCode; barcode: string }[]>`SELECT sku_id, uom_code, barcode FROM sku_barcodes WHERE barcode = ANY(${variants}::text[])`;
   const exact = rows.find((r) => r.barcode === s) ?? rows[0];
   if (exact) return { sku: await getSkuById(tx, exact.sku_id), uom_code: exact.uom_code };
-  const byGtin = await tx.$queryRaw<SkuRow[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
-      allow_negative, is_active, requires_lot, requires_expiry FROM skus WHERE gtin = ANY(${variants}::text[])`;
-  if (byGtin[0]) return { sku: byGtin[0], uom_code: 'PIECE' };
-  const bySku = await tx.$queryRaw<SkuRow[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
-      allow_negative, is_active, requires_lot, requires_expiry FROM skus WHERE code = ${s}`;
-  if (bySku[0]) return { sku: bySku[0], uom_code: 'PIECE' };
+  const byGtin = await tx.$queryRaw<(SkuRow & { merged_into_id: string | null })[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
+      allow_negative, is_active, requires_lot, requires_expiry, merged_into_id FROM skus WHERE gtin = ANY(${variants}::text[])`;
+  if (byGtin[0]) return { sku: await followMerge(tx, byGtin[0]), uom_code: 'PIECE' };
+  const bySku = await tx.$queryRaw<(SkuRow & { merged_into_id: string | null })[]>`SELECT id, code, description, family, compatibility_group, abc_class, unit_weight_kg::text AS unit_weight_kg,
+      allow_negative, is_active, requires_lot, requires_expiry, merged_into_id FROM skus WHERE code = ${s}`;
+  if (bySku[0]) return { sku: await followMerge(tx, bySku[0]), uom_code: 'PIECE' };
   throw new NotFoundError('barcode', s);
 }
 
