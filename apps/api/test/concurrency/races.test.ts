@@ -38,8 +38,11 @@ describe('concurrency', () => {
     expect(ok.length).toBe(10);
     expect(failed.length).toBe(10);
     const bal = await sql<{ status: string; qty: bigint }>(`SELECT b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id=b.lpn_id WHERE b.sku_id = '${f.skus[3]!.id}' AND l.current_location_id = '${f.reserve[5]!.id}'`);
-    expect(bal.find((b) => b.status === 'ALLOCATED')?.qty).toBe(60n);
-    expect(bal.find((b) => b.status === 'AVAILABLE')).toBeUndefined();
+    // plans do not reserve: the 60 stay AVAILABLE, and the plans of the 10 winners add up to exactly 60
+    expect(bal.find((b) => b.status === 'AVAILABLE')?.qty).toBe(60n);
+    expect(bal.find((b) => b.status === 'ALLOCATED')).toBeUndefined();
+    const planned = await sql<{ q: bigint }>(`SELECT COALESCE(sum(a.qty - a.picked_qty),0)::bigint AS q FROM allocations a JOIN lpns l ON l.id = a.lpn_id WHERE a.sku_id = '${f.skus[3]!.id}' AND l.current_location_id = '${f.reserve[5]!.id}' AND a.status = 'ACTIVE'`);
+    expect(planned[0]!.q).toBe(60n);
     await expectReconciled();
   });
 
@@ -78,16 +81,15 @@ describe('concurrency', () => {
     await expectReconciled();
   });
 
-  it('picking and transfer on the same LPN cannot both succeed', async () => {
+  it('a pallet planned for an order is not blocked: it can still be transferred (the plan reserves nothing)', async () => {
     const fork = await userWithRoles('cf3', ['FORKLIFT']);
     const lpn = await storedPallet(f, 2, f.reserve[6]!.id, 120n);
     const oid = await order([{ sku: 2, cases: 5 }]);
     const alloc = await sup.post('/orders/allocate', { order_id: oid, allow_partial: false });
     expect(alloc.status).toBe(200);
-    // transfer must be refused: LPN has ALLOCATED inventory
+    // the plan does not reserve: the pallet stays AVAILABLE and a transfer is allowed
     const t = await fork.post('/transfers/start', { lpn_code: lpn.code, to_location_barcode: f.reserve[7]!.barcode }, idem());
-    expect(t.status).toBe(422);
-    expect(t.body.error).toBe('LPN_NOT_AVAILABLE');
+    expect(t.status, JSON.stringify(t.body)).toBe(201);
     await expectReconciled();
   });
 

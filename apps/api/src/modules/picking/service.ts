@@ -363,6 +363,11 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
         lineQty += extra;
         remaining = base;
       }
+      // the plan did not reserve anything: the pallet must physically hold it now (another order may have taken from it)
+      const onPallet = await getBalance(tx, expectedLpn.id, line.sku_id, 'AVAILABLE');
+      if (onPallet < base) {
+        throw blocked(ctx, task.id, line.id, 'NOT_ENOUGH_ON_PALLET', `EN ${expectedLpn.code} SOLO QUEDAN ${onPallet} DE ${sku.code}: captura ${onPallet} y toma el resto de otra tarima`, { available: onPallet.toString(), scanned: base.toString(), expected_lpn: expectedLpn.code });
+      }
       let movementId: bigint;
       let outboundCode: string;
       // whole-pallet conversion only when the pallet really holds exactly what is left on the line (single SKU, all of it)
@@ -370,7 +375,7 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
       const wholePallet = base === remaining && palletState[0]!.skus === 1n && palletState[0]!.total === remaining;
       if (wholePallet) {
         // whole pallet becomes the outbound unit, in place
-        movementId = await changeStatus(tx, ctx, { movement_type: 'PICK', lpn: expectedLpn, sku_id: line.sku_id, qty: base, from_status: 'ALLOCATED', to_status: 'PICKING', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line', reference_id: line.id });
+        movementId = await changeStatus(tx, ctx, { movement_type: 'PICK', lpn: expectedLpn, sku_id: line.sku_id, qty: base, from_status: 'AVAILABLE', to_status: 'PICKING', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line', reference_id: line.id });
         await tx.lpns.update({ where: { id: expectedLpn.id }, data: { status: 'PICKING', lpn_type: 'OUTBOUND', order_id: task.order_id, version: { increment: 1 } } });
         outboundCode = expectedLpn.code;
       } else {
@@ -383,7 +388,7 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
           qty: base,
           uom_code: uom,
           uom_qty: input.qty,
-          from_status: 'ALLOCATED',
+          from_status: 'AVAILABLE',
           to_status: 'PICKING',
           to_location_id: expectedLpn.current_location_id,
           order_id: task.order_id,
@@ -464,15 +469,12 @@ async function absorbIntoLine(
     const avail = await getBalance(tx, p.lpn.id, p.line.sku_id, 'AVAILABLE');
     const take = avail < need ? avail : need;
     if (take > 0n) {
-      await changeStatus(tx, ctx, { movement_type: 'ALLOCATE', lpn: p.lpn, sku_id: p.line.sku_id, qty: take, from_status: 'AVAILABLE', to_status: 'ALLOCATED', order_id: p.orderId, task_id: p.taskId, reference_type: 'pick_line', reference_id: p.line.id, reason: `Toma de más en ${p.lpn.code}: ${take} se reservan aquí` });
       let comp = take;
       const others = await tx.$queryRaw<L[]>`SELECT id, qty, allocation_id, lpn_id, full_pallet FROM pick_task_lines WHERE pick_task_id = ${p.taskId}::uuid AND order_line_id = ${p.line.order_line_id}::uuid AND id <> ${p.line.id}::uuid
         AND status IN ('PENDING','IN_PROGRESS') AND picked_qty = 0 AND lpn_id <> ${p.line.lpn_id}::uuid ORDER BY full_pallet ASC, qty ASC FOR UPDATE`;
       for (const l of others) {
         if (comp <= 0n) break;
         const cut = l.qty < comp ? l.qty : comp;
-        const other = await lockLpn(tx, l.lpn_id);
-        await changeStatus(tx, ctx, { movement_type: 'DEALLOCATE', lpn: other, sku_id: p.line.sku_id, qty: cut, from_status: 'ALLOCATED', to_status: 'AVAILABLE', order_id: p.orderId, task_id: p.taskId, reference_type: 'pick_line', reference_id: l.id, reason: `Se tomó de ${p.lpn.code} en su lugar` });
         await shrinkLine(l, cut);
         comp -= cut;
       }
@@ -516,22 +518,7 @@ export async function shortLine(tx: Tx, ctx: ActorContext, input: { pick_task_id
   const remaining = line.qty - line.picked_qty;
   const lpn = await lockLpn(tx, line.lpn_id);
   if (remaining > 0n) {
-    await recordMovement(tx, ctx, {
-      movement_type: 'DEALLOCATE',
-      sku_id: line.sku_id,
-      qty: remaining,
-      from_lpn_id: lpn.id,
-      to_lpn_id: lpn.id,
-      from_location_id: lpn.current_location_id,
-      to_location_id: lpn.current_location_id,
-      from_status: 'ALLOCATED',
-      to_status: 'AVAILABLE',
-      order_id: line.order_id,
-      reference_type: 'pick_line',
-      reference_id: line.id,
-      reason: input.reason,
-      idempotency_suffix: `SHORT:${line.id}`,
-    });
+    // nothing was reserved in the ledger: only the plan is dropped
     await tx.order_lines.update({ where: { id: line.order_line_id }, data: { allocated_qty: { decrement: remaining } } });
   }
   await tx.allocations.update({ where: { id: line.allocation_id }, data: { status: 'RELEASED', ...(line.picked_qty > 0n ? { qty: line.picked_qty } : {}) } });
@@ -755,7 +742,6 @@ export async function freePickScan(tx: Tx, ctx: ActorContext, input: { pick_task
       const max = await tx.order_lines.aggregate({ where: { order_id: task.order_id }, _max: { line_no: true } });
       line = await tx.order_lines.create({ data: { order_id: task.order_id, line_no: (max._max.line_no ?? 0) + 1, sku_id: p.sku_id, required_qty: p.qty, uom_code: 'PIECE', uom_qty: p.qty } });
     }
-    await changeStatus(tx, ctx, { movement_type: 'ALLOCATE', lpn, sku_id: p.sku_id, qty: p.qty, from_status: 'AVAILABLE', to_status: 'ALLOCATED', order_id: task.order_id, task_id: task.id, reference_type: 'free_pick', reference_id: line.id });
     const alloc = await tx.allocations.create({ data: { order_line_id: line.id, lpn_id: lpn.id, sku_id: p.sku_id, qty: p.qty, strategy: 'FREE' } });
     await tx.order_lines.update({ where: { id: line.id }, data: { allocated_qty: { increment: p.qty } } });
     const seq = await tx.pick_task_lines.aggregate({ where: { pick_task_id: task.id }, _max: { sequence: true } });
@@ -900,9 +886,7 @@ export async function relocatePickLine(tx: Tx, ctx: ActorContext, input: { pick_
   const qty = avail < remaining ? avail : remaining; // what moves to the new pallet
   const leftover = remaining - qty; // stays on the original pallet (split again later if needed)
   const sku = await tx.skus.findUniqueOrThrow({ where: { id: line.sku_id }, select: { code: true } });
-  // release on the old pallet, reserve on the new one
-  await changeStatus(tx, ctx, { movement_type: 'DEALLOCATE', lpn: oldLpn, sku_id: line.sku_id, qty, from_status: 'ALLOCATED', to_status: 'AVAILABLE', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line_relocate', reference_id: line.id, reason: `Cambio de tarima → ${newLpn.code}` });
-  await changeStatus(tx, ctx, { movement_type: 'ALLOCATE', lpn: newLpn, sku_id: line.sku_id, qty, from_status: 'AVAILABLE', to_status: 'ALLOCATED', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line_relocate', reference_id: line.id, reason: `Cambio de tarima desde ${oldLpn.code}` });
+  // the plan moves to the new pallet; nothing is reserved in the ledger
   const alloc = await tx.allocations.create({ data: { order_line_id: line.order_line_id, lpn_id: newLpn.id, sku_id: line.sku_id, qty, strategy: 'MANUAL' } });
   const state = await tx.$queryRaw<{ total: bigint; skus: bigint }[]>`SELECT COALESCE(sum(qty),0)::bigint AS total, count(DISTINCT sku_id)::bigint AS skus FROM inventory_balances WHERE lpn_id = ${newLpn.id}::uuid AND qty > 0`;
   const fullPallet = state[0]!.skus === 1n && state[0]!.total === qty;

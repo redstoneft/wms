@@ -43,7 +43,7 @@ describe('registering more than the line asks', () => {
     expect(after.find((x) => x.lpn === a.code)).toMatchObject({ qty: 10n, status: 'PENDING', picked: 0n });
     expect(after.find((x) => x.lpn === b.code)).toMatchObject({ qty: 30n, status: 'PICKED', picked: 30n });
     const balA = await sql<{ status: string; qty: bigint }>(`SELECT status, qty FROM inventory_balances WHERE lpn_id = '${a.id}' AND qty > 0 ORDER BY status`);
-    expect(balA).toEqual([{ status: 'ALLOCATED', qty: 10n }, { status: 'AVAILABLE', qty: 20n }]);
+    expect(balA).toEqual([{ status: 'AVAILABLE', qty: 30n }]); // the plan (10 for this order) reserves nothing
     // finish A with 10 and the order is picked with exactly 40
     expect((await picker.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: lineA.id, step: 'LOCATION', scanned: f.reserve[0]!.barcode }, idem())).status).toBe(200);
     expect((await picker.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: lineA.id, step: 'LPN', scanned: a.code }, idem())).status).toBe(200);

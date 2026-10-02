@@ -295,16 +295,16 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     expect(cand.status).toBe(200);
     expect(cand.body.candidates.map((c: { lpn_code: string }) => c.lpn_code)).toContain(other.code);
     expect(cand.body.candidates.map((c: { lpn_code: string }) => c.lpn_code)).not.toContain(allocated);
-    const beforeAlloc = (await sql<{ q: bigint | null }>(`SELECT COALESCE(sum(b.qty),0)::bigint AS q FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${allocated}' AND b.status = 'ALLOCATED'`))[0]!.q ?? 0n;
     const r = await picker.post(`/picking/tasks/${t.body.id}/lines/${line.id}/relocate`, { lpn_code: other.code });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const moved = r.body.lines.find((l: { id: string }) => l.id === line.id);
     expect(moved.lpn_code).toBe(other.code);
     expect(moved.scan_step).toBe(0);
+    // plans reserve nothing: both pallets keep their stock AVAILABLE; the plan (allocation) now points at the other pallet
     const bal = await sql<{ code: string; status: string; qty: bigint }>(`SELECT l.code, b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code IN ('${allocated}','${other.code}') AND b.qty > 0 ORDER BY l.code, b.status`);
-    const byLpn = Object.fromEntries(bal.map((b) => [`${b.code}:${b.status}`, b.qty]));
-    expect((byLpn[`${allocated}:ALLOCATED`] ?? 0n) as bigint).toBe(beforeAlloc - 10n); // released on the original pallet
-    expect(byLpn[`${other.code}:ALLOCATED`]).toBe(10n);
+    expect(bal.every((b) => b.status === 'AVAILABLE')).toBe(true);
+    const plans = await sql<{ code: string; qty: bigint }>(`SELECT l.code, a.qty FROM allocations a JOIN lpns l ON l.id = a.lpn_id WHERE a.order_line_id = (SELECT order_line_id FROM pick_task_lines WHERE id = '${line.id}') AND a.status = 'ACTIVE'`);
+    expect(plans).toEqual([{ code: other.code, qty: 10n }]);
     // the pick continues at the new pallet's location
     const loc = await picker.post('/picking/scan', { pick_task_id: t.body.id, line_id: line.id, step: 'LOCATION', scanned: moved.location_barcode }, idem());
     expect(loc.status, JSON.stringify(loc.body)).toBe(200);
@@ -354,8 +354,11 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const byLpn = Object.fromEntries(bal.map((b) => [`${b.code}:${b.status}`, b.qty]));
     expect(byLpn[`${p1.code}:AVAILABLE`]).toBe(12n); // system still believes 12 are there → incident
     expect(byLpn[`${p1.code}:ALLOCATED`]).toBeUndefined();
-    expect(byLpn[`${p2.code}:ALLOCATED`]).toBe(8n);
-    expect(byLpn[`${p3.code}:ALLOCATED`]).toBe(4n);
+    // plans reserve nothing: p2 and p3 keep their stock AVAILABLE; the plans point 8 at p2 and 4 at p3
+    expect(byLpn[`${p2.code}:ALLOCATED`]).toBeUndefined();
+    expect(byLpn[`${p3.code}:ALLOCATED`]).toBeUndefined();
+    const plans = await sql<{ code: string; qty: bigint }>(`SELECT l.code, a.qty FROM allocations a JOIN lpns l ON l.id = a.lpn_id WHERE a.lpn_id IN (SELECT id FROM lpns WHERE code IN ('${p2.code}','${p3.code}')) AND a.status = 'ACTIVE' ORDER BY l.code`);
+    expect(plans).toEqual([{ code: p2.code, qty: 8n }, { code: p3.code, qty: 4n }]);
     const inc = await sql<{ n: bigint }>(`SELECT count(*) AS n FROM incidents i JOIN lpns l ON l.id = i.lpn_id WHERE l.code = '${p1.code}' AND i.incident_type = 'INVENTORY_DIFFERENCE'`);
     expect(inc[0]!.n).toBe(2n);
     // finish both new lines → task completes, order line fully picked (18 + 8 + 4)

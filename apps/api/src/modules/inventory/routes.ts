@@ -17,7 +17,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
     return db.$queryRaw<Record<string, unknown>[]>`
       SELECT s.id AS sku_id, s.code, s.gtin, s.description, s.abc_class, s.family,
              COALESCE(sum(b.qty) FILTER (WHERE b.status = 'AVAILABLE'), 0)::text AS available,
-             COALESCE(sum(b.qty) FILTER (WHERE b.status = 'ALLOCATED'), 0)::text AS allocated,
+             COALESCE((SELECT sum(a.qty - a.picked_qty) FROM allocations a WHERE a.sku_id = s.id AND a.status = 'ACTIVE'), 0)::text AS allocated,
              COALESCE(sum(b.qty) FILTER (WHERE b.status IN ('PICKING','STAGING','LOADED')), 0)::text AS outbound,
              COALESCE(sum(b.qty) FILTER (WHERE b.status IN ('QUARANTINE','DAMAGED','BLOCKED')), 0)::text AS locked,
              COALESCE(sum(b.qty) FILTER (WHERE b.status = 'IN_TRANSFER'), 0)::text AS in_transfer,

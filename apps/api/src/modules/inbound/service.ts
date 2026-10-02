@@ -425,6 +425,9 @@ export async function cancelReceipt(tx: Tx, ctx: ActorContext, receiptId: string
       const bal = await lockBalances(tx, lpn.id);
       const busy = bal.filter((b) => b.qty > 0n && !['AVAILABLE', 'DAMAGED', 'BLOCKED', 'QUARANTINE'].includes(b.status));
       if (busy.length) blocked.push(`${lpn.code} tiene inventario ${busy.map((b) => b.status).join('/')}`);
+      // a plan of some order on this pallet (allocation) would be left pointing at nothing: release or re-plan it first
+      const planned = await tx.$queryRaw<{ order_number: string }[]>`SELECT DISTINCT o.order_number FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id JOIN orders o ON o.id = ol.order_id WHERE a.lpn_id = ${lpn.id}::uuid AND a.status = 'ACTIVE' AND a.qty > a.picked_qty`;
+      if (planned.length) blocked.push(`${lpn.code} está planeada para el pedido ${planned.map((p) => p.order_number).join(', ')}`);
     }
     if (blocked.length) throw new RuleError('RECEIPT_LPNS_IN_USE', `No se puede cancelar: ${blocked.join('; ')}. Libera esas tarimas primero.`, { blocked });
     for (const l of r.lpns) {

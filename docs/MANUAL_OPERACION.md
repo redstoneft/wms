@@ -70,6 +70,8 @@ Regla que se conserva: nadie puede autorizar con sus propias credenciales una ex
 
 ## PICKING (surtido)
 
+**La asignación es una sugerencia, no una reserva.** Al asignar inventario a un pedido el sistema solo planea de qué tarimas conviene surtir; esas piezas siguen **disponibles** para cualquier otro pedido, traslado o acomodo y cualquier ubicación con el producto sigue siendo válida para surtir (escaneándola o con *Tomar de otra tarima*). Si al llegar la tarima ya no tiene suficiente porque otro se la llevó, el handheld avisa cuánto queda: se captura eso y el resto se toma de otra tarima. El sistema prefiere planear sobre tarimas que ningún otro pedido tenga planeadas.
+
 1. `Almacén → Surtir` → **Mis tareas** → elija la tarea (pedido) → **INICIAR**.
 2. Por cada línea, en orden de ruta (o en el orden que prefiera: el botón **Elegir otro producto** muestra las líneas pendientes y se toca la que se va a surtir):
    * Escanee la **UBICACIÓN** indicada.

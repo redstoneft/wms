@@ -4,7 +4,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { getSkuByCode, toBaseQty } from '../../lib/lookup.js';
-import { createInventory, createLpn, getBalance, lockBalances, lockLpn, recordMovement, removeInventory, transferBetweenLpns } from '../../inventory/ledger.js';
+import { createInventory, createLpn, getBalance, lockBalances, lockLpn, removeInventory, transferBetweenLpns } from '../../inventory/ledger.js';
 import { createPutawayTask } from '../putaway/service.js';
 import { consumeAuthorization } from '../authorizations/routes.js';
 import { getSettings } from '../settings/routes.js';
@@ -146,8 +146,11 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
       result.push(entry);
       continue;
     }
+    // allocation is a PLAN: inventory stays AVAILABLE (another order or picker may still take it); pallets nobody else
+    // has planned on come first, then the chosen strategy decides
     const candidates = await tx.$queryRaw<CandidateBalance[]>`
       SELECT b.id AS balance_id, l.id AS lpn_id, l.code AS lpn_code, b.qty,
+             COALESCE((SELECT sum(a.qty - a.picked_qty) FROM allocations a WHERE a.lpn_id = l.id AND a.sku_id = b.sku_id AND a.status = 'ACTIVE'), 0)::bigint AS planned_others,
              (SELECT sum(b2.qty) FROM inventory_balances b2 WHERE b2.lpn_id = l.id AND b2.sku_id = b.sku_id)::bigint AS lpn_total_sku_qty,
              NOT EXISTS (SELECT 1 FROM inventory_balances b3 WHERE b3.lpn_id = l.id AND b3.qty > 0 AND b3.sku_id <> b.sku_id) AS single_sku,
              loc.location_type
@@ -158,6 +161,7 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
          AND l.status = 'STORED' AND loc.is_active AND loc.admin_status = 'ACTIVE' AND loc.location_type IN ('RESERVE','PICKING')
          AND (l.expiry_date IS NULL OR l.expiry_date >= CURRENT_DATE)
        ORDER BY
+         (b.qty - COALESCE((SELECT sum(a.qty - a.picked_qty) FROM allocations a WHERE a.lpn_id = l.id AND a.sku_id = b.sku_id AND a.status = 'ACTIVE'), 0) >= ${remaining}) DESC,
          CASE WHEN ${strategy} = 'FEFO' THEN l.expiry_date END ASC NULLS LAST,
          CASE WHEN ${strategy} = 'LPN' THEN l.code END ASC,
          CASE WHEN ${strategy} = 'LOCATION' THEN loc.pick_sequence END ASC NULLS LAST,
@@ -174,23 +178,12 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
       const lpn = await lockLpn(tx, c.lpn_id);
       if (lpn.status !== 'STORED') continue;
       const available = await getBalance(tx, lpn.id, line.sku_id, 'AVAILABLE');
-      if (available <= 0n) continue;
-      const take = available < remaining ? available : remaining;
-      await recordMovement(tx, ctx, {
-        movement_type: 'ALLOCATE',
-        sku_id: line.sku_id,
-        qty: take,
-        from_lpn_id: lpn.id,
-        to_lpn_id: lpn.id,
-        from_location_id: lpn.current_location_id,
-        to_location_id: lpn.current_location_id,
-        from_status: 'AVAILABLE',
-        to_status: 'ALLOCATED',
-        order_id: o.id,
-        reference_type: 'order_line',
-        reference_id: line.id,
-        idempotency_suffix: `ALLOC:${line.id}:${lpn.id}`,
-      });
+      // planning discipline (not a reservation): what any order (this one included) already plans on this pallet is not planned twice
+      const po = await tx.$queryRaw<{ q: bigint }[]>`SELECT COALESCE(sum(a.qty - a.picked_qty),0)::bigint AS q FROM allocations a WHERE a.lpn_id = ${lpn.id}::uuid AND a.sku_id = ${line.sku_id}::uuid AND a.status = 'ACTIVE'`;
+      const free = available - (po[0]?.q ?? 0n);
+      if (free <= 0n) continue;
+      const take = free < remaining ? free : remaining;
+      // no ledger movement: the plan does not reserve anything
       await tx.allocations.create({ data: { order_line_id: line.id, lpn_id: lpn.id, sku_id: line.sku_id, qty: take, strategy } });
       remaining -= take;
       entry.allocated_now += take;
@@ -218,7 +211,7 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
 }
 
 /** Releases ALL active allocations of an order back to AVAILABLE. */
-export async function deallocateOrder(tx: Tx, ctx: ActorContext, orderId: string, reason: string) {
+export async function deallocateOrder(tx: Tx, _ctx: ActorContext, orderId: string, _reason: string) {
   const allocs = await tx.$queryRaw<{ id: string; lpn_id: string; sku_id: string; qty: bigint; picked_qty: bigint; order_line_id: string }[]>`
     SELECT a.id, a.lpn_id, a.sku_id, a.qty, a.picked_qty, a.order_line_id FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id
      WHERE ol.order_id = ${orderId}::uuid AND a.status = 'ACTIVE' ORDER BY a.lpn_id FOR UPDATE OF a`;
@@ -226,23 +219,7 @@ export async function deallocateOrder(tx: Tx, ctx: ActorContext, orderId: string
   for (const a of allocs) {
     const remaining = a.qty - a.picked_qty;
     if (remaining > 0n) {
-      const lpn = await lockLpn(tx, a.lpn_id);
-      await recordMovement(tx, ctx, {
-        movement_type: 'DEALLOCATE',
-        sku_id: a.sku_id,
-        qty: remaining,
-        from_lpn_id: lpn.id,
-        to_lpn_id: lpn.id,
-        from_location_id: lpn.current_location_id,
-        to_location_id: lpn.current_location_id,
-        from_status: 'ALLOCATED',
-        to_status: 'AVAILABLE',
-        order_id: orderId,
-        reference_type: 'allocation',
-        reference_id: a.id,
-        reason,
-        idempotency_suffix: `DEALLOC:${a.id}`,
-      });
+      // the plan is dropped; nothing was reserved in the ledger
       await tx.order_lines.update({ where: { id: a.order_line_id }, data: { allocated_qty: { decrement: remaining } } });
       released += remaining;
     }
@@ -418,10 +395,10 @@ export async function forceDeliver(tx: Tx, ctx: ActorContext, input: { order_id:
     const allocs = await tx.allocations.findMany({ where: { order_line_id: line.id, status: 'ACTIVE' } });
     for (const a of allocs) {
       if (remaining <= 0n) break;
-      const have = await getBalance(tx, a.lpn_id, line.sku_id, 'ALLOCATED');
+      const have = await getBalance(tx, a.lpn_id, line.sku_id, 'AVAILABLE');
       const take = have < remaining ? have : remaining;
       if (take > 0n) {
-        await ship(a.lpn_id, line.sku_id, take, 'ALLOCATED', 'asignado');
+        await ship(a.lpn_id, line.sku_id, take, 'AVAILABLE', 'asignado');
         remaining -= take;
       }
       await tx.allocations.update({ where: { id: a.id }, data: { status: 'PICKED', picked_qty: a.qty } });
@@ -552,9 +529,7 @@ export async function adjustOrderLines(tx: Tx, ctx: ActorContext, input: { order
       const remaining = a.qty - a.picked_qty;
       const cut = remaining < release ? remaining : release;
       if (cut <= 0n) continue;
-      const lpn = await lockLpn(tx, a.lpn_id);
-      await recordMovement(tx, ctx, { movement_type: 'DEALLOCATE', sku_id: sku.id, qty: cut, from_lpn_id: lpn.id, to_lpn_id: lpn.id, from_location_id: lpn.current_location_id, to_location_id: lpn.current_location_id, from_status: 'ALLOCATED', to_status: 'AVAILABLE', order_id: o.id, reference_type: 'allocation', reference_id: a.id, reason: input.reason, idempotency_suffix: `ADJUST:${a.id}:${cut}` });
-      const newQty = a.qty - cut;
+      const newQty = a.qty - cut; // the plan shrinks; nothing was reserved in the ledger
       await tx.allocations.update({ where: { id: a.id }, data: newQty > 0n ? { qty: newQty } : { status: 'RELEASED', ...(a.picked_qty > 0n ? { qty: a.picked_qty } : {}) } });
       await tx.pick_task_lines.updateMany({ where: { allocation_id: a.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: newQty > 0n ? { qty: newQty } : { status: 'CANCELLED' } });
       release -= cut;

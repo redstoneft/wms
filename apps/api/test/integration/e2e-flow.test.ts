@@ -323,7 +323,7 @@ describe('full outbound/inbound flow', () => {
     const t = await sup.get(`/inventory/lpns/${lpnB}/timeline`);
     expect(t.status).toBe(200);
     const events = (t.body.events as any[]).map((e) => e.event);
-    for (const ev of ['RECEIPT', 'PUTAWAY', 'ALLOCATE', 'PICK', 'STAGE', 'LOAD', 'SHIP']) expect(events).toContain(ev);
+    for (const ev of ['RECEIPT', 'PUTAWAY', 'PICK', 'STAGE', 'LOAD', 'SHIP']) expect(events).toContain(ev); // allocation is a plan now: no ledger event
     expect(t.body.orders[0].picker).toBe(picker.username);
     expect(t.body.orders[0].verifier).toBe(verifier.username);
     expect(t.body.orders[0].plates).toBe('XYZ-99');

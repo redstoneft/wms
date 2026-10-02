@@ -112,7 +112,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     return db.$queryRaw<Record<string, unknown>[]>`
       SELECT s.code AS sku, s.description,
              COALESCE(sum(b.qty) FILTER (WHERE b.status = 'AVAILABLE'), 0)::text AS available,
-             COALESCE(sum(b.qty) FILTER (WHERE b.status = 'ALLOCATED'), 0)::text AS allocated,
+             COALESCE((SELECT sum(a.qty - a.picked_qty) FROM allocations a WHERE a.sku_id = s.id AND a.status = 'ACTIVE'), 0)::text AS allocated,
              COALESCE(sum(b.qty) FILTER (WHERE b.status IN ('QUARANTINE','DAMAGED','BLOCKED')), 0)::text AS locked,
              COALESCE(sum(b.qty), 0)::text AS total
         FROM skus s LEFT JOIN inventory_balances b ON b.sku_id = s.id AND b.qty > 0
