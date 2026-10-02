@@ -227,6 +227,9 @@ async function shortenPickedLine(tx: Tx, ctx: ActorContext, p: { order: OrderRef
     await tx.pick_task_lines.updateMany({ where: { allocation_id: a.id }, data: rest > 0n ? { picked_qty: rest, qty: rest } : { picked_qty: 0n, status: 'CANCELLED' } });
     left -= cut;
   }
+  // the line's allocated counter must mirror what is still planned and unpicked, or the replan would think it is covered
+  const planned = await tx.allocations.aggregate({ where: { order_line_id: line.id, status: 'ACTIVE' }, _sum: { qty: true, picked_qty: true } });
+  await tx.order_lines.update({ where: { id: line.id }, data: { allocated_qty: (planned._sum.qty ?? 0n) - (planned._sum.picked_qty ?? 0n) } });
   await createIncident(tx, ctx, { incident_type: 'PICKING_ERROR', severity: 'MEDIUM', title: p.title, description: p.description, entity_type: 'order', entity_id: p.order.id, sku_id: p.sku.id, lpn_id: p.lpn.id, location_id: p.lpn.current_location_id, order_id: p.order.id, qty: p.missing });
 }
 
