@@ -117,7 +117,7 @@ En el pedido, botón **Reabrir pedido** (en pedidos cancelados o entregados), co
 
 ## PEDIDO ENTREGADO FUERA DE FLUJO (solo administrador)
 
-Cuando un pedido ya salió sin pasar por staging/verificación/carga, el administrador entra al pedido en oficina y toca **Marcar como entregado (fuera de flujo)** con el motivo. El inventario se descuenta como embarcado desde donde esté (lo surtido, lo asignado y, si falta, la existencia disponible); lo que no exista queda en una incidencia de severidad alta; el pedido pasa a SHIPPED y se libera su carril. Queda auditado con el usuario y el motivo. Permiso `orders.force_deliver`, solo del rol ADMIN.
+Cuando un pedido ya salió sin pasar por staging/verificación/carga, el administrador entra al pedido en oficina y toca **Marcar como entregado (fuera de flujo)** con el motivo. Si se entregó **con otra mercancía** (o ya salió por otro lado) marque la casilla **No descontar inventario**: el pedido queda ENTREGADO, nada sale del inventario, lo surtido regresa a sus tarimas y posiciones y las reservas se liberan. El inventario se descuenta como embarcado desde donde esté (lo surtido, lo asignado y, si falta, la existencia disponible); lo que no exista queda en una incidencia de severidad alta; el pedido pasa a SHIPPED y se libera su carril. Queda auditado con el usuario y el motivo. Permiso `orders.force_deliver`, solo del rol ADMIN.
 
 ## VERIFICACIÓN (doble validación)
 

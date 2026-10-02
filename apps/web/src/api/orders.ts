@@ -13,7 +13,7 @@ export const ordersApi = {
   reopen: (body: { order_id: string; reason: string }) => api.post<{ order_id: string; order_number: string; status: string; restored: { lpn: string; sku: string; qty: string; status: string; location: string | null }[]; incident_id: string | null }>('/orders/reopen', body),
   adjust: (body: { order_id: string; reason: string; lines: { sku_code: string; qty: string; uom_code?: string }[] }) => api.post<{ order_id: string; order_number: string; status: string; changes: { sku: string; before: string; after: string; returned_to_stock: string; new_lpns: string[]; released_allocation: string; to_pick: string }[]; picking?: { allocated: boolean; task_id: string | null; added: number; short: string[] }; incident_id: string | null }>('/orders/adjust', body),
   /** admin: the order left without following the flow; inventory is shipped from wherever it was */
-  forceDeliver: (body: { order_id: string; reason: string }) => api.post<{ order_id: string; status: string; shipped: { lpn: string; sku: string; qty: string; from: string }[]; missing: { sku: string; qty: string }[]; incident_id: string }>('/orders/force-deliver', body),
+  forceDeliver: (body: { order_id: string; reason: string; keep_stock?: boolean }) => api.post<{ order_id: string; status: string; shipped: { lpn: string; sku: string; qty: string; from: string }[]; missing: { sku: string; qty: string }[]; incident_id: string }>('/orders/force-deliver', body),
 };
 
 export const pickingApi = {

@@ -374,9 +374,26 @@ export async function reopenOrder(tx: Tx, ctx: ActorContext, input: { order_id: 
   return { order_id: o.id, order_number: o.order_number, status, restored, incident_id: inc.id };
 }
 
-export async function forceDeliver(tx: Tx, ctx: ActorContext, input: { order_id: string; reason: string }) {
+export async function forceDeliver(tx: Tx, ctx: ActorContext, input: { order_id: string; reason: string; keep_stock?: boolean }) {
   const o = await lockOrder(tx, input.order_id);
   if (['SHIPPED', 'CANCELLED'].includes(o.status)) throw new RuleError('ORDER_STATUS', `Order is ${o.status}`);
+  if (input.keep_stock) {
+    // delivered with other goods (or already out of the system): the order closes as SHIPPED but no inventory leaves.
+    // Whatever was picked goes back to its pallets and positions, reservations are released, tasks closed.
+    if (o.shipment_id) throw new RuleError('ORDER_IN_SHIPMENT', 'Remove the order from its shipment first');
+    await unpickOrder(tx, ctx, o.id, input.reason);
+    const de = await deallocateOrder(tx, ctx, o.id, input.reason);
+    await tx.pick_tasks.updateMany({ where: { order_id: o.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: { status: 'COMPLETED', completed_at: new Date() } });
+    await tx.pick_task_lines.updateMany({ where: { pick_task: { order_id: o.id }, status: { in: ['PENDING', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
+    await tx.staging_assignments.updateMany({ where: { order_id: o.id, released_at: null }, data: { released_at: new Date() } });
+    await tx.verifications.updateMany({ where: { order_id: o.id, status: 'IN_PROGRESS' }, data: { status: 'CANCELLED', completed_at: new Date() } });
+    await tx.order_lines.updateMany({ where: { order_id: o.id }, data: { allocated_qty: 0n, verified_qty: 0n, loaded_qty: 0n } });
+    const prev = await tx.orders.findUniqueOrThrow({ where: { id: o.id }, select: { notes: true } });
+    await tx.orders.update({ where: { id: o.id }, data: { status: 'SHIPPED', version: { increment: 1 }, notes: [prev.notes, `[ENTREGADO SIN DESCONTAR INVENTARIO] ${input.reason}`].filter(Boolean).join('\n') } });
+    const inc = await createIncident(tx, ctx, { incident_type: 'OTHER', severity: 'LOW', title: `Pedido ${o.order_number} marcado como entregado sin descontar inventario`, description: `${input.reason}. Reservas liberadas: ${de.released}. Lo surtido regresó a sus tarimas.`, entity_type: 'order', entity_id: o.id, order_id: o.id });
+    await audit(tx, ctx, { action: 'order.force_deliver_keep_stock', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status: 'SHIPPED', released: de.released.toString(), incident_id: inc.id }, reason: input.reason });
+    return { order_id: o.id, status: 'SHIPPED', shipped: [], missing: [], kept_stock: true, incident_id: inc.id };
+  }
   const lines = await tx.order_lines.findMany({ where: { order_id: o.id }, include: { sku: true }, orderBy: { line_no: 'asc' } });
   const shipped: { lpn: string; sku: string; qty: string; from: string }[] = [];
   const missing: { sku: string; qty: string }[] = [];

@@ -112,12 +112,12 @@ export default function OrderDetailPage() {
     },
     onError: (e) => toast.error('No se pudo reabrir', e),
   });
-  const [force, setForce] = useState<{ open: boolean; reason: string }>({ open: false, reason: '' });
+  const [force, setForce] = useState<{ open: boolean; reason: string; keepStock: boolean }>({ open: false, reason: '', keepStock: false });
   const doForce = useMutation({
-    mutationFn: () => ordersApi.forceDeliver({ order_id: id, reason: force.reason }),
+    mutationFn: () => ordersApi.forceDeliver({ order_id: id, reason: force.reason, keep_stock: force.keepStock }),
     onSuccess: (r) => {
       toast.success('Pedido marcado como entregado', `${r.shipped.length} movimiento(s) de salida${r.missing.length ? ` · sin existencia: ${r.missing.map((m) => `${m.sku} ${fmtQty(m.qty)}`).join(', ')}` : ''}`);
-      setForce({ open: false, reason: '' });
+      setForce({ open: false, reason: '', keepStock: false });
       refresh();
     },
     onError: (e) => toast.error('No se pudo marcar como entregado', e),
@@ -175,7 +175,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
             {can('orders.force_deliver') && !['SHIPPED', 'CANCELLED'].includes(o.status) && (
-              <Button variant="secondary" onClick={() => setForce({ open: true, reason: '' })}>
+              <Button variant="secondary" onClick={() => setForce({ open: true, reason: '', keepStock: false })}>
                 Marcar como entregado (fuera de flujo)
               </Button>
             )}
@@ -375,11 +375,12 @@ export default function OrderDetailPage() {
           </Field>
         </div>
       </ConfirmDialog>
-      <ConfirmDialog open={force.open} onClose={() => setForce({ open: false, reason: '' })} onConfirm={() => doForce.mutate()} title={`Marcar ${o.order_number} como entregado`} danger loading={doForce.isPending} confirmLabel="Marcar como entregado">
+      <ConfirmDialog open={force.open} onClose={() => setForce({ open: false, reason: '', keepStock: false })} onConfirm={() => doForce.mutate()} title={`Marcar ${o.order_number} como entregado`} danger loading={doForce.isPending} confirmLabel="Marcar como entregado">
         <div className="grid gap-3">
           <Alert tone="warn">
-            Úsalo solo cuando el pedido ya salió sin seguir el flujo (sin staging, verificación o carga). El inventario se descuenta como embarcado desde donde esté: lo surtido, lo asignado y, si falta, de la existencia disponible. Lo que no haya en existencia queda registrado en una incidencia. El pedido pasa a SHIPPED y se libera su carril.
+            Úsalo solo cuando el pedido ya salió sin seguir el flujo (sin staging, verificación o carga). {force.keepStock ? 'No se descuenta nada: lo surtido regresa a sus tarimas y posiciones, las reservas se liberan y el pedido queda ENTREGADO.' : 'El inventario se descuenta como embarcado desde donde esté: lo surtido, lo asignado y, si falta, de la existencia disponible. Lo que no haya en existencia queda registrado en una incidencia. El pedido pasa a SHIPPED y se libera su carril.'}
           </Alert>
+          <Checkbox checked={force.keepStock} onChange={(e) => setForce({ ...force, keepStock: e.target.checked })} label="No descontar inventario (se entregó con otra mercancía o ya salió por otro lado)" />
           <Field label="Motivo (mín. 3)" required>
             <Textarea value={force.reason} onChange={(e) => setForce({ ...force, reason: e.target.value })} />
           </Field>

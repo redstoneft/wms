@@ -206,3 +206,26 @@ describe('adjusting while the picker is on the order', () => {
     await expectReconciled();
   });
 });
+
+describe('delivered without touching stock', () => {
+  it('a picked order closes as SHIPPED, its pieces go back to the pallet and nothing leaves the inventory', async () => {
+    const src = await storedPallet(f, 1, f.reserve[8]!.id, 30n);
+    const o = await sup.post('/orders', { order_number: `KEEP-${f.tag}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[1]!.code, qty: 10, uom_code: 'PIECE' }] });
+    await sup.post(`/orders/${o.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const t = await sup.post('/picking/tasks', { order_id: o.body.id });
+    await pickAll(t.body.task.id);
+    const total = await skuTotal(f.skus[1]!.id);
+    const r = await adminC.post('/orders/force-deliver', { order_id: o.body.id, reason: 'se entregó con otra mercancía', keep_stock: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ status: 'SHIPPED', kept_stock: true, shipped: [] });
+    expect(await skuTotal(f.skus[1]!.id)).toBe(total);
+    // the pallet it was picked from holds its 30 again, all available (nothing picked, nothing reserved)
+    const bal = await sql<{ status: string; qty: bigint }>(`SELECT status, qty FROM inventory_balances WHERE lpn_id = '${src.id}' AND qty > 0 ORDER BY status`);
+    expect(bal).toEqual([{ status: 'AVAILABLE', qty: 30n }]);
+    const od = await sup.get(`/orders/${o.body.id}`);
+    expect(od.body.status).toBe('SHIPPED');
+    expect(od.body.lines[0]).toMatchObject({ required_qty: '10', picked_qty: '0', allocated_qty: '0' });
+    await expectReconciled();
+  });
+});
