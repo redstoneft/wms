@@ -49,3 +49,40 @@ describe('picking from the position the picker actually scanned', () => {
     await expectReconciled();
   });
 });
+
+describe('pallet step scans', () => {
+  it('an outbound pallet of another order sitting in the slot does not force an LPN scan; a location label gets a clear message', async () => {
+    // own fixture: a single pallet of the product, so both orders are planned on it
+    const g = await makeFixture({ skus: 1, reserveBays: 2, levels: 1 });
+    const src = await storedPallet(g, 0, g.reserve[0]!.id, 40n);
+    // order A picks 10 here: its outbound pallet is born in this slot
+    const a = await sup.post('/orders', { order_number: `OA-${g.tag}`, customer_code: g.customer.code, lines: [{ sku_code: g.skus[0]!.code, qty: 10, uom_code: 'PIECE' }] });
+    await sup.post(`/orders/${a.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: a.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const ta = await sup.post('/picking/tasks', { order_id: a.body.id });
+    const va = await picker.post(`/picking/tasks/${ta.body.task.id}/start`);
+    const la = va.body.lines[0] as { id: string };
+    expect((await picker.post('/picking/scan', { pick_task_id: ta.body.task.id, line_id: la.id, step: 'LOCATION', scanned: g.reserve[0]!.barcode }, idem())).status).toBe(200);
+    expect((await picker.post('/picking/scan', { pick_task_id: ta.body.task.id, line_id: la.id, step: 'LPN', scanned: src.code }, idem())).status).toBe(200);
+    expect((await picker.post('/picking/scan', { pick_task_id: ta.body.task.id, line_id: la.id, step: 'QTY', qty: '10', uom_code: 'PIECE' }, idem())).status).toBe(200);
+    // order B picks 5 of sku1 from the same slot: scanning the PRODUCT barcode must be enough (the outbound pallet of A does not count)
+    const b = await sup.post('/orders', { order_number: `OB-${g.tag}`, customer_code: g.customer.code, lines: [{ sku_code: g.skus[0]!.code, qty: 5, uom_code: 'PIECE' }] });
+    await sup.post(`/orders/${b.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: b.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const tb = await sup.post('/picking/tasks', { order_id: b.body.id });
+    const vb = await picker.post(`/picking/tasks/${tb.body.task.id}/start`);
+    const lb = vb.body.lines[0] as { id: string; lpn_code: string };
+    expect(lb.lpn_code).toBe(src.code);
+    expect((await picker.post('/picking/scan', { pick_task_id: tb.body.task.id, line_id: lb.id, step: 'LOCATION', scanned: g.reserve[0]!.barcode }, idem())).status).toBe(200);
+    // a location label at the pallet step: clear message, nothing changes
+    const loc = await picker.post('/picking/scan', { pick_task_id: tb.body.task.id, line_id: lb.id, step: 'LPN', scanned: g.reserve[0]!.barcode }, idem());
+    expect(loc.status).toBe(422);
+    expect(loc.body.error).toBe('SCAN_PALLET');
+    expect(loc.body.message).toContain('escanea la tarima');
+    const prod = await picker.post('/picking/scan', { pick_task_id: tb.body.task.id, line_id: lb.id, step: 'LPN', scanned: g.skus[0]!.case_barcode }, idem());
+    expect(prod.status, JSON.stringify(prod.body)).toBe(200);
+    expect(prod.body.next).toBe('QTY');
+    expect((await picker.post('/picking/scan', { pick_task_id: tb.body.task.id, line_id: lb.id, step: 'QTY', qty: '5', uom_code: 'PIECE' }, idem())).status).toBe(200);
+    await expectReconciled();
+  });
+});

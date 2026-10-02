@@ -315,6 +315,11 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
     case 'LPN': {
       if (line.scan_step < 1) throw new RuleError('SCAN_ORDER', 'Scan the location first');
       const scanned = (input.scanned ?? '').trim();
+      if (/^LOC-/i.test(scanned)) {
+        // a location label at the pallet step: the picker is (probably) standing in the right place, the pallet or box is what is missing
+        const here = scanned === expectedLoc.barcode || scanned.toUpperCase() === expectedLoc.code;
+        throw blocked(ctx, task.id, line.id, 'SCAN_PALLET', here ? `ESA ES LA UBICACIÓN (ya registrada): ahora escanea la tarima ${expectedLpn.code} o la caja del producto ${sku.code}` : `ESO ES UNA UBICACIÓN (${scanned}), no la tarima: escanea la tarima ${expectedLpn.code} o la caja del producto ${sku.code}`, { expected_lpn: expectedLpn.code, expected_sku: sku.code, scanned });
+      }
       if (scanned.toUpperCase() !== expectedLpn.code) {
         // maybe they scanned the product barcode: it must be the right SKU…
         let okSku = false;
@@ -328,9 +333,10 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
           const code = /^PLT-/i.test(scanned) ? 'WRONG_LPN' : 'WRONG_SKU';
           throw blocked(ctx, task.id, line.id, code, code === 'WRONG_LPN' ? `LPN INCORRECTO — esperado ${expectedLpn.code}` : `SKU INCORRECTO — esperado ${sku.code}`, { expected_lpn: expectedLpn.code, expected_sku: sku.code, scanned });
         }
-        // …and unambiguous: if another pallet of this SKU sits in the same location the LPN itself must be scanned
+        // …and unambiguous: if another STORAGE pallet of this SKU sits in the same location the LPN itself must be scanned
+        // (outbound pallets being filled there for some order are not candidates, so they do not count)
         const others = await tx.$queryRaw<{ n: bigint }[]>`SELECT count(DISTINCT l.id) AS n FROM lpns l JOIN inventory_balances b ON b.lpn_id = l.id AND b.qty > 0 AND b.sku_id = ${line.sku_id}::uuid
-          WHERE l.current_location_id = ${expectedLoc.id}::uuid`;
+          WHERE l.current_location_id = ${expectedLoc.id}::uuid AND l.status = 'STORED' AND l.order_id IS NULL`;
         if (Number(others[0]?.n ?? 0n) > 1) {
           throw blocked(ctx, task.id, line.id, 'LPN_REQUIRED', `Hay varios pallets de ${sku.code} en ${expectedLoc.code}: escanee el LPN ${expectedLpn.code}`, { expected_lpn: expectedLpn.code });
         }
