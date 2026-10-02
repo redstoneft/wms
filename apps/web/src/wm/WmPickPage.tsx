@@ -190,6 +190,21 @@ function Flow() {
   const chosen = chosenLineId ? v.lines.find((l) => l.id === chosenLineId && (l.status === 'PENDING' || (l.status === 'IN_PROGRESS' && (!l.picker_id || l.picker_id === user?.id)))) ?? null : null;
   const line = chosen ?? nextLine(v, user?.id);
   const openLines = v.lines.filter((l) => (l.status === 'PENDING' || l.status === 'IN_PROGRESS') && (!l.picker_id || l.picker_id === user?.id || l.scan_step === 0));
+  // one row per model: the picker chooses what to pick, the system decides which pallet (started line first, then by sequence)
+  const groupedLines = (() => {
+    const m = new Map<string, { sku_code: string; sku_description: string; remaining: bigint; lines: typeof openLines; next: (typeof openLines)[number] }>();
+    for (const l of openLines) {
+      const rem = toBigInt(l.qty) - toBigInt(l.picked_qty);
+      const g = m.get(l.sku_code);
+      if (!g) m.set(l.sku_code, { sku_code: l.sku_code, sku_description: l.sku_description, remaining: rem, lines: [l], next: l });
+      else {
+        g.remaining += rem;
+        g.lines.push(l);
+        if (l.status === 'IN_PROGRESS' && g.next.status !== 'IN_PROGRESS') g.next = l;
+      }
+    }
+    return [...m.values()];
+  })();
   const busyByOthers = othersBusy(v, user?.id);
   const done = v.lines.filter((l) => l.status === 'PICKED' || l.status === 'SHORT').length;
   const head = (
@@ -263,18 +278,18 @@ function Flow() {
     <div>
       <StepBar text={stepNo === 0 ? `LÍNEA ${line.sequence} · 1 VE A LA UBICACIÓN Y ESCANÉALA` : stepNo === 1 ? `LÍNEA ${line.sequence} · 2 ESCANEA EL PALLET O PRODUCTO` : `LÍNEA ${line.sequence} · 3 CANTIDAD`} />
       {head}
-      {openLines.length > 1 && (
+      {groupedLines.length > 1 && (
         <button type="button" className="mb-2 w-full rounded-2xl border-2 border-sky-500 py-2 text-sm font-bold text-sky-300" onClick={() => setLinePicker(!linePicker)} data-testid="line-picker">
-          {linePicker ? 'Cerrar lista' : `Elegir otro producto (${openLines.length} pendientes)`}
+          {linePicker ? 'Cerrar lista' : `Elegir otro producto (${groupedLines.length} modelos pendientes)`}
         </button>
       )}
       {linePicker && (
         <ul className="mb-3 grid gap-1" data-testid="line-list">
-          {openLines.map((l) => (
-            <li key={l.id}>
-              <button type="button" className={`w-full rounded-xl px-3 py-2 text-left ${l.id === line.id ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-100'}`} onClick={() => { setChosenLineId(l.id); setLinePicker(false); setChooser(null); setShortDlg(null); }}>
-                <div className="font-mono text-base font-black">{l.sku_code} · {fmtQty(toBigInt(l.qty) - toBigInt(l.picked_qty))} pzas{l.full_pallet ? ' · tarima completa' : ''}</div>
-                <div className="text-xs text-slate-300">{l.sku_description} · {l.location_code} · {l.lpn_code}{l.status === 'IN_PROGRESS' ? ' · iniciada' : ''}</div>
+          {groupedLines.map((g) => (
+            <li key={g.sku_code}>
+              <button type="button" className={`w-full rounded-xl px-3 py-2 text-left ${g.lines.some((l) => l.id === line.id) ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-100'}`} onClick={() => { setChosenLineId(g.next.id); setLinePicker(false); setChooser(null); setShortDlg(null); }}>
+                <div className="font-mono text-base font-black">{g.sku_code} · {fmtQty(g.remaining)} pzas{g.lines.length > 1 ? ` · ${g.lines.length} tarimas` : g.next.full_pallet ? ' · tarima completa' : ''}</div>
+                <div className="text-xs text-slate-300">{g.sku_description} · {g.lines.map((l) => `${l.location_code.replace(/^ALM-/, '')} ${fmtQty(toBigInt(l.qty) - toBigInt(l.picked_qty))}${l.status === 'IN_PROGRESS' ? ' (iniciada)' : ''}`).join(' · ')}</div>
               </button>
             </li>
           ))}
