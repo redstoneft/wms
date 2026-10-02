@@ -682,6 +682,12 @@ export async function unpickOrder(tx: Tx, ctx: ActorContext, orderId: string, re
       if (orig && orig.is_active && orig.admin_status === 'ACTIVE' && occupied < orig.pallet_capacity) target = orig.id;
       else needsPutaway = true;
     }
+    // a pallet that was taken from a station, lane or dock (assembly table, staging, receiving) must not stay there in limbo:
+    // it keeps that position in the system but gets a put-away task so someone stores it in a rack
+    if (target) {
+      const t = await tx.locations.findUnique({ where: { id: target }, select: { location_type: true } });
+      if (t && t.location_type !== 'RESERVE' && t.location_type !== 'PICKING') needsPutaway = true;
+    }
     for (const b of balances) {
       await recordMovement(tx, ctx, {
         movement_type: 'UNPICK',
