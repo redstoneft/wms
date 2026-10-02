@@ -43,7 +43,9 @@ export interface HandheldOrderResult {
   next: string;
 }
 export const wmTasksApi = {
-  reportDamage: (body: { lpn_code: string; sku_code: string; qty: string; uom_code: string; reason: string }) => api.post<DamageReportResult>('/wm/damage', body),
+  reportDamage: (body: { lpn_code: string; sku_code: string; qty: string; uom_code: string; reason: string; order_number?: string }) => api.post<DamageReportResult>('/wm/damage', body),
+  damageOrders: (sku: string) => api.get<{ orders: { order_number: string; customer: string; status: string; picked: string }[] }>(`/wm/damage/orders?sku=${encodeURIComponent(sku)}`),
+  linkDamageToOrder: (body: { order_number: string; sku_code: string; qty: string; uom_code: string; lpn_code?: string; reason: string }) => api.post<DamageReportResult>('/wm/damage/link-order', body),
   recountLpn: (body: { lpn_code: string; purpose: string; lines: { sku_code: string; qty: string; uom_code: string }[] }) => api.post<LpnRecountResult>('/wm/lpn-recount', body),
   createOrder: (body: { order_number: string; customer_code: string; destination?: string; purpose: string; lines: { sku_code: string; qty: string; uom_code: string }[]; start_now: boolean }) => api.post<HandheldOrderResult>('/wm/orders', body),
   create: (body: { kind: SelfTaskKind; reference: string; purpose: string; new_order?: { customer_code: string; destination?: string } }) => api.post<SelfTaskResult>('/wm/tasks', body),

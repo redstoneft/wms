@@ -299,6 +299,24 @@ describe('merma (damaged pieces) from the handheld', () => {
     expect(od2.body.lines[0]).toMatchObject({ required_qty: '10', picked_qty: '8' });
     await pickAll(d2.body.replanned.task_id);
     expect((await sup.get(`/orders/${o.body.id}`)).body.status).toBe('PICKED');
+    // the picker scans the storage pallet by mistake, then charges the merma to the order afterwards
+    const cand = await picker.get(`/wm/damage/orders?sku=${f.skus[1]!.code}`);
+    expect(cand.body.orders.map((x: { order_number: string }) => x.order_number)).toContain(o.body.order_number);
+    const before = await sql<{ status: string; qty: bigint }>(`SELECT status, qty FROM inventory_balances WHERE lpn_id = '${src.id}' AND qty > 0 ORDER BY status`);
+    const d3 = await picker.post('/wm/damage', { lpn_code: src.code, sku_code: f.skus[1]!.code, qty: 1, uom_code: 'PIECE', reason: 'se cayó armando la tarima' });
+    expect(d3.status, JSON.stringify(d3.body)).toBe(201);
+    const l3 = await picker.post('/wm/damage/link-order', { order_number: o.body.order_number, sku_code: f.skus[1]!.code, qty: 1, uom_code: 'PIECE', lpn_code: src.code, reason: 'se cayó armando la tarima' });
+    expect(l3.status, JSON.stringify(l3.body)).toBe(201);
+    expect(l3.body).toMatchObject({ mode: 'OUTBOUND', order_number: o.body.order_number, damaged_lpn: src.code });
+    expect(l3.body.replanned.added).toBe(1);
+    expect((await sup.get(`/orders/${o.body.id}`)).body.lines[0]).toMatchObject({ required_qty: '10', picked_qty: '9' });
+    const bal3 = await sql<{ status: string; qty: bigint }>(`SELECT status, qty FROM inventory_balances WHERE lpn_id = '${src.id}' AND qty > 0 ORDER BY status`);
+    const q = (rows: { status: string; qty: bigint }[], st: string) => rows.find((r) => r.status === st)?.qty ?? 0n;
+    // the order gave 1 piece back (compensates the 1 that went DAMAGED), minus whatever the re-pick took from this pallet
+    const repicked = await sql<{ qty: bigint }>(`SELECT COALESCE(SUM(qty), 0)::bigint AS qty FROM inventory_movements WHERE movement_type = 'PICK' AND from_lpn_id = '${src.id}' AND occurred_at > (SELECT occurred_at FROM inventory_movements WHERE movement_type = 'UNPICK' AND to_lpn_id = '${src.id}' ORDER BY id DESC LIMIT 1)`);
+    expect(q(bal3, 'DAMAGED')).toBe(q(before, 'DAMAGED') + 1n);
+    expect(q(bal3, 'AVAILABLE')).toBe(q(before, 'AVAILABLE') - repicked[0]!.qty);
+    expect(await skuTotal(f.skus[1]!.id)).toBe(total);
     await expectReconciled();
   });
 });

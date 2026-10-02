@@ -1,7 +1,7 @@
 // /wm/damage — merma: a piece got broken or dropped while picking, staging or loading (or sits broken on a stored pallet).
 // Scan the pallet it is on, the product, how many, why. Stored pallet: the pieces stay there as DAÑADO. Outbound pallet of
 // an order: the pieces leave the order onto a DAÑADO pallet and the order gets them planned again.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { UomCode } from '@wms/shared';
 import { inventoryApi } from '../api/inventory';
@@ -34,6 +34,15 @@ function Flow() {
   const [other, setOther] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DamageReportResult | null>(null);
+  // orders that already have this product picked on an outbound pallet: the merma may belong to one of them
+  const [orders, setOrders] = useState<{ order_number: string; customer: string; status: string; picked: string }[]>([]);
+  const [orderNo, setOrderNo] = useState('');
+  useEffect(() => {
+    if (!sku || lpn?.outbound) { setOrders([]); return; }
+    let alive = true;
+    wmTasksApi.damageOrders(sku.sku_code).then((r) => { if (alive) setOrders(r.orders); }).catch(() => { if (alive) setOrders([]); });
+    return () => { alive = false; };
+  }, [sku, lpn?.outbound]);
 
   const onLpn = async (code: string) => {
     setBusy(true);
@@ -68,17 +77,38 @@ function Flow() {
     if (why.length < 3) { wm.warn('ESCRIBE EL MOTIVO'); return; }
     setBusy(true);
     try {
-      const r = await wmTasksApi.reportDamage({ lpn_code: lpn.code, sku_code: sku.sku_code, qty: qty.qty, uom_code: qty.uom, reason: why });
+      const r = await wmTasksApi.reportDamage({ lpn_code: lpn.code, sku_code: sku.sku_code, qty: qty.qty, uom_code: qty.uom, reason: why, order_number: orderNo || undefined });
       setResult(r);
       setStep('DONE');
-      wm.warn(r.mode === 'OUTBOUND' ? `MERMA REGISTRADA · ${r.replanned?.added ?? 0} LÍNEA(S) POR SURTIR DE NUEVO` : 'MERMA REGISTRADA · PIEZAS BLOQUEADAS COMO DAÑADAS');
+      wm.warn(r.order_number ? `MERMA REGISTRADA · PEDIDO ${r.order_number} ABIERTO · ${r.replanned?.added ?? 0} LÍNEA(S) POR SURTIR DE NUEVO` : 'MERMA REGISTRADA · PIEZAS BLOQUEADAS COMO DAÑADAS');
     } catch (e) {
       wm.fail(e);
     } finally {
       setBusy(false);
     }
   };
-  const reset = () => { setLpn(null); setSku(null); setQty(null); setReason(''); setOther(''); setResult(null); setStep('LPN'); };
+  const link = async () => {
+    if (!result || !orderNo) return;
+    setBusy(true);
+    try {
+      const r = await wmTasksApi.linkDamageToOrder({ order_number: orderNo, sku_code: result.sku, qty: result.qty, uom_code: 'PIECE', lpn_code: result.lpn, reason: reason === 'Otro' ? other.trim() : reason || 'Merma' });
+      setResult(r);
+      wm.warn(`PEDIDO ${r.order_number} ABIERTO · ${r.replanned?.added ?? 0} LÍNEA(S) POR SURTIR DE NUEVO`);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const orderSelect = (
+    <select className="mt-2 w-full rounded-xl bg-slate-800 px-3 py-3 text-lg text-white" value={orderNo} onChange={(e) => setOrderNo(e.target.value)} data-testid="damage-order">
+      <option value="">— Ningún pedido (estaba en almacén) —</option>
+      {orders.map((o) => (
+        <option key={o.order_number} value={o.order_number}>{o.order_number} · {o.customer} · {fmtQty(o.picked)} surtidas</option>
+      ))}
+    </select>
+  );
+  const reset = () => { setLpn(null); setSku(null); setQty(null); setReason(''); setOther(''); setResult(null); setOrders([]); setOrderNo(''); setStep('LPN'); };
 
   if (step === 'LPN')
     return (
@@ -125,6 +155,13 @@ function Flow() {
           ))}
         </div>
         {reason === 'Otro' && <input className="mt-2 w-full rounded-xl bg-slate-800 px-3 py-3 text-lg text-white" placeholder="Escribe qué pasó" value={other} onChange={(e) => setOther(e.target.value)} />}
+        {!lpn.outbound && orders.length > 0 && (
+          <div className="mt-3 rounded-2xl border-2 border-amber-400 bg-amber-900/30 p-3">
+            <div className="text-sm font-bold text-amber-200">¿Ya estaba surtida para un pedido?</div>
+            {orderSelect}
+            <div className="mt-1 text-xs text-amber-100">Si eliges un pedido, se abre y pide volver a surtir las {fmtQty(qty.qty)} piezas.</div>
+          </div>
+        )}
         <BigButton tone="warning" className="mt-3" onClick={() => void submit()} disabled={busy || !reason} testId="damage-submit">Registrar merma</BigButton>
         <BigButton tone="neutral" className="mt-2" onClick={() => setStep('QTY')}>Regresar</BigButton>
       </div>
@@ -135,10 +172,17 @@ function Flow() {
         <StepBar text="MERMA REGISTRADA" />
         <BigValue label="Piezas dañadas" value={`${fmtQty(result.qty)} de ${result.sku}`} tone="warn" />
         <div className="mt-3 rounded-2xl bg-slate-900 p-3 text-base text-slate-200">
-          {result.mode === 'STORAGE'
+          {!result.order_number
             ? `Quedan en la tarima ${result.lpn} marcadas como DAÑADAS: nadie las puede surtir. El supervisor decide si se desechan o se recuperan. Queda incidencia.`
-            : `Salieron del pedido ${result.order_number} a la tarima ${result.damaged_lpn} (DAÑADO), en la misma posición. ${result.replanned?.added ? `${result.replanned.added} línea(s) nuevas en la tarea de surtido: ve por las piezas de reemplazo.` : 'No hay existencia para reponerlas; el pedido queda corto.'}${result.replanned?.short.length ? ` Sin existencia: ${result.replanned.short.join(', ')}.` : ''} Queda incidencia.`}
+            : `Salieron del pedido ${result.order_number}${result.mode === 'OUTBOUND' && result.damaged_lpn && result.damaged_lpn !== result.lpn ? ` a la tarima ${result.damaged_lpn} (DAÑADO)` : ''}. ${result.replanned?.added ? `${result.replanned.added} línea(s) nuevas en la tarea de surtido: ve por las piezas de reemplazo.` : 'No hay existencia para reponerlas; el pedido queda corto.'}${result.replanned?.short.length ? ` Sin existencia: ${result.replanned.short.join(', ')}.` : ''} Queda incidencia.`}
         </div>
+        {!result.order_number && orders.length > 0 && (
+          <div className="mt-3 rounded-2xl border-2 border-amber-400 bg-amber-900/30 p-3">
+            <div className="text-sm font-bold text-amber-200">¿A qué pedido afectó esta merma?</div>
+            {orderSelect}
+            <BigButton tone="warning" className="mt-2" onClick={() => void link()} disabled={busy || !orderNo} testId="damage-link">Abrir pedido y volver a surtir</BigButton>
+          </div>
+        )}
         <div className="mt-4 grid gap-2">
           <BigButton tone="primary" onClick={reset}>Otra merma</BigButton>
           <BigButton tone="neutral" onClick={() => nav('/wm')}>Volver al menú</BigButton>

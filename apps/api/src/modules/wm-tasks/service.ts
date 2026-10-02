@@ -1,12 +1,12 @@
 // Tasks an operator creates for themself from the handheld, always stating the purpose ("para qué").
 // Pick: the order is accepted/allocated if needed and the pick task is assigned to the operator.
 // Count: a blind location count assigned to the operator. Put-away: a task for a pallet left without one.
-import type { DamageReportInput, HandheldOrderInput, LpnRecountInput, SelfTaskInput } from '@wms/shared';
+import type { DamageLinkOrderInput, DamageReportInput, HandheldOrderInput, LpnRecountInput, SelfTaskInput } from '@wms/shared';
 import type { Tx } from '../../db.js';
 import { ForbiddenError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
-import { createLpn, lockBalances, lockLocationByBarcode, lockLpnByCode, removeInventory, transferBetweenLpns } from '../../inventory/ledger.js';
+import { createLpn, lockBalances, lockLocationByBarcode, lockLpn, lockLpnByCode, removeInventory, transferBetweenLpns, type LpnRow } from '../../inventory/ledger.js';
 import { toBaseQty } from '../../lib/lookup.js';
 import { createReceipt } from '../inbound/service.js';
 import { adjustInventory, changeInventoryStatus } from '../inventory/service.js';
@@ -267,7 +267,11 @@ export async function reportDamage(tx: Tx, ctx: ActorContext, input: DamageRepor
   const reason = input.reason.trim();
   if (['STORED', 'OPEN'].includes(lpn.status)) {
     const r = await changeInventoryStatus(tx, ctx, { lpn_code: lpn.code, sku_code: sku.code, action: 'DAMAGE', qty, reason: `Merma reportada por ${ctx.username}: ${reason}` });
-    await audit(tx, ctx, { action: 'inventory.damage_reported', entity_type: 'lpn', entity_id: lpn.id, after: { sku: sku.code, qty: qty.toString(), movements: r.movements.map(String), mode: 'STORAGE' }, reason });
+    await audit(tx, ctx, { action: 'inventory.damage_reported', entity_type: 'lpn', entity_id: lpn.id, after: { sku: sku.code, qty: qty.toString(), movements: r.movements.map(String), mode: 'STORAGE', order: input.order_number ?? null }, reason });
+    if (input.order_number) {
+      const link = await linkDamageToOrder(tx, ctx, { order_number: input.order_number, sku_code: sku.code, qty, uom_code: 'PIECE', lpn_code: lpn.code, reason });
+      return { mode: 'STORAGE' as const, lpn: lpn.code, damaged_lpn: lpn.code, sku: sku.code, qty: qty.toString(), order_number: link.order_number, replanned: link.replanned };
+    }
     return { mode: 'STORAGE' as const, lpn: lpn.code, damaged_lpn: lpn.code, sku: sku.code, qty: qty.toString(), order_number: null, replanned: null };
   }
   if (!['PICKING', 'STAGED'].includes(lpn.status) || !lpn.order_id) throw new RuleError('LPN_STATUS', `La tarima ${lpn.code} está ${lpn.status}; si ya está cargada, descárgala primero (Cargar → Descargar)`);
@@ -287,4 +291,77 @@ export async function reportDamage(tx: Tx, ctx: ActorContext, input: DamageRepor
   const replanned = await replanOrderShortfall(tx, ctx, order);
   await audit(tx, ctx, { action: 'inventory.damage_reported', entity_type: 'lpn', entity_id: lpn.id, after: { sku: sku.code, qty: qty.toString(), damaged_lpn: damaged.code, order: order.order_number, replanned, mode: 'OUTBOUND' }, reason });
   return { mode: 'OUTBOUND' as const, lpn: lpn.code, damaged_lpn: damaged.code, sku: sku.code, qty: qty.toString(), order_number: order.order_number, replanned };
+}
+
+const DAMAGE_OPEN_STATUSES = ['PICKING', 'PARTIALLY_ALLOCATED', 'PICKED', 'STAGED', 'VERIFIED', 'ALLOCATED', 'ACCEPTED'];
+
+/** Orders that have `sku` picked onto an outbound pallet that is not loaded yet: the ones a merma can be charged to. */
+export async function damageCandidateOrders(tx: Tx, skuCode: string) {
+  const sku = await resolveImportSku(tx, skuCode);
+  const rows = await tx.$queryRaw<{ order_number: string; customer: string; status: string; picked: bigint }[]>`
+    SELECT o.order_number, c.name AS customer, o.status, COALESCE(SUM(b.qty), 0)::bigint AS picked
+    FROM orders o
+    JOIN customers c ON c.id = o.customer_id
+    JOIN lpns l ON l.order_id = o.id AND l.status IN ('PICKING', 'STAGED')
+    JOIN inventory_balances b ON b.lpn_id = l.id AND b.sku_id = ${sku.id}::uuid AND b.qty > 0 AND b.status IN ('PICKING', 'STAGING')
+    WHERE o.status NOT IN ('SHIPPED', 'CANCELLED', 'LOADING', 'LOADED') AND o.shipment_id IS NULL
+    GROUP BY o.id, c.name
+    ORDER BY o.created_at DESC`;
+  return rows.map((r) => ({ ...r, picked: r.picked.toString() }));
+}
+
+/**
+ * The merma was registered on a storage pallet, but the pieces were already picked for an order (they fell while
+ * building its pallet). The order's outbound pallet gives the pieces back to that storage pallet (compensating the
+ * DAMAGED that is now there), the order loses them and they get planned again.
+ */
+export async function linkDamageToOrder(tx: Tx, ctx: ActorContext, input: DamageLinkOrderInput) {
+  const sku = await resolveImportSku(tx, input.sku_code.trim());
+  const { base: qty } = await toBaseQty(tx, sku.id, BigInt(input.qty), input.uom_code);
+  if (qty <= 0n) throw new RuleError('INVALID_QTY', 'La cantidad debe ser mayor a cero');
+  const reason = input.reason.trim();
+  const order = await tx.orders.findFirst({ where: { order_number: input.order_number.trim() }, select: { id: true, order_number: true, status: true, shipment_id: true } });
+  if (!order) throw new RuleError('ORDER_NOT_FOUND', `No existe el pedido ${input.order_number}`);
+  if (order.shipment_id || !DAMAGE_OPEN_STATUSES.includes(order.status)) throw new RuleError('ORDER_STATUS', `El pedido ${order.order_number} está ${order.status}; si ya está cargado, descárgalo primero`);
+  const outbounds = await tx.lpns.findMany({ where: { order_id: order.id, status: { in: ['PICKING', 'STAGED'] } }, orderBy: { created_at: 'desc' } });
+  const sources: { lpn: LpnRow; balance: { status: string; qty: bigint } }[] = [];
+  for (const o of outbounds) {
+    const b = (await lockBalances(tx, o.id)).find((x) => x.sku_id === sku.id && x.qty > 0n && (x.status === 'PICKING' || x.status === 'STAGING'));
+    if (b) sources.push({ lpn: await lockLpn(tx, o.id), balance: b });
+  }
+  const onOrder = sources.reduce((a, s) => a + s.balance.qty, 0n);
+  if (onOrder < qty) throw new RuleError('MORE_THAN_PICKED', `El pedido ${order.order_number} solo tiene ${onOrder} de ${sku.code} en sus tarimas de salida`);
+  sources.sort((a, b) => (b.balance.qty > a.balance.qty ? 1 : -1));
+  let target: LpnRow | null = null;
+  if (input.lpn_code) {
+    target = await lockLpnByCode(tx, input.lpn_code.trim().toUpperCase());
+    if (!['STORED', 'OPEN', 'CONSUMED'].includes(target.status) || !target.current_location_id) throw new RuleError('LPN_STATUS', `La tarima ${target.code} está ${target.status}`);
+    if (target.status === 'CONSUMED') await tx.lpns.update({ where: { id: target.id }, data: { status: 'STORED', lpn_type: 'STORAGE', order_id: null, version: { increment: 1 } } });
+  }
+  let left = qty;
+  const touched: string[] = [];
+  let damagedLpn: string | null = null;
+  for (const s of sources) {
+    if (left <= 0n) break;
+    const take = s.balance.qty < left ? s.balance.qty : left;
+    if (target) {
+      await transferBetweenLpns(tx, ctx, { movement_type: 'UNPICK', from_lpn: s.lpn, to_lpn: { ...target, status: 'STORED' }, sku_id: sku.id, qty: take, from_status: s.balance.status as 'PICKING' | 'STAGING', to_status: 'AVAILABLE', to_location_id: target.current_location_id!, order_id: order.id, reference_type: 'order', reference_id: order.id, reason: `Merma cargada al pedido: ${reason}`.slice(0, 120), note: `${take} de ${sku.code} salen del pedido ${order.order_number} (tarima ${s.lpn.code}) y regresan a ${target.code}: compensan la merma registrada ahí` });
+      damagedLpn = target.code;
+    } else {
+      if (!s.lpn.current_location_id) throw new RuleError('NO_LOCATION', `La tarima ${s.lpn.code} no tiene ubicación`);
+      const dmg = await createLpn(tx, ctx, { warehouse_id: s.lpn.warehouse_id, lpn_type: 'STORAGE', location_id: s.lpn.current_location_id, lot: null, expiry_date: null });
+      await tx.lpns.update({ where: { id: dmg.id }, data: { status: 'STORED' } });
+      await transferBetweenLpns(tx, ctx, { movement_type: 'DAMAGE', from_lpn: s.lpn, to_lpn: { ...dmg, status: 'STORED' }, sku_id: sku.id, qty: take, from_status: s.balance.status as 'PICKING' | 'STAGING', to_status: 'DAMAGED', to_location_id: s.lpn.current_location_id, order_id: order.id, reference_type: 'lpn', reference_id: s.lpn.id, reason: `Merma: ${reason}`.slice(0, 120), note: `Merma reportada por ${ctx.username} en el pedido ${order.order_number}: ${take} de ${sku.code} de la tarima ${s.lpn.code} pasan a ${dmg.code} como DAÑADO` });
+      damagedLpn = dmg.code;
+    }
+    const leftOnPallet = await tx.inventory_balances.count({ where: { lpn_id: s.lpn.id, qty: { gt: 0n } } });
+    if (leftOnPallet === 0) await tx.lpns.update({ where: { id: s.lpn.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+    touched.push(s.lpn.code);
+    left -= take;
+  }
+  const first = sources[0]!.lpn;
+  await shortenPickedLine(tx, ctx, { order, lpn: first, sku, missing: qty, purpose: reason, title: `Merma: ${qty} de ${sku.code} dañadas del pedido ${order.order_number}`, description: `${reason}. Reportado por ${ctx.username}. Tarimas de salida afectadas: ${touched.join(', ')}. ${target ? `Las piezas buenas que faltan se reponen; la merma quedó registrada en ${target.code}.` : `Las piezas dañadas quedan en ${damagedLpn} (DAÑADO).`} Las ${qty} piezas se vuelven a planear.` });
+  const replanned = await replanOrderShortfall(tx, ctx, order);
+  await audit(tx, ctx, { action: 'inventory.damage_linked', entity_type: 'order', entity_id: order.id, after: { sku: sku.code, qty: qty.toString(), from: touched, to: target?.code ?? damagedLpn, replanned }, reason });
+  return { mode: 'OUTBOUND' as const, lpn: touched.join(', '), damaged_lpn: damagedLpn ?? '', sku: sku.code, qty: qty.toString(), order_number: order.order_number, replanned };
 }

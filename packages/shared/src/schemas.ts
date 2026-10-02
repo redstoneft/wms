@@ -470,8 +470,22 @@ export const zDamageReport = z.object({
   qty: zQty,
   uom_code: zUom.default('PIECE'),
   reason: z.string().trim().min(3).max(300),
+  /** Storage pallet scanned but the pieces were already picked for this order: the order loses them and re-plans. */
+  order_number: z.string().trim().min(1).max(64).optional(),
 });
 export type DamageReportInput = z.infer<typeof zDamageReport>;
+
+/** After a merma was registered on a storage pallet: the pieces actually belonged to an order already picked. */
+export const zDamageLinkOrder = z.object({
+  order_number: z.string().trim().min(1).max(64),
+  sku_code: z.string().trim().min(1).max(64),
+  qty: zQty,
+  uom_code: zUom.default('PIECE'),
+  /** The storage pallet where the merma was registered; the order's pieces go back there as AVAILABLE to compensate. */
+  lpn_code: z.string().trim().min(1).max(30).optional(),
+  reason: z.string().trim().min(3).max(300),
+});
+export type DamageLinkOrderInput = z.infer<typeof zDamageLinkOrder>;
 
 /** Free picking: add a whole pallet (no qty) or part of a single-SKU pallet to the order being built. */
 export const zFreePickScan = z.object({
