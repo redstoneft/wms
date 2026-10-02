@@ -268,11 +268,12 @@ export async function reportDamage(tx: Tx, ctx: ActorContext, input: DamageRepor
   if (['STORED', 'OPEN'].includes(lpn.status)) {
     const r = await changeInventoryStatus(tx, ctx, { lpn_code: lpn.code, sku_code: sku.code, action: 'DAMAGE', qty, reason: `Merma reportada por ${ctx.username}: ${reason}` });
     await audit(tx, ctx, { action: 'inventory.damage_reported', entity_type: 'lpn', entity_id: lpn.id, after: { sku: sku.code, qty: qty.toString(), movements: r.movements.map(String), mode: 'STORAGE', order: input.order_number ?? null }, reason });
+    const report = await tx.damage_reports.create({ data: { user_id: ctx.userId, username: ctx.username, lpn_id: lpn.id, lpn_code: lpn.code, sku_id: sku.id, qty, reason, mode: 'STORAGE' } });
     if (input.order_number) {
-      const link = await linkDamageToOrder(tx, ctx, { order_number: input.order_number, sku_code: sku.code, qty, uom_code: 'PIECE', lpn_code: lpn.code, reason });
-      return { mode: 'STORAGE' as const, lpn: lpn.code, damaged_lpn: lpn.code, sku: sku.code, qty: qty.toString(), order_number: link.order_number, replanned: link.replanned };
+      const link = await linkDamageToOrder(tx, ctx, { order_number: input.order_number, sku_code: sku.code, qty, uom_code: 'PIECE', lpn_code: lpn.code, reason, report_id: report.id });
+      return { ...link, mode: 'STORAGE' as const, lpn: lpn.code, damaged_lpn: lpn.code, report_id: report.id };
     }
-    return { mode: 'STORAGE' as const, lpn: lpn.code, damaged_lpn: lpn.code, sku: sku.code, qty: qty.toString(), order_number: null, replanned: null };
+    return { mode: 'STORAGE' as const, lpn: lpn.code, damaged_lpn: lpn.code, sku: sku.code, qty: qty.toString(), order_number: null, replanned: null, report_id: report.id };
   }
   if (!['PICKING', 'STAGED'].includes(lpn.status) || !lpn.order_id) throw new RuleError('LPN_STATUS', `La tarima ${lpn.code} está ${lpn.status}; si ya está cargada, descárgala primero (Cargar → Descargar)`);
   const order = await tx.orders.findUniqueOrThrow({ where: { id: lpn.order_id }, select: { id: true, order_number: true, status: true, shipment_id: true } });
@@ -290,7 +291,8 @@ export async function reportDamage(tx: Tx, ctx: ActorContext, input: DamageRepor
   await shortenPickedLine(tx, ctx, { order, lpn, sku, missing: qty, purpose: reason, title: `Merma: ${qty} de ${sku.code} dañadas en la tarima de salida ${lpn.code} (pedido ${order.order_number})`, description: `${reason}. Reportado por ${ctx.username}. Las piezas dañadas quedan en la tarima ${damaged.code} (DAÑADO) en ${lpn.code === damaged.code ? '' : 'la misma posición'}; las ${qty} piezas se vuelven a planear para el pedido.` });
   const replanned = await replanOrderShortfall(tx, ctx, order);
   await audit(tx, ctx, { action: 'inventory.damage_reported', entity_type: 'lpn', entity_id: lpn.id, after: { sku: sku.code, qty: qty.toString(), damaged_lpn: damaged.code, order: order.order_number, replanned, mode: 'OUTBOUND' }, reason });
-  return { mode: 'OUTBOUND' as const, lpn: lpn.code, damaged_lpn: damaged.code, sku: sku.code, qty: qty.toString(), order_number: order.order_number, replanned };
+  const report = await tx.damage_reports.create({ data: { user_id: ctx.userId, username: ctx.username, lpn_id: lpn.id, lpn_code: lpn.code, sku_id: sku.id, qty, reason, mode: 'OUTBOUND', order_id: order.id, linked_at: new Date(), task_id: replanned.task_id } });
+  return { mode: 'OUTBOUND' as const, lpn: lpn.code, damaged_lpn: damaged.code, sku: sku.code, qty: qty.toString(), order_number: order.order_number, replanned, report_id: report.id };
 }
 
 const DAMAGE_OPEN_STATUSES = ['PICKING', 'PARTIALLY_ALLOCATED', 'PICKED', 'STAGED', 'VERIFIED', 'ALLOCATED', 'ACCEPTED'];
@@ -362,6 +364,35 @@ export async function linkDamageToOrder(tx: Tx, ctx: ActorContext, input: Damage
   const first = sources[0]!.lpn;
   await shortenPickedLine(tx, ctx, { order, lpn: first, sku, missing: qty, purpose: reason, title: `Merma: ${qty} de ${sku.code} dañadas del pedido ${order.order_number}`, description: `${reason}. Reportado por ${ctx.username}. Tarimas de salida afectadas: ${touched.join(', ')}. ${target ? `Las piezas buenas que faltan se reponen; la merma quedó registrada en ${target.code}.` : `Las piezas dañadas quedan en ${damagedLpn} (DAÑADO).`} Las ${qty} piezas se vuelven a planear.` });
   const replanned = await replanOrderShortfall(tx, ctx, order);
-  await audit(tx, ctx, { action: 'inventory.damage_linked', entity_type: 'order', entity_id: order.id, after: { sku: sku.code, qty: qty.toString(), from: touched, to: target?.code ?? damagedLpn, replanned }, reason });
-  return { mode: 'OUTBOUND' as const, lpn: touched.join(', '), damaged_lpn: damagedLpn ?? '', sku: sku.code, qty: qty.toString(), order_number: order.order_number, replanned };
+  if (input.report_id) {
+    const rep = await tx.damage_reports.findUnique({ where: { id: input.report_id } });
+    if (!rep) throw new RuleError('REPORT_NOT_FOUND', 'No existe esa merma');
+    if (rep.order_id) throw new RuleError('ALREADY_LINKED', 'Esa merma ya se cargó a un pedido');
+    await tx.damage_reports.update({ where: { id: rep.id }, data: { order_id: order.id, linked_at: new Date(), task_id: replanned.task_id } });
+  }
+  await audit(tx, ctx, { action: 'inventory.damage_linked', entity_type: 'order', entity_id: order.id, after: { sku: sku.code, qty: qty.toString(), from: touched, to: target?.code ?? damagedLpn, replanned, report_id: input.report_id ?? null }, reason });
+  return { mode: 'OUTBOUND' as const, lpn: touched.join(', '), damaged_lpn: damagedLpn ?? '', sku: sku.code, qty: qty.toString(), order_number: order.order_number, replanned, report_id: input.report_id ?? null };
+}
+
+/** The mermas this user registered in the last two weeks, newest first, with the order they were charged to (if any). */
+export async function myDamageReports(tx: Tx, ctx: ActorContext) {
+  const since = new Date(Date.now() - 14 * 86_400_000);
+  const rows = await tx.damage_reports.findMany({ where: { user_id: ctx.userId, created_at: { gte: since } }, orderBy: { created_at: 'desc' }, take: 50 });
+  const skus = await tx.skus.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.sku_id))] } }, select: { id: true, code: true, description: true } });
+  const orders = await tx.orders.findMany({ where: { id: { in: rows.flatMap((r) => (r.order_id ? [r.order_id] : [])) } }, select: { id: true, order_number: true, status: true } });
+  const skuById = new Map(skus.map((s) => [s.id, s]));
+  const orderById = new Map(orders.map((o) => [o.id, o]));
+  return rows.map((r) => ({
+    id: r.id,
+    created_at: r.created_at,
+    lpn: r.lpn_code,
+    sku: skuById.get(r.sku_id)?.code ?? r.sku_id,
+    description: skuById.get(r.sku_id)?.description ?? '',
+    qty: r.qty.toString(),
+    reason: r.reason,
+    mode: r.mode,
+    order_number: r.order_id ? (orderById.get(r.order_id)?.order_number ?? null) : null,
+    order_status: r.order_id ? (orderById.get(r.order_id)?.status ?? null) : null,
+    task_id: r.task_id,
+  }));
 }

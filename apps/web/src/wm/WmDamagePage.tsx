@@ -6,7 +6,8 @@ import { useNavigate } from 'react-router-dom';
 import type { UomCode } from '@wms/shared';
 import { inventoryApi } from '../api/inventory';
 import { masterdataApi } from '../api/masterdata';
-import { wmTasksApi, type DamageReportResult } from '../api/wmTasks';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { wmTasksApi, type DamageReportResult, type DamageReportRow } from '../api/wmTasks';
 import { ProductInput } from '../components/ProductInput';
 import { QtyPad } from '../components/QtyPad';
 import { ScanInput } from '../components/ScanInput';
@@ -26,6 +27,7 @@ export default function WmDamagePage() {
 function Flow() {
   const wm = useWm();
   const nav = useNavigate();
+  const qc = useQueryClient();
   const [step, setStep] = useState<'LPN' | 'PRODUCT' | 'QTY' | 'REASON' | 'DONE'>('LPN');
   const [lpn, setLpn] = useState<{ code: string; location: string; outbound: string | null; contents: { sku_code: string; description: string; qty: string }[] } | null>(null);
   const [sku, setSku] = useState<{ sku_code: string; description: string; uoms: { uom_code: UomCode; base_qty: string }[] } | null>(null);
@@ -80,6 +82,7 @@ function Flow() {
       const r = await wmTasksApi.reportDamage({ lpn_code: lpn.code, sku_code: sku.sku_code, qty: qty.qty, uom_code: qty.uom, reason: why, order_number: orderNo || undefined });
       setResult(r);
       setStep('DONE');
+      void qc.invalidateQueries({ queryKey: ['my-damage'] });
       wm.warn(r.order_number ? `MERMA REGISTRADA · PEDIDO ${r.order_number} ABIERTO · ${r.replanned?.added ?? 0} LÍNEA(S) POR SURTIR DE NUEVO` : 'MERMA REGISTRADA · PIEZAS BLOQUEADAS COMO DAÑADAS');
     } catch (e) {
       wm.fail(e);
@@ -91,8 +94,9 @@ function Flow() {
     if (!result || !orderNo) return;
     setBusy(true);
     try {
-      const r = await wmTasksApi.linkDamageToOrder({ order_number: orderNo, sku_code: result.sku, qty: result.qty, uom_code: 'PIECE', lpn_code: result.lpn, reason: reason === 'Otro' ? other.trim() : reason || 'Merma' });
+      const r = await wmTasksApi.linkDamageToOrder({ order_number: orderNo, sku_code: result.sku, qty: result.qty, uom_code: 'PIECE', lpn_code: result.lpn, reason: reason === 'Otro' ? other.trim() : reason || 'Merma', report_id: result.report_id ?? undefined });
       setResult(r);
+      void qc.invalidateQueries({ queryKey: ['my-damage'] });
       wm.warn(`PEDIDO ${r.order_number} ABIERTO · ${r.replanned?.added ?? 0} LÍNEA(S) POR SURTIR DE NUEVO`);
     } catch (e) {
       wm.fail(e);
@@ -116,6 +120,7 @@ function Flow() {
         <StepBar text="1 · ESCANEA LA TARIMA DONDE ESTÁ LA PIEZA DAÑADA" />
         <ScanInput label="LPN (de almacén o de salida del pedido)" autoUpper onScan={onLpn} disabled={busy} testId="damage-lpn" />
         <div className="mt-2 text-xs text-slate-400">Si la pieza ya está cargada en el camión, primero descárgala (Cargar → Descargar) y después regístrala aquí.</div>
+        <MyDamageHistory busy={busy} setBusy={setBusy} />
       </div>
     );
   if (step === 'PRODUCT' && lpn)
@@ -184,10 +189,79 @@ function Flow() {
           </div>
         )}
         <div className="mt-4 grid gap-2">
-          <BigButton tone="primary" onClick={reset}>Otra merma</BigButton>
+          {result.replanned?.task_id && <BigButton tone="primary" onClick={() => nav(`/wm/pick?task=${result.replanned!.task_id}`)} testId="damage-go-pick">Ir a surtir el pedido {result.order_number}</BigButton>}
+          <BigButton tone={result.replanned?.task_id ? 'neutral' : 'primary'} onClick={reset}>Otra merma</BigButton>
           <BigButton tone="neutral" onClick={() => nav('/wm')}>Volver al menú</BigButton>
         </div>
       </div>
     );
   return null;
+}
+
+/** The user's own mermas: the ones not charged to an order yet can be charged here, then the picker goes to re-pick. */
+function MyDamageHistory({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean) => void }) {
+  const wm = useWm();
+  const nav = useNavigate();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['my-damage'], queryFn: () => wmTasksApi.myDamageReports(), refetchInterval: 30_000 });
+  const [open, setOpen] = useState<string | null>(null);
+  const [orders, setOrders] = useState<{ order_number: string; customer: string; status: string; picked: string }[]>([]);
+  const [orderNo, setOrderNo] = useState('');
+  const rows = q.data?.reports ?? [];
+  if (rows.length === 0) return null;
+  const expand = async (r: DamageReportRow) => {
+    if (open === r.id) { setOpen(null); return; }
+    setOpen(r.id);
+    setOrderNo('');
+    setOrders([]);
+    try {
+      const o = await wmTasksApi.damageOrders(r.sku);
+      setOrders(o.orders);
+      if (o.orders.length === 0) wm.warn('NINGÚN PEDIDO ABIERTO TIENE ESE PRODUCTO SURTIDO');
+    } catch (e) {
+      wm.fail(e);
+    }
+  };
+  const link = async (r: DamageReportRow) => {
+    if (!orderNo) return;
+    setBusy(true);
+    try {
+      const res = await wmTasksApi.linkDamageToOrder({ order_number: orderNo, sku_code: r.sku, qty: r.qty, uom_code: 'PIECE', lpn_code: r.lpn, reason: r.reason, report_id: r.id });
+      void qc.invalidateQueries({ queryKey: ['my-damage'] });
+      wm.warn(`PEDIDO ${res.order_number} ABIERTO · ${res.replanned?.added ?? 0} LÍNEA(S) POR SURTIR DE NUEVO`);
+      if (res.replanned?.task_id) nav(`/wm/pick?task=${res.replanned.task_id}`);
+      else setOpen(null);
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-4" data-testid="damage-history">
+      <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Tus mermas (últimos 14 días)</div>
+      <ul className="grid gap-1">
+        {rows.map((r) => (
+          <li key={r.id} className={`rounded-xl px-3 py-2 ${r.order_number ? 'bg-slate-900 text-slate-300' : 'border-2 border-amber-400 bg-amber-900/30 text-amber-50'}`}>
+            <button type="button" className="w-full text-left" onClick={() => void (r.order_number ? r.task_id && nav(`/wm/pick?task=${r.task_id}`) : expand(r))} disabled={busy}>
+              <div className="font-mono text-base font-black">{r.sku} · {fmtQty(r.qty)} pzas</div>
+              <div className="text-xs">{new Date(r.created_at).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · {r.lpn} · {r.reason}</div>
+              <div className="text-xs font-bold">{r.order_number ? `Cargada al pedido ${r.order_number}${r.task_id ? ' · toca para ir a surtir' : ''}` : 'SIN PEDIDO · toca para asignarla a un pedido'}</div>
+            </button>
+            {open === r.id && !r.order_number && (
+              <div className="mt-2">
+                <select className="w-full rounded-xl bg-slate-800 px-3 py-3 text-lg text-white" value={orderNo} onChange={(e) => setOrderNo(e.target.value)} data-testid="history-order">
+                  <option value="">— Elige el pedido —</option>
+                  {orders.map((o) => (
+                    <option key={o.order_number} value={o.order_number}>{o.order_number} · {o.customer} · {fmtQty(o.picked)} surtidas</option>
+                  ))}
+                </select>
+                <BigButton tone="warning" className="mt-2" onClick={() => void link(r)} disabled={busy || !orderNo} testId="history-link">Abrir pedido y volver a surtir</BigButton>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }

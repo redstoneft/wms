@@ -2,10 +2,11 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { zHandheldOrder, zLpnRecount, zSelfTask, zDamageLinkOrder, zDamageReport } from '@wms/shared';
 import { withTx } from '../../db.js';
-import { createHandheldOrder, createSelfTask, damageCandidateOrders, linkDamageToOrder, recountLpn, reportDamage } from './service.js';
+import { createHandheldOrder, createSelfTask, damageCandidateOrders, linkDamageToOrder, myDamageReports, recountLpn, reportDamage } from './service.js';
 
 export async function wmTaskRoutes(app: FastifyInstance) {
   /** Re-receive a pallet (what it really holds). Applied at once with counts.approve; otherwise a finished count for approval. */
+  app.get('/wm/damage/mine', { preHandler: app.requirePermission('inventory.damage') }, async (req) => ({ reports: await withTx((tx) => myDamageReports(tx, req.actor!)) }));
   app.get('/wm/damage/orders', { preHandler: app.requirePermission('inventory.damage') }, async (req) => {
     const sku = z.object({ sku: z.string().trim().min(1).max(64) }).parse(req.query).sku;
     return { orders: await withTx((tx) => damageCandidateOrders(tx, sku)) };

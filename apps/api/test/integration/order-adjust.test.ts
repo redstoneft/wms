@@ -305,10 +305,15 @@ describe('merma (damaged pieces) from the handheld', () => {
     const before = await sql<{ status: string; qty: bigint }>(`SELECT status, qty FROM inventory_balances WHERE lpn_id = '${src.id}' AND qty > 0 ORDER BY status`);
     const d3 = await picker.post('/wm/damage', { lpn_code: src.code, sku_code: f.skus[1]!.code, qty: 1, uom_code: 'PIECE', reason: 'se cayó armando la tarima' });
     expect(d3.status, JSON.stringify(d3.body)).toBe(201);
-    const l3 = await picker.post('/wm/damage/link-order', { order_number: o.body.order_number, sku_code: f.skus[1]!.code, qty: 1, uom_code: 'PIECE', lpn_code: src.code, reason: 'se cayó armando la tarima' });
+    const mine = await picker.get('/wm/damage/mine');
+    expect(mine.body.reports[0]).toMatchObject({ id: d3.body.report_id, sku: f.skus[1]!.code, qty: '1', order_number: null });
+    expect(mine.body.reports.find((r: { id: string }) => r.id === d2.body.report_id)).toMatchObject({ order_number: o.body.order_number, task_id: d2.body.replanned.task_id });
+    const l3 = await picker.post('/wm/damage/link-order', { order_number: o.body.order_number, sku_code: f.skus[1]!.code, qty: 1, uom_code: 'PIECE', lpn_code: src.code, reason: 'se cayó armando la tarima', report_id: d3.body.report_id });
     expect(l3.status, JSON.stringify(l3.body)).toBe(201);
     expect(l3.body).toMatchObject({ mode: 'OUTBOUND', order_number: o.body.order_number, damaged_lpn: src.code });
     expect(l3.body.replanned.added).toBe(1);
+    expect((await picker.get('/wm/damage/mine')).body.reports[0]).toMatchObject({ id: d3.body.report_id, order_number: o.body.order_number, task_id: l3.body.replanned.task_id });
+    expect((await picker.post('/wm/damage/link-order', { order_number: o.body.order_number, sku_code: f.skus[1]!.code, qty: 1, uom_code: 'PIECE', lpn_code: src.code, reason: 'otra vez', report_id: d3.body.report_id })).status).toBe(422);
     expect((await sup.get(`/orders/${o.body.id}`)).body.lines[0]).toMatchObject({ required_qty: '10', picked_qty: '9' });
     const bal3 = await sql<{ status: string; qty: bigint }>(`SELECT status, qty FROM inventory_balances WHERE lpn_id = '${src.id}' AND qty > 0 ORDER BY status`);
     const q = (rows: { status: string; qty: bigint }[], st: string) => rows.find((r) => r.status === st)?.qty ?? 0n;

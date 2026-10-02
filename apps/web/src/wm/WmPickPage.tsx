@@ -1,7 +1,7 @@
 // /wm/pick — directed picking: my tasks → start → line by line: LOCATION → LPN/SKU → QTY. Errors block. Short-line only from office mode.
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import type { UomCode } from '@wms/shared';
 import { api } from '../api/client';
@@ -39,6 +39,14 @@ function Flow() {
   const seeAll = true;
   const tasks = useQuery({ queryKey: ['pick-tasks', 'all'], queryFn: () => pickingApi.tasks({ status: 'PENDING,IN_PROGRESS', mine: 'false' }), refetchInterval: 10_000 });
   const [taskId, setTaskId] = useState<string | null>(null);
+  // /wm/pick?task=<id> opens that task directly (e.g. right after charging a merma to an order)
+  const [searchParams, setSearchParams] = useSearchParams();
+  const wantedTask = searchParams.get('task');
+  useEffect(() => {
+    if (!wantedTask) return;
+    setSearchParams({}, { replace: true });
+    void start(wantedTask);
+  }, [wantedTask]);
   // the picker may choose which product to pick next instead of following the route
   const [chosenLineId, setChosenLineId] = useState<string | null>(null);
   const [linePicker, setLinePicker] = useState(false);

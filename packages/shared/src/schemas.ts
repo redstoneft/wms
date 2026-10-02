@@ -484,6 +484,8 @@ export const zDamageLinkOrder = z.object({
   /** The storage pallet where the merma was registered; the order's pieces go back there as AVAILABLE to compensate. */
   lpn_code: z.string().trim().min(1).max(30).optional(),
   reason: z.string().trim().min(3).max(300),
+  /** The merma report being charged to the order (from the user's history). */
+  report_id: z.string().uuid().optional(),
 });
 export type DamageLinkOrderInput = z.infer<typeof zDamageLinkOrder>;
 

@@ -1001,6 +1001,24 @@ model shipments {
 // Incidents, quarantine reasons, returns
 // ------------------------------------------------------------------
 
+model damage_reports {
+  id         String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  user_id    String    @db.Uuid
+  username   String    @db.VarChar(64)
+  lpn_id     String    @db.Uuid
+  lpn_code   String    @db.VarChar(30)
+  sku_id     String    @db.Uuid
+  qty        BigInt
+  reason     String    @db.VarChar(300)
+  mode       String    @db.VarChar(10) // STORAGE | OUTBOUND
+  order_id   String?   @db.Uuid
+  linked_at  DateTime? @db.Timestamptz(6)
+  task_id    String?   @db.Uuid
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([user_id, created_at(sort: Desc)])
+}
+
 model incidents {
   is_training  Boolean  @default(false) // done in the school warehouse (capacitación): hidden from operational screens
   id            String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
