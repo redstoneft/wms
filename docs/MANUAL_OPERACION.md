@@ -157,6 +157,10 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 `Almacén → Capturar pedido`: número de pedido (la orden de compra del cliente), cliente, y luego escanee cada producto y teclee la cantidad (piezas o cajas); escrito el motivo, **Guardar y surtirlo ahora** (asigna inventario y abre la tarea de surtido a su nombre) o **Solo guardar** (queda aceptado para surtirse después desde Surtir o Nueva tarea). El pedido aparece en la oficina como cualquier otro.
 
+## MERMA / DAÑO (pieza rota o caída al surtir, en staging o al cargar)
+
+`Almacén → Merma / daño`, cualquier operador: escanea la tarima donde está la pieza (de almacén o la tarima de salida del pedido), toca o escanea el producto, teclea cuántas y elige el motivo. Si es tarima de almacén, las piezas se quedan ahí marcadas como DAÑADAS (nadie las surte) hasta que el supervisor decida desecharlas o recuperarlas (Inventario → estado). Si es tarima de salida de un pedido, las piezas dañadas salen del pedido a una tarima nueva DAÑADO en la misma posición, baja lo surtido y la diferencia se vuelve a planear en la tarea del surtidor para que vaya por piezas buenas. Siempre queda incidencia. Si la pieza ya estaba cargada en el camión, primero **Descargar** en Cargar y luego registrar la merma.
+
 ## RE-RECIBIR UNA TARIMA (tarima revuelta o mal capturada)
 
 **Caja incompleta ya surtida (protocolo):** si el surtidor o el cargador encuentra que una caja ya surtida trae menos piezas, en `Almacén → Re-recibir tarima` escanea la **tarima de salida** del pedido, escanea el producto y teclea las piezas que de verdad trae, con el motivo. El sistema descuenta de la tarima de salida las piezas que no existen, baja lo surtido de esa línea, vuelve a planear la diferencia y la mete a la tarea abierta del surtidor (o crea la tarea) para que vaya por ellas; queda incidencia de caja incompleta. Si se descubre antes de capturar la cantidad, basta con capturar las piezas reales y completar con *Tomar el resto de otra tarima*. Las piezas de más no se registran aquí (se capturan surtiendo).

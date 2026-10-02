@@ -1,15 +1,15 @@
 // Tasks an operator creates for themself from the handheld, always stating the purpose ("para qué").
 // Pick: the order is accepted/allocated if needed and the pick task is assigned to the operator.
 // Count: a blind location count assigned to the operator. Put-away: a task for a pallet left without one.
-import type { HandheldOrderInput, LpnRecountInput, SelfTaskInput } from '@wms/shared';
+import type { DamageReportInput, HandheldOrderInput, LpnRecountInput, SelfTaskInput } from '@wms/shared';
 import type { Tx } from '../../db.js';
 import { ForbiddenError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
-import { lockBalances, lockLocationByBarcode, lockLpnByCode, removeInventory } from '../../inventory/ledger.js';
+import { createLpn, lockBalances, lockLocationByBarcode, lockLpnByCode, removeInventory, transferBetweenLpns } from '../../inventory/ledger.js';
 import { toBaseQty } from '../../lib/lookup.js';
 import { createReceipt } from '../inbound/service.js';
-import { adjustInventory } from '../inventory/service.js';
+import { adjustInventory, changeInventoryStatus } from '../inventory/service.js';
 import { finishCounting, submitCount } from '../counts/service.js';
 import { createCountTask } from '../counts/service.js';
 import { resolveImportSku } from '../imports/service.js';
@@ -191,55 +191,100 @@ async function recountOutboundLpn(tx: Tx, ctx: ActorContext, lpn: Awaited<Return
     if (cnt > b.qty) throw new RuleError('MORE_THAN_PICKED', `${sku.code}: la tarima tiene ${cnt} y el sistema ${b.qty}; las piezas de más se registran surtiendo (captura normal), no aquí`);
     if (cnt === b.qty) continue;
     const missing = b.qty - cnt;
-    const line = await tx.order_lines.findFirst({ where: { order_id: order.id, sku_id: sku.id } });
-    if (!line) throw new RuleError('LINE_NOT_FOUND', `${sku.code} no está en el pedido ${order.order_number}`);
     // 1) the pieces never existed on the outbound pallet
-    await removeInventory(tx, ctx, { movement_type: 'ADJUST_OUT', from_lpn: lpn, sku_id: sku.id, qty: missing, status: b.status, order_id: order.id, reference_type: 'order_line', reference_id: line.id, reason: `Caja incompleta en ${lpn.code}: ${input.purpose.trim()}`.slice(0, 120), note: `Re-recepción de tarima de salida ${lpn.code} del pedido ${order.order_number}: faltan ${missing} de ${sku.code}` });
-    // 2) the order line is short again by that much: picked (and whatever was verified) goes down, newest picks first
-    const newPicked = line.picked_qty - missing > 0n ? line.picked_qty - missing : 0n;
-    await tx.order_lines.update({ where: { id: line.id }, data: { picked_qty: newPicked, verified_qty: 0n, loaded_qty: 0n } });
-    let left = missing;
-    const allocs = await tx.allocations.findMany({ where: { order_line_id: line.id, lpn_id: { not: lpn.id }, picked_qty: { gt: 0n }, status: { in: ['PICKED', 'ACTIVE'] } }, orderBy: { created_at: 'desc' } });
-    const own = await tx.allocations.findMany({ where: { order_line_id: line.id, lpn_id: lpn.id, picked_qty: { gt: 0n } }, orderBy: { created_at: 'desc' } });
-    for (const a of [...own, ...allocs]) {
-      if (left <= 0n) break;
-      const cut = a.picked_qty < left ? a.picked_qty : left;
-      const rest = a.picked_qty - cut;
-      await tx.allocations.update({ where: { id: a.id }, data: rest > 0n ? { picked_qty: rest, qty: rest } : { picked_qty: 0n, status: 'RELEASED' } });
-      await tx.pick_task_lines.updateMany({ where: { allocation_id: a.id }, data: rest > 0n ? { picked_qty: rest, qty: rest } : { picked_qty: 0n, status: 'CANCELLED' } });
-      left -= cut;
-    }
-    await createIncident(tx, ctx, { incident_type: 'PICKING_ERROR', severity: 'MEDIUM', title: `Caja incompleta: faltan ${missing} de ${sku.code} en la tarima de salida ${lpn.code} (pedido ${order.order_number})`, description: `${input.purpose.trim()}. Registrado por ${ctx.username} al re-recibir la tarima de salida: el sistema tenía ${b.qty}, la tarima trae ${cnt}. Las ${missing} piezas se vuelven a planear.`, entity_type: 'order', entity_id: order.id, sku_id: sku.id, lpn_id: lpn.id, location_id: lpn.current_location_id, order_id: order.id, qty: missing });
+    await removeInventory(tx, ctx, { movement_type: 'ADJUST_OUT', from_lpn: lpn, sku_id: sku.id, qty: missing, status: b.status, order_id: order.id, reference_type: 'lpn', reference_id: lpn.id, reason: `Caja incompleta en ${lpn.code}: ${input.purpose.trim()}`.slice(0, 120), note: `Re-recepción de tarima de salida ${lpn.code} del pedido ${order.order_number}: faltan ${missing} de ${sku.code}` });
+    // 2) the order line is short again by that much
+    await shortenPickedLine(tx, ctx, { order, lpn, sku, missing, purpose: input.purpose.trim(), title: `Caja incompleta: faltan ${missing} de ${sku.code} en la tarima de salida ${lpn.code} (pedido ${order.order_number})`, description: `${input.purpose.trim()}. Registrado por ${ctx.username} al re-recibir la tarima de salida: el sistema tenía ${b.qty}, la tarima trae ${cnt}. Las ${missing} piezas se vuelven a planear.` });
     needsPlan = true;
   }
   // if the pallet ended up empty it is consumed; the order falls back to picking
   const leftOnPallet = await tx.inventory_balances.count({ where: { lpn_id: lpn.id, qty: { gt: 0n } } });
   if (leftOnPallet === 0) await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
-  let replanned: { task_id: string | null; added: number; short: string[] } = { task_id: null, added: 0, short: [] };
-  if (needsPlan) {
-    await tx.verifications.updateMany({ where: { order_id: order.id, status: 'IN_PROGRESS' }, data: { status: 'CANCELLED', completed_at: new Date() } });
-    const back = ['STAGED', 'VERIFIED', 'PICKED'].includes(order.status) ? 'PARTIALLY_ALLOCATED' : order.status;
-    await tx.orders.update({ where: { id: order.id }, data: { status: back, version: { increment: 1 } } });
-    const alloc = await allocateOrder(tx, ctx, { order_id: order.id, allow_partial: true });
-    const short = alloc.lines.filter((l) => l.short > 0n).map((l) => `${l.sku}: faltan ${l.short}`);
-    let taskId = alloc.appended?.task_id ?? null;
-    let added = alloc.appended?.added ?? 0;
-    if (!taskId && alloc.lines.some((l) => l.allocated_now > 0n)) {
-      const t = await createPickTask(tx, ctx, order.id);
-      taskId = t.task.id;
-      added = t.lines;
-    }
-    if (!taskId) {
-      const r = await appendAllocationsToActiveTask(tx, ctx, order.id);
-      if (r) {
-        taskId = r.task_id;
-        added = r.added;
-      }
-    }
-    replanned = { task_id: taskId, added, short };
-  }
+  const replanned = needsPlan ? await replanOrderShortfall(tx, ctx, order) : { task_id: null, added: 0, short: [] as string[] };
   const status = (await tx.orders.findUniqueOrThrow({ where: { id: order.id }, select: { status: true } })).status;
   await audit(tx, ctx, { action: 'lpn.outbound_recount', entity_type: 'lpn', entity_id: lpn.id, after: { order: order.order_number, deltas, replanned, status }, reason: input.purpose });
   const loc = lpn.current_location_id ? await tx.locations.findUnique({ where: { id: lpn.current_location_id }, select: { code: true } }) : null;
   return { mode: 'OUTBOUND' as const, lpn: lpn.code, location: loc?.code ?? '', order_number: order.order_number, order_status: status, deltas, replanned, task_id: replanned.task_id, status };
+}
+
+
+type OrderRef = { id: string; order_number: string; status: string };
+
+/** An order line lost `missing` picked pieces (short box, damage): picked drops, the newest picks are undone in the plan, an incident is opened. */
+async function shortenPickedLine(tx: Tx, ctx: ActorContext, p: { order: OrderRef; lpn: { id: string; code: string; current_location_id: string | null }; sku: { id: string; code: string }; missing: bigint; purpose: string; title: string; description: string }) {
+  const line = await tx.order_lines.findFirst({ where: { order_id: p.order.id, sku_id: p.sku.id } });
+  if (!line) throw new RuleError('LINE_NOT_FOUND', `${p.sku.code} no está en el pedido ${p.order.order_number}`);
+  const newPicked = line.picked_qty - p.missing > 0n ? line.picked_qty - p.missing : 0n;
+  await tx.order_lines.update({ where: { id: line.id }, data: { picked_qty: newPicked, verified_qty: 0n, loaded_qty: 0n } });
+  let left = p.missing;
+  const own = await tx.allocations.findMany({ where: { order_line_id: line.id, lpn_id: p.lpn.id, picked_qty: { gt: 0n } }, orderBy: { created_at: 'desc' } });
+  const others = await tx.allocations.findMany({ where: { order_line_id: line.id, lpn_id: { not: p.lpn.id }, picked_qty: { gt: 0n }, status: { in: ['PICKED', 'ACTIVE'] } }, orderBy: { created_at: 'desc' } });
+  for (const a of [...own, ...others]) {
+    if (left <= 0n) break;
+    const cut = a.picked_qty < left ? a.picked_qty : left;
+    const rest = a.picked_qty - cut;
+    await tx.allocations.update({ where: { id: a.id }, data: rest > 0n ? { picked_qty: rest, qty: rest } : { picked_qty: 0n, status: 'RELEASED' } });
+    await tx.pick_task_lines.updateMany({ where: { allocation_id: a.id }, data: rest > 0n ? { picked_qty: rest, qty: rest } : { picked_qty: 0n, status: 'CANCELLED' } });
+    left -= cut;
+  }
+  await createIncident(tx, ctx, { incident_type: 'PICKING_ERROR', severity: 'MEDIUM', title: p.title, description: p.description, entity_type: 'order', entity_id: p.order.id, sku_id: p.sku.id, lpn_id: p.lpn.id, location_id: p.lpn.current_location_id, order_id: p.order.id, qty: p.missing });
+}
+
+/** What the order is now short of gets planned again and put in front of the picker (open task, or a new one). */
+async function replanOrderShortfall(tx: Tx, ctx: ActorContext, order: OrderRef): Promise<{ task_id: string | null; added: number; short: string[] }> {
+  await tx.verifications.updateMany({ where: { order_id: order.id, status: 'IN_PROGRESS' }, data: { status: 'CANCELLED', completed_at: new Date() } });
+  const back = ['STAGED', 'VERIFIED', 'PICKED'].includes(order.status) ? 'PARTIALLY_ALLOCATED' : order.status;
+  await tx.orders.update({ where: { id: order.id }, data: { status: back, version: { increment: 1 } } });
+  const alloc = await allocateOrder(tx, ctx, { order_id: order.id, allow_partial: true });
+  const short = alloc.lines.filter((l) => l.short > 0n).map((l) => `${l.sku}: faltan ${l.short}`);
+  let taskId = alloc.appended?.task_id ?? null;
+  let added = alloc.appended?.added ?? 0;
+  if (!taskId && alloc.lines.some((l) => l.allocated_now > 0n)) {
+    const t = await createPickTask(tx, ctx, order.id);
+    taskId = t.task.id;
+    added = t.lines;
+  }
+  if (!taskId) {
+    const r = await appendAllocationsToActiveTask(tx, ctx, order.id);
+    if (r) {
+      taskId = r.task_id;
+      added = r.added;
+    }
+  }
+  return { task_id: taskId, added, short };
+}
+
+/**
+ * Damaged pieces (merma) reported from the handheld. On a stored pallet the pieces stay there as DAMAGED (blocked for
+ * picking) with an incident. On an outbound pallet being picked or staged, the damaged pieces move to a new DAMAGED
+ * pallet at the same spot, the order's picked quantity drops and the difference is planned again for the picker.
+ */
+export async function reportDamage(tx: Tx, ctx: ActorContext, input: DamageReportInput) {
+  const lpn = await lockLpnByCode(tx, input.lpn_code.trim().toUpperCase());
+  const sku = await resolveImportSku(tx, input.sku_code.trim());
+  const { base: qty } = await toBaseQty(tx, sku.id, BigInt(input.qty), input.uom_code);
+  if (qty <= 0n) throw new RuleError('INVALID_QTY', 'La cantidad debe ser mayor a cero');
+  const reason = input.reason.trim();
+  if (['STORED', 'OPEN'].includes(lpn.status)) {
+    const r = await changeInventoryStatus(tx, ctx, { lpn_code: lpn.code, sku_code: sku.code, action: 'DAMAGE', qty, reason: `Merma reportada por ${ctx.username}: ${reason}` });
+    await audit(tx, ctx, { action: 'inventory.damage_reported', entity_type: 'lpn', entity_id: lpn.id, after: { sku: sku.code, qty: qty.toString(), movements: r.movements.map(String), mode: 'STORAGE' }, reason });
+    return { mode: 'STORAGE' as const, lpn: lpn.code, damaged_lpn: lpn.code, sku: sku.code, qty: qty.toString(), order_number: null, replanned: null };
+  }
+  if (!['PICKING', 'STAGED'].includes(lpn.status) || !lpn.order_id) throw new RuleError('LPN_STATUS', `La tarima ${lpn.code} está ${lpn.status}; si ya está cargada, descárgala primero (Cargar → Descargar)`);
+  const order = await tx.orders.findUniqueOrThrow({ where: { id: lpn.order_id }, select: { id: true, order_number: true, status: true, shipment_id: true } });
+  if (order.shipment_id || ['LOADING', 'LOADED', 'SHIPPED', 'CANCELLED'].includes(order.status)) throw new RuleError('ORDER_STATUS', `El pedido ${order.order_number} está ${order.status}; ya no se puede corregir desde aquí`);
+  const bal = (await lockBalances(tx, lpn.id)).find((b) => b.sku_id === sku.id && b.qty > 0n && (b.status === 'PICKING' || b.status === 'STAGING'));
+  if (!bal) throw new RuleError('SKU_NOT_ON_PALLET', `${sku.code} no va en la tarima ${lpn.code}`);
+  if (qty > bal.qty) throw new RuleError('MORE_THAN_ON_PALLET', `${sku.code}: la tarima ${lpn.code} solo tiene ${bal.qty}`);
+  if (!lpn.current_location_id) throw new RuleError('NO_LOCATION', `La tarima ${lpn.code} no tiene ubicación`);
+  // the damaged pieces leave the order on a pallet of their own, blocked, right where they are
+  const damaged = await createLpn(tx, ctx, { warehouse_id: lpn.warehouse_id, lpn_type: 'STORAGE', location_id: lpn.current_location_id, lot: null, expiry_date: null });
+  await tx.lpns.update({ where: { id: damaged.id }, data: { status: 'STORED' } });
+  await transferBetweenLpns(tx, ctx, { movement_type: 'DAMAGE', from_lpn: lpn, to_lpn: { ...damaged, status: 'STORED' }, sku_id: sku.id, qty, from_status: bal.status as 'PICKING' | 'STAGING', to_status: 'DAMAGED', to_location_id: lpn.current_location_id, order_id: order.id, reference_type: 'lpn', reference_id: lpn.id, reason: `Merma: ${reason}`.slice(0, 120), note: `Merma reportada por ${ctx.username} en la tarima de salida ${lpn.code} del pedido ${order.order_number}: ${qty} de ${sku.code} pasan a la tarima ${damaged.code} como DAÑADO` });
+  const leftOnPallet = await tx.inventory_balances.count({ where: { lpn_id: lpn.id, qty: { gt: 0n } } });
+  if (leftOnPallet === 0) await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+  await shortenPickedLine(tx, ctx, { order, lpn, sku, missing: qty, purpose: reason, title: `Merma: ${qty} de ${sku.code} dañadas en la tarima de salida ${lpn.code} (pedido ${order.order_number})`, description: `${reason}. Reportado por ${ctx.username}. Las piezas dañadas quedan en la tarima ${damaged.code} (DAÑADO) en ${lpn.code === damaged.code ? '' : 'la misma posición'}; las ${qty} piezas se vuelven a planear para el pedido.` });
+  const replanned = await replanOrderShortfall(tx, ctx, order);
+  await audit(tx, ctx, { action: 'inventory.damage_reported', entity_type: 'lpn', entity_id: lpn.id, after: { sku: sku.code, qty: qty.toString(), damaged_lpn: damaged.code, order: order.order_number, replanned, mode: 'OUTBOUND' }, reason });
+  return { mode: 'OUTBOUND' as const, lpn: lpn.code, damaged_lpn: damaged.code, sku: sku.code, qty: qty.toString(), order_number: order.order_number, replanned };
 }

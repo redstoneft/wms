@@ -463,6 +463,16 @@ export const zLpnRecount = z.object({
 });
 export type LpnRecountInput = z.infer<typeof zLpnRecount>;
 
+/** Damaged pieces (merma) reported from the handheld on any pallet that holds the product. */
+export const zDamageReport = z.object({
+  lpn_code: z.string().trim().min(1).max(30),
+  sku_code: z.string().trim().min(1).max(64),
+  qty: zQty,
+  uom_code: zUom.default('PIECE'),
+  reason: z.string().trim().min(3).max(300),
+});
+export type DamageReportInput = z.infer<typeof zDamageReport>;
+
 /** Free picking: add a whole pallet (no qty) or part of a single-SKU pallet to the order being built. */
 export const zFreePickScan = z.object({
   pick_task_id: zUuid,

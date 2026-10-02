@@ -14,6 +14,15 @@ export interface SelfTaskResult {
   receipt_number?: string;
   dock?: string;
 }
+export interface DamageReportResult {
+  mode: 'STORAGE' | 'OUTBOUND';
+  lpn: string;
+  damaged_lpn: string;
+  sku: string;
+  qty: string;
+  order_number: string | null;
+  replanned: { task_id: string | null; added: number; short: string[] } | null;
+}
 export interface LpnRecountResult {
   mode: 'APPLIED' | 'COUNT' | 'OUTBOUND';
   lpn: string;
@@ -34,6 +43,7 @@ export interface HandheldOrderResult {
   next: string;
 }
 export const wmTasksApi = {
+  reportDamage: (body: { lpn_code: string; sku_code: string; qty: string; uom_code: string; reason: string }) => api.post<DamageReportResult>('/wm/damage', body),
   recountLpn: (body: { lpn_code: string; purpose: string; lines: { sku_code: string; qty: string; uom_code: string }[] }) => api.post<LpnRecountResult>('/wm/lpn-recount', body),
   createOrder: (body: { order_number: string; customer_code: string; destination?: string; purpose: string; lines: { sku_code: string; qty: string; uom_code: string }[]; start_now: boolean }) => api.post<HandheldOrderResult>('/wm/orders', body),
   create: (body: { kind: SelfTaskKind; reference: string; purpose: string; new_order?: { customer_code: string; destination?: string } }) => api.post<SelfTaskResult>('/wm/tasks', body),

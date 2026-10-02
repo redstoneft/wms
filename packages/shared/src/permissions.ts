@@ -33,6 +33,7 @@ export const PERMISSIONS = {
   'inventory.read': 'View inventory',
   'inventory.adjust': 'Create inventory adjustments (requires reason)',
   'inventory.quarantine': 'Move inventory to/from quarantine, block/unblock, mark damaged',
+  'inventory.damage': 'Report damaged pieces (merma) from the handheld: on a stored pallet or on an outbound pallet being picked/loaded',
   'counts.manage': 'Create cycle count tasks',
   'counts.execute': 'Perform blind counts',
   'counts.approve': 'Approve count adjustments (supervisor)',
@@ -82,6 +83,7 @@ const OPERATOR_COMMON: Permission[] = [
   'lpn.read',
   'incidents.read',
   'incidents.create',
+  'inventory.damage', // anyone on the floor reports a broken or dropped piece
   'dashboard.read',
 ];
 

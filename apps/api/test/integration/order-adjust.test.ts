@@ -268,3 +268,37 @@ describe('re-receiving an outbound pallet (short box)', () => {
     await expectReconciled();
   });
 });
+
+describe('merma (damaged pieces) from the handheld', () => {
+  it('on a stored pallet the pieces stay as DAMAGED; on an outbound pallet they leave the order and get planned again', async () => {
+    const src = await storedPallet(f, 1, f.reserve[10]!.id, 50n);
+    // stored pallet: 3 broken pieces
+    const d1 = await picker.post('/wm/damage', { lpn_code: src.code, sku_code: f.skus[1]!.code, qty: 3, uom_code: 'PIECE', reason: 'se cayó al surtir' });
+    expect(d1.status, JSON.stringify(d1.body)).toBe(201);
+    expect(d1.body).toMatchObject({ mode: 'STORAGE', qty: '3', damaged_lpn: src.code });
+    const bal1 = await sql<{ status: string; qty: bigint }>(`SELECT status, qty FROM inventory_balances WHERE lpn_id = '${src.id}' AND qty > 0 ORDER BY status`);
+    expect(bal1).toEqual([{ status: 'AVAILABLE', qty: 47n }, { status: 'DAMAGED', qty: 3n }]);
+    // outbound pallet: an order picks 10, the loader drops 2
+    const o = await sup.post('/orders', { order_number: `DMG-${f.tag}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[1]!.code, qty: 10, uom_code: 'PIECE' }] });
+    await sup.post(`/orders/${o.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'LPN' })).status).toBe(200);
+    const t = await sup.post('/picking/tasks', { order_id: o.body.id });
+    await pickAll(t.body.task.id);
+    const od = await sup.get(`/orders/${o.body.id}`);
+    const outbound = od.body.lpns[0].code as string;
+    const total = await skuTotal(f.skus[1]!.id);
+    const d2 = await picker.post('/wm/damage', { lpn_code: outbound, sku_code: f.skus[1]!.code, qty: 2, uom_code: 'PIECE', reason: 'se cayó al cargar' });
+    expect(d2.status, JSON.stringify(d2.body)).toBe(201);
+    expect(d2.body.mode).toBe('OUTBOUND');
+    expect(d2.body.damaged_lpn).not.toBe(outbound);
+    expect(d2.body.replanned.added).toBe(1);
+    expect(await skuTotal(f.skus[1]!.id)).toBe(total); // nothing lost: 2 pieces now DAMAGED on their own pallet
+    const dmg = await sql<{ status: string; qty: bigint }>(`SELECT b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${d2.body.damaged_lpn}' AND b.qty > 0`);
+    expect(dmg).toEqual([{ status: 'DAMAGED', qty: 2n }]);
+    const od2 = await sup.get(`/orders/${o.body.id}`);
+    expect(od2.body.lines[0]).toMatchObject({ required_qty: '10', picked_qty: '8' });
+    await pickAll(d2.body.replanned.task_id);
+    expect((await sup.get(`/orders/${o.body.id}`)).body.status).toBe('PICKED');
+    await expectReconciled();
+  });
+});
