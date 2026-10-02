@@ -45,7 +45,7 @@ export interface PalletInstance {
   lpn?: string;
   sku?: string | null;
 }
-/** Floor blocks: storage locations without rack (RESERVE/PICKING areas) — labelled discreetly, pallets drawn stacked. */
+/** Floor blocks: storage locations without rack (RESERVE/PICKING areas) — labelled discreetly, pallets drawn side by side (never stacked). */
 export function isFloorBlock(loc: MapLocation): boolean {
   return !loc.rack_id && (loc.location_type === 'RESERVE' || loc.location_type === 'PICKING');
 }
@@ -113,25 +113,31 @@ export function buildSceneModel(p: MapPayload): SceneModel {
       const here = lpnsByLoc.get(loc.id) ?? [];
       const count = here.length || loc.lpn_count;
       if (count > 0) {
-        // pallets laid out in a grid inside the area footprint, stacked when the floor is full (floor blocks)
-        const pw = 1.1;
-        const cols = Math.max(1, Math.floor(loc.w / (pw + 0.1)));
-        const rows = Math.max(1, Math.floor(loc.d / (pw + 0.1)));
-        const perLayer = cols * rows;
-        const n = Math.min(count, perLayer * 6);
+        // pallets laid out side by side inside the area footprint: the floor holds ONE pallet high, so when more
+        // pallets sit in a spot than its footprint fits (storage pallet + outbound pallet being built, or capacity
+        // above its size) the grid gets denser and the pallets smaller instead of being stacked
+        const ph = 1.2;
+        let cols = Math.max(1, Math.floor(loc.w / 1.2));
+        let rows = Math.max(1, Math.floor(loc.d / 1.2));
+        const n = Math.min(count, 60);
+        while (cols * rows < n) {
+          if (loc.w / (cols + 1) >= loc.d / (rows + 1)) cols++;
+          else rows++;
+        }
+        const cell = Math.min(loc.w / cols, loc.d / rows);
+        const pw = Math.min(1.1, cell * 0.9);
+        const x0 = loc.x + (loc.w - cols * cell) / 2;
+        const z0 = loc.y + (loc.d - rows * cell) / 2;
         const idxs: number[] = [];
         for (let i = 0; i < n; i++) {
-          const layer = Math.floor(i / perLayer);
-          const k = i % perLayer;
-          const c = k % cols;
-          const r = Math.floor(k / cols);
-          const ph = 1.2;
-          const x = loc.x + 0.1 + (pw + 0.1) * c + pw / 2;
-          const z = loc.y + 0.1 + (pw + 0.1) * r + pw / 2;
+          const c = i % cols;
+          const r = Math.floor(i / cols);
+          const x = x0 + cell * c + cell / 2;
+          const z = z0 + cell * r + cell / 2;
           const l = here[i];
           idxs.push(pallets.length);
           // floor blocks (past the bridge): each pallet painted in the colour of the product it holds
-          pallets.push({ locId: loc.id, status: loc.status, center: [x, 0.1 + layer * ph + ph / 2, z], size: [pw, ph, pw], fill: 1, color: isFloorBlock(loc) ? l?.color ?? null : null, lpn: l?.lpn, sku: l?.sku ?? null });
+          pallets.push({ locId: loc.id, status: loc.status, center: [x, 0.1 + ph / 2, z], size: [pw, ph, pw], fill: 1, color: isFloorBlock(loc) ? l?.color ?? null : null, lpn: l?.lpn, sku: l?.sku ?? null });
         }
         palletIndicesByLoc.set(loc.id, idxs);
       }
