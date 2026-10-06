@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { labelsApi } from '../api/labels';
 import { masterdataApi } from '../api/masterdata';
-import { ApiError } from '../api/client';
 import type { LabelPreview as LabelPreviewT } from '../api/types';
 import { LabelPreview } from '../components/LabelPreview';
 import { BigButton, useWm } from './WmShell';
@@ -12,8 +11,6 @@ export function LabelPrintPanel({ labelType, entityId, onDone }: { labelType: st
   const wm = useWm();
   const [preview, setPreview] = useState<LabelPreviewT | null>(null);
   const [busy, setBusy] = useState(false);
-  const [reason, setReason] = useState('');
-  const [needsReason, setNeedsReason] = useState(false);
   const printers = useQuery({ queryKey: ['printers'], queryFn: masterdataApi.printers });
   const [printerId, setPrinterId] = useState('');
 
@@ -27,14 +24,11 @@ export function LabelPrintPanel({ labelType, entityId, onDone }: { labelType: st
   const print = async () => {
     setBusy(true);
     try {
-      const r = await labelsApi.print({ label_type: labelType, entity_id: entityId, copies: 1, printer_id: printerId || undefined, reprint_reason: reason.trim() || undefined });
+      const r = await labelsApi.print({ label_type: labelType, entity_id: entityId, copies: 1, printer_id: printerId || undefined });
       wm.ok(`ETIQUETA ${r.status === 'SENT' ? 'ENVIADA' : r.status === 'QUEUED' ? 'EN COLA (ESTACIÓN USB)' : r.status} · ${r.model.title}`);
       onDone();
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'REPRINT_REASON_REQUIRED') {
-        setNeedsReason(true);
-        wm.warn('Es reimpresión: captura el motivo');
-      } else wm.fail(e);
+      wm.fail(e);
     } finally {
       setBusy(false);
     }
@@ -59,12 +53,11 @@ export function LabelPrintPanel({ labelType, entityId, onDone }: { labelType: st
           ))}
         </select>
       )}
-      {needsReason && <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Motivo de reimpresión (mín. 3 caracteres)" className="h-14 rounded-xl bg-slate-800 px-3 text-lg text-white" />}
       <div className="grid grid-cols-2 gap-2">
         <BigButton tone="neutral" onClick={onDone}>
           Cerrar
         </BigButton>
-        <BigButton tone="primary" onClick={print} disabled={busy || !preview || (needsReason && reason.trim().length < 3)} testId="label-print">
+        <BigButton tone="primary" onClick={print} disabled={busy || !preview} testId="label-print">
           {busy ? 'Enviando…' : 'Imprimir'}
         </BigButton>
       </div>

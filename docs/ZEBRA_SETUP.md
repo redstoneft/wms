@@ -36,7 +36,7 @@ Nada se imprime automáticamente: las etiquetas salen solo al pulsar **Imprimir*
 `POST /api/labels/preview` genera el ZPL y un PNG del código de barras y del QR (bwip-js) a partir del mismo modelo. La pantalla muestra la etiqueta renderizada y el ZPL. Opcionalmente puede pegarse el ZPL en https://labelary.com para ver el render exacto de Zebra.
 
 ## Reimpresión
-Si ya existe una impresión exitosa de la misma etiqueta, volver a imprimir es una **reimpresión**: requiere el permiso `labels.reprint` y un motivo; queda en `label_prints` (`is_reprint`, `reprint_reason`, usuario) y en la auditoría (`label.reprint`). El historial está en `Etiquetas → Historial`.
+Si ya existe una impresión exitosa de la misma etiqueta, volver a imprimir es una **reimpresión**: requiere el permiso `labels.reprint` (lo tienen todos los operadores) y no pide motivo; queda en `label_prints` (`is_reprint`, `reprint_reason`, usuario) y en la auditoría (`label.reprint`). El historial está en `Etiquetas → Historial`.
 
 ## Codificación
 ZPL con `^CI28` (UTF-8). Caracteres especiales se escapan en hexadecimal (`^FH`), por lo que descripciones con acentos/ñ imprimen correctamente en firmware reciente. Símbolos `^ ~ \ _` se escapan siempre.

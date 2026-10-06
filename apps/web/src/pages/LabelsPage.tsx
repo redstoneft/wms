@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { LABEL_TYPES } from '@wms/shared';
-import { ApiError } from '../api/client';
 import { labelsApi } from '../api/labels';
 import { masterdataApi } from '../api/masterdata';
 import { layoutApi } from '../api/layout';
@@ -19,7 +18,6 @@ export default function LabelsPage() {
   const [sp] = useSearchParams();
   const [f, setF] = useState({ label_type: sp.get('type') ?? 'LPN', entity_id: sp.get('id') ?? '', printer_id: '', copies: '1', reprint_reason: '' });
   const [preview, setPreview] = useState<LabelPreviewT | null>(null);
-  const [needsReason, setNeedsReason] = useState(false);
   const printers = useQuery({ queryKey: ['printers'], queryFn: masterdataApi.printers });
   const [loose, setLoose] = useState({ codes: '', title: '' });
   const looseList = loose.codes.split(/[,\s]+/).map((c) => c.trim().toUpperCase().replace(/^LOC-/, '')).filter(Boolean);
@@ -44,14 +42,10 @@ export default function LabelsPage() {
     mutationFn: () => labelsApi.print({ label_type: f.label_type, entity_id: f.entity_id.trim(), copies: Number(f.copies), printer_id: f.printer_id || undefined, reprint_reason: f.reprint_reason || undefined }),
     onSuccess: (r) => {
       toast.success(`Etiqueta ${r.status === 'SENT' ? 'enviada' : r.status === 'QUEUED' ? 'en cola de la estación USB' : r.status}`, `${r.model.title}${r.is_reprint ? ' (reimpresión)' : ''}`);
-      setNeedsReason(false);
       void history.refetch();
     },
     onError: (e) => {
-      if (e instanceof ApiError && e.code === 'REPRINT_REASON_REQUIRED') {
-        setNeedsReason(true);
-        toast.warn('Es una reimpresión', 'Captura el motivo (queda auditado).');
-      } else toast.error('No se pudo imprimir', e);
+      toast.error('No se pudo imprimir', e);
     },
   });
   useEffect(() => {
@@ -87,16 +81,14 @@ export default function LabelsPage() {
             <Field label="Copias">
               <Input type="number" min={1} max={10} value={f.copies} onChange={(e) => setF({ ...f, copies: e.target.value })} />
             </Field>
-            {needsReason && (
-              <Field label="Motivo de reimpresión (mín. 3)" required>
-                <Input value={f.reprint_reason} onChange={(e) => setF({ ...f, reprint_reason: e.target.value })} />
-              </Field>
-            )}
+            <Field label="Motivo (opcional, solo para el historial)">
+              <Input value={f.reprint_reason} onChange={(e) => setF({ ...f, reprint_reason: e.target.value })} />
+            </Field>
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => doPreview.mutate()} loading={doPreview.isPending} disabled={!f.entity_id.trim()}>
                 Vista previa
               </Button>
-              <Button onClick={() => doPrint.mutate()} loading={doPrint.isPending} disabled={!f.entity_id.trim() || (needsReason && f.reprint_reason.trim().length < 3)}>
+              <Button onClick={() => doPrint.mutate()} loading={doPrint.isPending} disabled={!f.entity_id.trim()}>
                 Imprimir
               </Button>
             </div>
