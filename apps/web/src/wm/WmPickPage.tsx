@@ -139,6 +139,7 @@ function Flow() {
       if (step === 'LOCATION' && d.relocated_from) wm.warn(`TARIMA CAMBIADA · aquí toma ${d.expected_lpn} (${fmtQty(d.relocated?.qty ?? '0')} pzas)${toBigInt(d.relocated?.leftover ?? '0') > 0n ? ` · ${fmtQty(d.relocated!.leftover)} siguen en ${d.relocated_from}` : ''}`);
       else if (step === 'LOCATION') wm.ok(`UBICACIÓN OK · toma ${d.expected_lpn}`);
       else if (step === 'LPN') wm.ok(`PALLET OK · faltan ${fmtQty(d.remaining ?? '0')}`);
+      else if (d.pallet_switched) wm.warn(`TARIMA NUEVA ${d.outbound_lpn}: LAS CAJAS VAN SOLAS, NO SE MEZCLAN CON OTRA MERCANCÍA${d.next === 'NEXT_LINE' ? ' · LÍNEA COMPLETA' : ''}`);
       else if (d.next === 'NEXT_LINE') wm.ok(d.task_completed ? 'PEDIDO SURTIDO COMPLETO' : toBigInt(d.absorbed ?? '0') > 0n ? `LÍNEA COMPLETA · ${fmtQty(d.absorbed!)} pzas venían de otras líneas` : 'LÍNEA COMPLETA · siguiente');
       else wm.ok(`REGISTRADO · faltan ${fmtQty(d.remaining ?? '0')}`);
       const v = await pickingApi.task(taskId);

@@ -163,6 +163,10 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 
 Si escaneaste la tarima de almacén pero la pieza ya estaba surtida para un pedido (se cayó armando su tarima), elige el pedido en el desplegable **¿Ya estaba surtida para un pedido?** antes de registrar, o después en **¿A qué pedido afectó esta merma?** → **Abrir pedido y volver a surtir**. El pedido se abre, baja lo surtido y la tarea del surtidor pide las piezas de reemplazo. Al entrar a Merma / daño ves **Tus mermas** de los últimos 14 días: las que no tienen pedido se tocan para elegir el pedido y abrirlo; las que ya tienen pedido te llevan a surtirlo.
 
+## CAJAS (CAPM): SOLO ELLAS VAN A PISO Y NUNCA REVUELTAS
+
+Las cajas organizadoras (claves CAPM…) son el único producto que se acomoda en el piso (HID-PISO-…): el acomodo no ofrece ni acepta piso para otra mercancía (`COMPAT_GROUP_NOT_ALLOWED`). En el surtido, las cajas nunca comparten tarima de salida con otra mercancía: si la tarima abierta trae otra cosa, el sistema abre una tarima nueva solo y avisa **TARIMA NUEVA … LAS CAJAS VAN SOLAS**; etiquétala como cualquier otra. Las cajas sí pueden ir a rack.
+
 ## RE-RECIBIR UNA TARIMA (tarima revuelta o mal capturada)
 
 **Caja incompleta ya surtida (protocolo):** si el surtidor o el cargador encuentra que una caja ya surtida trae menos piezas, en `Almacén → Re-recibir tarima` escanea la **tarima de salida** del pedido, escanea el producto y teclea las piezas que de verdad trae, con el motivo. El sistema descuenta de la tarima de salida las piezas que no existen, baja lo surtido de esa línea, vuelve a planear la diferencia y la mete a la tarea abierta del surtidor (o crea la tarea) para que vaya por ellas; queda incidencia de caja incompleta. Si se descubre antes de capturar la cantidad, basta con capturar las piezas reales y completar con *Tomar el resto de otra tarima*. Las piezas de más no se registran aquí (se capturan surtiendo).

@@ -392,6 +392,8 @@ export async function syncSkus(ctx: ActorContext, trigger: 'SCHEDULED' | 'MANUAL
           const data = {
             description: (a.descr ?? p.model).trim().slice(0, 300) || p.model,
             family: a.lin_prod ? key(a.lin_prod).slice(0, 60) : null,
+            // storage boxes (CAPM…) are the only product allowed on the floor and never share a pallet with other goods
+            ...(/^CAPM/i.test(p.code) ? { compatibility_group: 'CAJAS' } : {}),
             unit_weight_kg: num(a.peso) > 0 ? num(a.peso) : undefined,
             requires_lot: p.keys.some((k) => key(k.article.con_lote) === 'S'),
             external_source: 'SAE',

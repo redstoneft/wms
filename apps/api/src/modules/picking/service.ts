@@ -370,6 +370,7 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
       }
       let movementId: bigint;
       let outboundCode: string;
+      let palletSwitched = false;
       // whole-pallet conversion only when the pallet really holds exactly what is left on the line (single SKU, all of it)
       const palletState = await tx.$queryRaw<{ total: bigint; skus: bigint }[]>`SELECT COALESCE(sum(qty),0)::bigint AS total, count(DISTINCT sku_id)::bigint AS skus FROM inventory_balances WHERE lpn_id = ${expectedLpn.id}::uuid AND qty > 0`;
       const wholePallet = base === remaining && palletState[0]!.skus === 1n && palletState[0]!.total === remaining;
@@ -379,7 +380,8 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
         await tx.lpns.update({ where: { id: expectedLpn.id }, data: { status: 'PICKING', lpn_type: 'OUTBOUND', order_id: task.order_id, version: { increment: 1 } } });
         outboundCode = expectedLpn.code;
       } else {
-        const outbound = await getOrCreateOutboundLpn(tx, ctx, task, expectedLpn);
+        const { lpn: outbound, switched } = await getOrCreateOutboundLpn(tx, ctx, task, expectedLpn, sku.compatibility_group ?? null);
+        palletSwitched = switched;
         movementId = await transferBetweenLpns(tx, ctx, {
           movement_type: 'PICK',
           from_lpn: expectedLpn,
@@ -408,21 +410,32 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
       await tx.order_lines.update({ where: { id: line.order_line_id }, data: { picked_qty: { increment: base }, allocated_qty: { decrement: base } } });
       await audit(tx, ctx, { action: 'pick.scan', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, sku: sku.code, qty: base.toString(), absorbed: absorbed.toString(), from_lpn: expectedLpn.code, to_lpn: outboundCode, movement_id: movementId.toString() } });
       const completed = await maybeCompleteTask(tx, ctx, task.id);
-      return { ok: true, next: done ? 'NEXT_LINE' : 'QTY', line_id: line.id, picked: newPicked, remaining: lineQty - newPicked, absorbed, outbound_lpn: outboundCode, task_completed: completed };
+      return { ok: true, next: done ? 'NEXT_LINE' : 'QTY', line_id: line.id, picked: newPicked, remaining: lineQty - newPicked, absorbed, outbound_lpn: outboundCode, pallet_switched: palletSwitched, task_completed: completed };
     }
   }
 }
 
-async function getOrCreateOutboundLpn(tx: Tx, ctx: ActorContext, task: { id: string; order_id: string; outbound_lpn_id: string | null }, atLpn: LpnRow): Promise<LpnRow> {
+/**
+ * The outbound pallet the picked pieces go onto. Products of different compatibility groups (boxes vs everything else)
+ * never share an outbound pallet: when the open pallet holds another group it is left as is and a new one starts
+ * (`switched`), so the picker is told to label a new pallet.
+ */
+async function getOrCreateOutboundLpn(tx: Tx, ctx: ActorContext, task: { id: string; order_id: string; outbound_lpn_id: string | null }, atLpn: LpnRow, group: string | null): Promise<{ lpn: LpnRow; switched: boolean }> {
+  let switched = false;
   if (task.outbound_lpn_id) {
     const l = await lockLpn(tx, task.outbound_lpn_id);
-    if (l.status === 'PICKING') return l;
+    if (l.status === 'PICKING') {
+      const groups = await tx.$queryRaw<{ g: string | null }[]>`SELECT DISTINCT s.compatibility_group AS g FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = ${l.id}::uuid AND b.qty > 0`;
+      const mixed = groups.some((r) => (r.g ?? null) !== group);
+      if (!mixed) return { lpn: l, switched: false };
+      switched = true;
+    }
   }
   const lpn = await createLpn(tx, ctx, { warehouse_id: atLpn.warehouse_id, lpn_type: 'OUTBOUND', location_id: atLpn.current_location_id, order_id: task.order_id });
   await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'PICKING' } });
   await tx.pick_tasks.update({ where: { id: task.id }, data: { outbound_lpn_id: lpn.id } });
   task.outbound_lpn_id = lpn.id;
-  return { ...lpn, status: 'PICKING' };
+  return { lpn: { ...lpn, status: 'PICKING' }, switched };
 }
 
 /** A blocked scan: the business transaction rolls back, but the attempt is persisted afterwards for traceability/KPIs. */
