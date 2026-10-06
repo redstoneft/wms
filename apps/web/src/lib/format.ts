@@ -174,7 +174,6 @@ export const ES: Record<string, string> = {
   SENT: 'Enviada',
   QUEUED: 'En cola',
   PRINTING: 'Imprimiendo',
-  CANCELLED: 'Cancelada',
   PREVIEW: 'Vista previa',
   VALIDATED: 'Validado',
   APPLIED: 'Aplicado',
