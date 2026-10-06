@@ -81,6 +81,7 @@ export const WM_NAV: NavItem[] = [
   { to: '/wm/receive', label: 'Recibir', icon: '⇩', perms: ['receiving.scan'], wm: true },
   { to: '/wm/return', label: 'Devolución', icon: '↩', perms: ['returns.manage'], wm: true },
   { to: '/wm/damage', label: 'Merma / daño', icon: '⚠', perms: ['inventory.damage'], wm: true },
+  { to: '/wm/print-queue', label: 'Cola de impresión', icon: '⎙', perms: ['labels.print'], wm: true },
   { to: '/wm/deliveries', label: 'Entregas', icon: '📅', perms: ['deliveries.manage'], wm: true },
   { to: '/wm/putaway', label: 'Ubicar', icon: '⇲', perms: ['putaway.execute'], wm: true },
   { to: '/wm/putaway-plan', label: 'Acomodo por lote', icon: '⊞', perms: ['putaway.execute'], wm: true },

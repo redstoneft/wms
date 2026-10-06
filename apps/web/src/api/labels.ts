@@ -13,6 +13,8 @@ export const labelsApi = {
   preview: (body: PrintLabelInput) => api.post<LabelPreview>('/labels/preview', body),
   print: (body: PrintLabelInput) => api.post<LabelPrintResult>('/labels/print', body),
   history: (q?: { entity_id?: string; label_type?: string; limit?: number }) => api.get<LabelHistoryRow[]>('/labels/history', q),
+  queue: () => api.get<{ printers: { printer_id: string | null; printer: string | null; queued: number; printing: number; oldest: string | null }[]; total: number }>('/labels/queue'),
+  clearQueue: (printer_id?: string) => api.post<{ cancelled: number }>('/labels/queue/clear', printer_id ? { printer_id } : {}),
   zpl: (id: string) => api.getText(`/labels/${id}/zpl`),
   /** Batch by rack/zone: printable sheet and ZPL are plain GET links (same-origin cookie); direct print is a POST. */
   sheetUrl: (q: { rack_id?: string; zone_id?: string; codes?: string; title?: string; kind?: string; paper?: 'A4' | 'LETTER' }) => `/api/labels/locations.html?${new URLSearchParams(q as Record<string, string>)}`,

@@ -83,6 +83,29 @@ export async function labelRoutes(app: FastifyInstance) {
     return printLocationBatch(req.actor!, body, body.printer_id);
   });
 
+  /** The print queue: what is waiting (or being printed) per printer. Visible from any device. */
+  app.get('/labels/queue', { preHandler: app.requirePermission('labels.print') }, async () => {
+    const rows = await db.$queryRaw<{ printer_id: string | null; printer: string | null; queued: bigint; printing: bigint; oldest: Date | null }[]>`
+      SELECT lp.printer_id, p.name AS printer,
+             COUNT(*) FILTER (WHERE lp.status = 'QUEUED')::bigint AS queued,
+             COUNT(*) FILTER (WHERE lp.status = 'PRINTING')::bigint AS printing,
+             MIN(lp.created_at) AS oldest
+      FROM label_prints lp LEFT JOIN printers p ON p.id = lp.printer_id
+      WHERE lp.status IN ('QUEUED', 'PRINTING')
+      GROUP BY lp.printer_id, p.name ORDER BY p.name`;
+    return { printers: rows.map((r) => ({ ...r, queued: Number(r.queued), printing: Number(r.printing) })), total: rows.reduce((a, r) => a + Number(r.queued) + Number(r.printing), 0) };
+  });
+  /** Empties the print queue (one printer or all): the pending labels are cancelled, nothing else is touched. Audited. */
+  app.post('/labels/queue/clear', { preHandler: app.requirePermission('labels.print') }, async (req) => {
+    const body = z.object({ printer_id: zUuid.optional() }).parse(req.body ?? {});
+    return withTx(async (tx) => {
+      const where = { status: { in: ['QUEUED', 'PRINTING'] }, ...(body.printer_id ? { printer_id: body.printer_id } : {}) };
+      const victims = await tx.label_prints.findMany({ where, select: { id: true, label_type: true, entity_id: true, printer_id: true } });
+      if (victims.length) await tx.label_prints.updateMany({ where: { id: { in: victims.map((v) => v.id) } }, data: { status: 'CANCELLED', error: `Cola vaciada por ${req.actor!.username}`, claimed_at: null } });
+      await audit(tx, req.actor!, { action: 'labels.queue_cleared', entity_type: 'printer', entity_id: body.printer_id ?? 'ALL', after: { cancelled: victims.length, labels: victims.slice(0, 200).map((v) => `${v.label_type}:${v.entity_id}`) } });
+      return { cancelled: victims.length };
+    });
+  });
   app.get('/labels/history', { preHandler: app.requirePermission('labels.print') }, async (req) => {
     const q = z.object({ entity_id: z.string().optional(), label_type: z.string().optional(), limit: z.coerce.number().int().min(1).max(200).default(50) }).parse(req.query);
     return db.label_prints.findMany({

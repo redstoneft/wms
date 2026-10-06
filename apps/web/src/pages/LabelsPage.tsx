@@ -9,6 +9,7 @@ import { masterdataApi } from '../api/masterdata';
 import { layoutApi } from '../api/layout';
 import type { LabelPreview as LabelPreviewT } from '../api/types';
 import { LabelPreview } from '../components/LabelPreview';
+import { PrintQueueCard } from '../components/PrintQueueCard';
 import { useToast } from '../components/Toast';
 import { Alert, Button, Card, Field, Input, PageHeader, Select, StatusChip, Table } from '../components/ui';
 import { fmtDateTime } from '../lib/format';
@@ -191,6 +192,9 @@ export default function LabelsPage() {
           <b>Hoja para imprimir</b>: etiquetas de 101.6 × 84 mm (3 por hoja A4) para cualquier impresora o para guardar como PDF; imprimir al 100 %. Orden de pegado: por pasillo, módulo y nivel, igual que la ruta de surtido.
           <b> Descargar ZPL</b>: archivo listo para una Zebra (203 dpi). <b>Exportar a app de etiquetas</b>: archivo <code>.json</code> que tu app Embarque importa como un pedido más y manda a su estación Zebra. <b>Imprimir en Zebra</b>: envía una etiqueta por posición (o por tarima) y queda auditado. Con <b>Tarimas</b> salen las etiquetas LPN de todo lo que está guardado en el rack, listas para pegar en cada tarima.
         </Alert>
+      </Card>
+      <Card title="Cola de impresión" className="mt-4">
+        <PrintQueueCard onDone={(m) => toast.success(m, 'Cola de impresión')} />
       </Card>
       <Card title="Historial" className="mt-4" padded={false}>
         <Table
