@@ -169,7 +169,7 @@ Las cajas organizadoras (claves CAPM…) son el único producto que se acomoda e
 
 ## DIVIDIR UNA TARIMA DE ALMACÉN (se capturó 1 tarima y en realidad son 3)
 
-Si una recepción o un armado se capturó como una sola tarima pero físicamente son varias, no hay que cancelar nada: en la handheld `Dividir tarima`, escanea la tarima de almacén (STORED), elige el producto, teclea cuántas piezas pasan a la nueva tarima y confirma. La tarima nueva nace en el mismo lugar, disponible, con su etiqueta y su propia tarea de acomodo (si la original aún tenía acomodo pendiente); si la original venía de un armado, el armado queda registrado con una tarima más. Repite por cada tarima física adicional. También se puede pasar producto a otra tarima de almacén que esté en el mismo lugar.
+Si una recepción o un armado se capturó como una sola tarima pero físicamente son varias, no hay que cancelar nada: en la handheld `Dividir tarima`, escanea la tarima de almacén (STORED), elige el producto, teclea cuántas piezas pasan a la nueva tarima y confirma. La tarima nueva nace en el mismo lugar, disponible, con su etiqueta y su propia tarea de acomodo (si la original aún tenía acomodo pendiente); si la original venía de un armado, el armado queda registrado con una tarima más. Repite por cada tarima física adicional. También se puede pasar producto a otra tarima de almacén que esté en el mismo lugar. Desde la oficina: Inventario → ficha de la tarima → botón **Dividir tarima**. Aplica a cualquier tarima de almacén o de salida, venga o no de un armado.
 
 ## RE-RECIBIR UNA TARIMA (tarima revuelta o mal capturada)
 
