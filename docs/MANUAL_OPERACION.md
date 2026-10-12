@@ -167,6 +167,10 @@ Si escaneaste la tarima de almacén pero la pieza ya estaba surtida para un pedi
 
 Las cajas organizadoras (claves CAPM…) son el único producto que se acomoda en el piso (HID-PISO-…): el acomodo no ofrece ni acepta piso para otra mercancía (`COMPAT_GROUP_NOT_ALLOWED`). En el surtido, las cajas nunca comparten tarima de salida con otra mercancía: si la tarima abierta trae otra cosa, el sistema abre una tarima nueva solo y avisa **TARIMA NUEVA … LAS CAJAS VAN SOLAS**; etiquétala como cualquier otra. Las cajas sí pueden ir a rack.
 
+## DIVIDIR UNA TARIMA DE ALMACÉN (se capturó 1 tarima y en realidad son 3)
+
+Si una recepción o un armado se capturó como una sola tarima pero físicamente son varias, no hay que cancelar nada: en la handheld `Dividir tarima`, escanea la tarima de almacén (STORED), elige el producto, teclea cuántas piezas pasan a la nueva tarima y confirma. La tarima nueva nace en el mismo lugar, disponible, con su etiqueta y su propia tarea de acomodo (si la original aún tenía acomodo pendiente); si la original venía de un armado, el armado queda registrado con una tarima más. Repite por cada tarima física adicional. También se puede pasar producto a otra tarima de almacén que esté en el mismo lugar.
+
 ## RE-RECIBIR UNA TARIMA (tarima revuelta o mal capturada)
 
 **Caja incompleta ya surtida (protocolo):** si el surtidor o el cargador encuentra que una caja ya surtida trae menos piezas, en `Almacén → Re-recibir tarima` escanea la **tarima de salida** del pedido, escanea el producto y teclea las piezas que de verdad trae, con el motivo. El sistema descuenta de la tarima de salida las piezas que no existen, baja lo surtido de esa línea, vuelve a planear la diferencia y la mete a la tarea abierta del surtidor (o crea la tarea) para que vaya por ellas; queda incidencia de caja incompleta. Si se descubre antes de capturar la cantidad, basta con capturar las piezas reales y completar con *Tomar el resto de otra tarima*. Las piezas de más no se registran aquí (se capturan surtiendo).

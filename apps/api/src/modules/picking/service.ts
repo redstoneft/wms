@@ -173,45 +173,77 @@ export async function setPalletDestination(tx: Tx, ctx: ActorContext, input: { l
 }
 
 /**
- * Part of an outbound pallet goes onto another pallet of the same order: a new one (born next to the source, same
- * status) or an existing one scanned. Used when the customer wants the goods split (by height, by destination) after
- * they were picked. Works on picked (PICKING) and staged pallets; nothing changes for the order's quantities.
+ * Part of a pallet goes onto another pallet: a new one (born next to the source, same status) or an existing one scanned.
+ * Outbound pallets (PICKING/STAGED, same order): used when the customer wants the goods split after they were picked;
+ * nothing changes for the order's quantities. Storage pallets (STORED/OPEN, no order): used when what was received or
+ * assembled as one pallet really is several (the capturer typed 1 pallet for 3): the new pallet is born AVAILABLE at the
+ * same spot, inherits the pending put-away (its own task) and, if the source came out of an assembly, is recorded as one
+ * more output pallet of that assembly.
  */
 export async function splitPallet(tx: Tx, ctx: ActorContext, input: { from_lpn_code: string; sku_code: string; qty: bigint; uom_code?: UomCode; to_lpn_code?: string; destination?: string }) {
   const from = await lockLpnByCode(tx, input.from_lpn_code);
-  if (!from.order_id || !['PICKING', 'STAGED'].includes(from.status)) throw new RuleError('LPN_STATUS', `LPN ${from.code} is ${from.status}; only picked or staged pallets can be split`);
+  const outbound = !!from.order_id && ['PICKING', 'STAGED'].includes(from.status);
+  const storage = !from.order_id && ['STORED', 'OPEN'].includes(from.status);
+  if (!outbound && !storage) throw new RuleError('LPN_STATUS', `LPN ${from.code} is ${from.status}; only picked, staged or stored pallets can be split`);
   if (!from.current_location_id) throw new RuleError('LPN_STATUS', `LPN ${from.code} has no location`);
   const { sku } = await resolveSkuBarcode(tx, input.sku_code);
   const { base } = await toBaseQty(tx, sku.id, input.qty, input.uom_code ?? 'PIECE');
   if (base <= 0n) throw new RuleError('INVALID_QTY', 'Quantity must be > 0');
-  const invStatus = from.status === 'STAGED' ? 'STAGING' : 'PICKING';
+  const invStatus = storage ? 'AVAILABLE' : from.status === 'STAGED' ? 'STAGING' : 'PICKING';
   const have = await getBalance(tx, from.id, sku.id, invStatus);
-  if (have <= 0n) throw new RuleError('WRONG_SKU', `LA TARIMA ${from.code} NO TIENE ${sku.code}`, { lpn: from.code, sku: sku.code });
+  if (have <= 0n) throw new RuleError('WRONG_SKU', `LA TARIMA ${from.code} NO TIENE ${sku.code}${storage ? ' DISPONIBLE' : ''}`, { lpn: from.code, sku: sku.code });
   if (base > have) throw new RuleError('QTY_EXCEEDED', `LA TARIMA ${from.code} SOLO TIENE ${have} DE ${sku.code}`, { available: have.toString(), requested: base.toString() });
   let to: LpnRow;
   let created = false;
   if (input.to_lpn_code?.trim()) {
     to = await lockLpnByCode(tx, input.to_lpn_code);
     if (to.id === from.id) throw new RuleError('SAME_LPN', 'ES LA MISMA TARIMA');
-    if (to.order_id !== from.order_id) throw new RuleError('WRONG_ORDER', `LA TARIMA ${to.code} ES DE OTRO PEDIDO`);
-    if (to.status !== from.status) throw new RuleError('LPN_STATUS', `LA TARIMA ${to.code} ESTÁ ${to.status}; la de origen está ${from.status}`);
+    if (storage) {
+      if (to.order_id || !['STORED', 'OPEN'].includes(to.status)) throw new RuleError('LPN_STATUS', `LA TARIMA ${to.code} ESTÁ ${to.status}; debe ser una tarima de almacén`);
+    } else {
+      if (to.order_id !== from.order_id) throw new RuleError('WRONG_ORDER', `LA TARIMA ${to.code} ES DE OTRO PEDIDO`);
+      if (to.status !== from.status) throw new RuleError('LPN_STATUS', `LA TARIMA ${to.code} ESTÁ ${to.status}; la de origen está ${from.status}`);
+    }
     if (to.current_location_id !== from.current_location_id) throw new RuleError('WRONG_LOCATION', `LA TARIMA ${to.code} ESTÁ EN OTRO LUGAR: júntalas primero`);
   } else {
-    to = await createLpn(tx, ctx, { warehouse_id: from.warehouse_id, lpn_type: 'OUTBOUND', location_id: from.current_location_id, order_id: from.order_id, parent_lpn_id: from.id });
-    await tx.lpns.update({ where: { id: to.id }, data: { status: from.status } });
-    to = { ...to, status: from.status };
+    to = await createLpn(tx, ctx, { warehouse_id: from.warehouse_id, lpn_type: storage ? 'STORAGE' : 'OUTBOUND', location_id: from.current_location_id, order_id: from.order_id, parent_lpn_id: from.id });
+    const st = storage ? 'STORED' : from.status;
+    await tx.lpns.update({ where: { id: to.id }, data: { status: st } });
+    to = { ...to, status: st };
     created = true;
   }
   const movementId = await transferBetweenLpns(tx, ctx, { movement_type: 'LPN_SPLIT', from_lpn: from, to_lpn: to, sku_id: sku.id, qty: base, uom_code: input.uom_code ?? 'PIECE', uom_qty: input.qty, from_status: invStatus, to_status: invStatus, to_location_id: from.current_location_id, order_id: from.order_id, reference_type: 'lpn_split', reference_id: from.id, note: `Dividir tarima ${from.code} → ${to.code}` });
-  if (input.destination?.trim()) await tx.lpns.update({ where: { id: to.id }, data: { destination: input.destination.trim() } });
+  if (!storage && input.destination?.trim()) await tx.lpns.update({ where: { id: to.id }, data: { destination: input.destination.trim() } });
   const left = (await tx.inventory_balances.aggregate({ where: { lpn_id: from.id, qty: { gt: 0n } }, _sum: { qty: true } }))._sum.qty ?? 0n;
+  let putawayTaskId: string | null = null;
+  if (storage) {
+    // the new pallet needs its own put-away when the source still had one pending (it was waiting at a station or dock)
+    const pending = await tx.putaway_tasks.findFirst({ where: { lpn_id: from.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } } });
+    if (pending && created) {
+      try {
+        putawayTaskId = (await createPutawayTask(tx, ctx, to, { allowStoredLocation: true })).id;
+      } catch {
+        putawayTaskId = null;
+      }
+    }
+    // one more output pallet of the assembly the source came from (cases recomputed with the same packing)
+    const out = await tx.assembly_outputs.findFirst({ where: { lpn_id: from.id }, orderBy: { id: 'desc' } });
+    if (out && created) {
+      const ppc = out.pieces_per_case > 0 ? BigInt(out.pieces_per_case) : 0n;
+      const split = (q: bigint) => (ppc > 0n ? { cases: Number(q / ppc), partial_pieces: Number(q % ppc) } : { cases: 0, partial_pieces: Number(q) });
+      await tx.assembly_outputs.create({ data: { order_id: out.order_id, lpn_id: to.id, pieces_per_case: out.pieces_per_case, qty: base, defective_qty: 0n, putaway_task_id: putawayTaskId, ...split(base) } });
+      const rest = out.qty - base;
+      await tx.assembly_outputs.update({ where: { id: out.id }, data: { qty: rest > 0n ? rest : 0n, ...split(rest > 0n ? rest : 0n) } });
+    }
+  }
   if (left === 0n) {
     await tx.lpns.update({ where: { id: from.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
     await tx.pick_tasks.updateMany({ where: { outbound_lpn_id: from.id }, data: { outbound_lpn_id: null } });
+    await tx.putaway_tasks.updateMany({ where: { lpn_id: from.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
   }
   const toQty = (await tx.inventory_balances.aggregate({ where: { lpn_id: to.id, qty: { gt: 0n } }, _sum: { qty: true } }))._sum.qty ?? 0n;
-  await audit(tx, ctx, { action: 'pick.split_pallet', entity_type: 'lpn', entity_id: from.id, after: { to: to.code, created, sku: sku.code, qty: base.toString(), from_left: left.toString(), movement_id: movementId.toString() } });
-  return { from_lpn: from.code, from_left: left.toString(), to_lpn: to.code, to_qty: toQty.toString(), created, sku: sku.code, qty: base.toString(), destination: input.destination?.trim() || null, pallets: await outboundPallets(tx, from.order_id, null) };
+  await audit(tx, ctx, { action: 'pick.split_pallet', entity_type: 'lpn', entity_id: from.id, after: { to: to.code, created, sku: sku.code, qty: base.toString(), from_left: left.toString(), movement_id: movementId.toString(), mode: storage ? 'STORAGE' : 'OUTBOUND', putaway_task_id: putawayTaskId } });
+  return { mode: storage ? ('STORAGE' as const) : ('OUTBOUND' as const), from_lpn: from.code, from_left: left.toString(), to_lpn: to.code, to_qty: toQty.toString(), created, sku: sku.code, qty: base.toString(), destination: storage ? null : input.destination?.trim() || null, putaway_task_id: putawayTaskId, pallets: from.order_id ? await outboundPallets(tx, from.order_id, null) : [] };
 }
 
 /**

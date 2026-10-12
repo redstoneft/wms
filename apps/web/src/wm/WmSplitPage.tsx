@@ -13,7 +13,7 @@ import { fmtQty } from '../lib/format';
 import { BigButton, BigValue, StepBar, useWm, WmShell } from './WmShell';
 
 type Source = { code: string; status: string; location: string | null; destination: string | null; order: { order_number: string; customer: string; destination: string | null } | null; contents: { sku_code: string; description: string; status: string; qty: string }[]; pallets: OutboundPallet[] };
-type Result = { from_lpn: string; from_left: string; to_lpn: string; to_qty: string; created: boolean; sku: string; qty: string; destination: string | null; pallets: OutboundPallet[] };
+type Result = { mode: 'OUTBOUND' | 'STORAGE'; from_lpn: string; from_left: string; to_lpn: string; to_qty: string; created: boolean; sku: string; qty: string; destination: string | null; putaway_task_id: string | null; pallets: OutboundPallet[] };
 
 export default function WmSplitPage() {
   return (
@@ -38,11 +38,13 @@ function Flow() {
     try {
       const r = await pickingApi.pallet(code);
       if (!r.found) { wm.warn(`NO EXISTE LA TARIMA ${code}`); return; }
-      if (!r.order || !['PICKING', 'STAGED'].includes(r.status)) { wm.warn(`${r.code} NO ES UNA TARIMA DE SALIDA (está ${r.status})`); return; }
+      const outbound = !!r.order && ['PICKING', 'STAGED'].includes(r.status);
+      const storage = !r.order && ['STORED', 'OPEN'].includes(r.status);
+      if (!outbound && !storage) { wm.warn(`${r.code} NO SE PUEDE DIVIDIR (está ${r.status})`); return; }
       if (!r.contents.length) { wm.warn(`${r.code} ESTÁ VACÍA`); return; }
       setSrc(r);
       setSku(r.contents.length === 1 ? r.contents[0]! : null);
-      wm.ok(`${r.code} · pedido ${r.order.order_number} · ${r.contents.length} producto(s)`);
+      wm.ok(r.order ? `${r.code} · pedido ${r.order.order_number} · ${r.contents.length} producto(s)` : `${r.code} · tarima de almacén en ${r.location ?? '?'} · ${r.contents.length} producto(s)`);
     } catch (e) {
       wm.fail(e);
     } finally {
@@ -94,18 +96,18 @@ function Flow() {
   if (!src)
     return (
       <div>
-        <StepBar text="1 · ESCANEA LA TARIMA DE SALIDA QUE VAS A DIVIDIR" />
-        <ScanInput label="LPN de la tarima (surtida o en staging)" autoUpper onScan={load} disabled={busy} testId="split-scan-lpn" />
-        <div className="mt-3 text-sm text-slate-300">Sirve para separar por altura, por destino (CEDIS / tienda) o cuando el cliente pide la división después de surtir. El pedido no cambia: solo se reparte entre tarimas.</div>
+        <StepBar text="1 · ESCANEA LA TARIMA QUE VAS A DIVIDIR" />
+        <ScanInput label="LPN de la tarima (de salida o de almacén)" autoUpper onScan={load} disabled={busy} testId="split-scan-lpn" />
+        <div className="mt-3 text-sm text-slate-300">Tarima de salida: separar por altura o destino después de surtir (el pedido no cambia). Tarima de almacén: cuando lo recibido o armado como una tarima en realidad son varias; la nueva nace en el mismo lugar, con su etiqueta y su acomodo.</div>
       </div>
     );
   const head = (
     <div className="mb-3 rounded-2xl bg-slate-800 px-4 py-2">
       <div className="flex items-center justify-between">
         <div className="font-mono text-xl font-black">{src.code}</div>
-        <div className="text-sm text-slate-300">{src.status === 'STAGED' ? 'en staging' : 'surtida'} · {src.location ?? ''}</div>
+        <div className="text-sm text-slate-300">{src.order ? (src.status === 'STAGED' ? 'en staging' : 'surtida') : 'en almacén'} · {src.location ?? ''}</div>
       </div>
-      <div className="text-sm text-slate-300">Pedido {src.order?.order_number} · {src.order?.customer}{src.destination ? ` · entrega ${src.destination}` : ''}</div>
+      {src.order && <div className="text-sm text-slate-300">Pedido {src.order.order_number} · {src.order.customer}{src.destination ? ` · entrega ${src.destination}` : ''}</div>}
     </div>
   );
   if (!sku)
@@ -141,11 +143,11 @@ function Flow() {
       <div className="rounded-2xl bg-slate-900 px-4 py-2 text-lg">{fmtQty(qty.qty)} {qty.uom === 'PIECE' ? 'pzas' : qty.uom.toLowerCase()} de <span className="font-mono font-bold">{sku.sku_code}</span></div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <button type="button" onClick={() => setTarget({ ...target, mode: 'NEW', lpn: '' })} className={`rounded-2xl py-3 text-base font-black ${target.mode === 'NEW' ? 'bg-emerald-600' : 'bg-slate-800'}`} data-testid="split-target-new">TARIMA NUEVA (se imprime etiqueta)</button>
-        <button type="button" onClick={() => setTarget({ ...target, mode: 'EXISTING' })} className={`rounded-2xl py-3 text-base font-black ${target.mode === 'EXISTING' ? 'bg-emerald-600' : 'bg-slate-800'}`} data-testid="split-target-existing">A OTRA TARIMA DEL PEDIDO</button>
+        <button type="button" onClick={() => setTarget({ ...target, mode: 'EXISTING' })} className={`rounded-2xl py-3 text-base font-black ${target.mode === 'EXISTING' ? 'bg-emerald-600' : 'bg-slate-800'}`} data-testid="split-target-existing">{src.order ? 'A OTRA TARIMA DEL PEDIDO' : 'A OTRA TARIMA DEL MISMO LUGAR'}</button>
       </div>
       {target.mode === 'EXISTING' && (
         <div className="mt-2">
-          {target.lpn ? <BigValue label="Tarima destino" value={target.lpn} tone="ok" /> : <ScanInput label="Escanea la tarima destino (mismo pedido, mismo lugar)" autoUpper onScan={(v) => setTarget({ ...target, lpn: v.trim().toUpperCase() })} disabled={busy} testId="split-scan-target" />}
+          {target.lpn ? <BigValue label="Tarima destino" value={target.lpn} tone="ok" /> : <ScanInput label={src.order ? 'Escanea la tarima destino (mismo pedido, mismo lugar)' : 'Escanea la tarima destino (de almacén, mismo lugar)'} autoUpper onScan={(v) => setTarget({ ...target, lpn: v.trim().toUpperCase() })} disabled={busy} testId="split-scan-target" />}
           {src.pallets.filter((p) => p.lpn_code !== src.code).length > 0 && (
             <div className="mt-1 grid gap-1">
               {src.pallets.filter((p) => p.lpn_code !== src.code).map((p) => (
@@ -155,10 +157,12 @@ function Flow() {
           )}
         </div>
       )}
+      {src.order && (
       <label className="mt-3 block">
         <div className="mb-1 text-xs font-bold uppercase text-slate-400">Entrega de la tarima destino (opcional)</div>
         <input value={target.destination} onChange={(e) => setTarget({ ...target, destination: e.target.value })} placeholder="Ej. CEDIS 7494 · Tienda 1166" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-2 text-lg text-white" data-testid="split-destination" />
       </label>
+      )}
       <BigButton tone="success" className="mt-3" onClick={submit} disabled={busy || (target.mode === 'EXISTING' && !target.lpn)} testId="split-confirm">Pasar a la tarima</BigButton>
       <BigButton tone="neutral" className="mt-2" onClick={() => setQty(null)}>Regresar</BigButton>
     </div>

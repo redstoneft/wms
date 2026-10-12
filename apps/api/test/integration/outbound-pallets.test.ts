@@ -239,3 +239,35 @@ describe('admin marks an order as delivered outside the flow', () => {
     await expectReconciled();
   });
 });
+
+describe('splitting a storage pallet (received or assembled as one pallet, really several)', () => {
+  it('part of a stored pallet goes to a new stored pallet at the same spot, AVAILABLE, with its own put-away when the source had one', async () => {
+    const station = await sql<{ id: string; barcode: string }>(`SELECT id, barcode FROM locations WHERE warehouse_id = '${f.warehouse_id}' AND location_type = 'STATION' AND is_active LIMIT 1`);
+    const srcLoc = station[0]?.id ?? f.reserve[5]!.id;
+    const src = await storedPallet(f, 0, srcLoc, 90n);
+    if (station[0]) {
+      await sql(`UPDATE lpns SET lpn_type = 'STORAGE' WHERE id = '${src.id}'`);
+      const pt = await sup.post('/wm/tasks', { kind: 'PUTAWAY', reference: src.code, purpose: 'acomodar tarima armada' });
+      expect(pt.status, JSON.stringify(pt.body)).toBe(201);
+    }
+    const total = await skuTotal(f.skus[0]!.id);
+    const r = await picker.post('/picking/split-pallet', { from_lpn_code: src.code, sku_code: f.skus[0]!.code, qty: '30', uom_code: 'PIECE' }, idem());
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ mode: 'STORAGE', from_left: '60', to_qty: '30', created: true, destination: null });
+    const to = await sql<{ status: string; lpn_type: string; order_id: string | null; loc: string }>(`SELECT status, lpn_type, order_id, current_location_id AS loc FROM lpns WHERE code = '${r.body.to_lpn}'`);
+    expect(to[0]).toMatchObject({ status: 'STORED', lpn_type: 'STORAGE', order_id: null, loc: srcLoc });
+    const bal = await sql<{ status: string; qty: bigint }>(`SELECT b.status, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE l.code = '${r.body.to_lpn}' AND b.qty > 0`);
+    expect(bal).toEqual([{ status: 'AVAILABLE', qty: 30n }]);
+    if (station[0]) expect(r.body.putaway_task_id).toBeTruthy();
+    expect(await skuTotal(f.skus[0]!.id)).toBe(total);
+    // the rest onto an existing stored pallet at the same spot; the source empties and is consumed
+    const r2 = await picker.post('/picking/split-pallet', { from_lpn_code: src.code, sku_code: f.skus[0]!.code, qty: '60', uom_code: 'PIECE', to_lpn_code: r.body.to_lpn }, idem());
+    expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+    expect(r2.body).toMatchObject({ from_left: '0', to_qty: '90', created: false });
+    expect((await sql<{ status: string }>(`SELECT status FROM lpns WHERE id = '${src.id}'`))[0]!.status).toBe('CONSUMED');
+    // a picked pallet and a stored pallet never mix
+    const bad = await picker.post('/picking/split-pallet', { from_lpn_code: r.body.to_lpn, sku_code: f.skus[0]!.code, qty: '1', uom_code: 'PIECE', to_lpn_code: 'PLT-NOPE' }, idem());
+    expect(bad.status).toBe(404);
+    await expectReconciled();
+  });
+});

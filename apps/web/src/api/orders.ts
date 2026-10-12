@@ -42,7 +42,7 @@ export const pickingApi = {
   closePallet: (body: { pick_task_id: string; destination?: string }) => api.post<{ lpn_code: string; qty: string; destination: string | null; pallets: OutboundPallet[] }>('/picking/close-pallet', body),
   palletDestination: (body: { lpn_code: string; destination: string }) => api.post<{ lpn_code: string; destination: string | null; pallets: OutboundPallet[] }>('/picking/pallet-destination', body),
   splitPallet: (body: { from_lpn_code: string; sku_code: string; qty: string; uom_code?: string; to_lpn_code?: string; destination?: string }, key: string) =>
-    api.postIdem<{ from_lpn: string; from_left: string; to_lpn: string; to_qty: string; created: boolean; sku: string; qty: string; destination: string | null; pallets: OutboundPallet[] }>('/picking/split-pallet', body, key),
+    api.postIdem<{ mode: 'OUTBOUND' | 'STORAGE'; from_lpn: string; from_left: string; to_lpn: string; to_qty: string; created: boolean; sku: string; qty: string; destination: string | null; putaway_task_id: string | null; pallets: OutboundPallet[] }>('/picking/split-pallet', body, key),
   pallet: (code: string) => api.get<{ found: false; code: string } | { found: true; code: string; status: string; destination: string | null; location: string | null; order: { order_number: string; customer: string; destination: string | null } | null; contents: { sku_code: string; description: string; status: string; qty: string }[]; pallets: OutboundPallet[] }>(`/picking/pallets/${encodeURIComponent(code)}`),
 };
 
