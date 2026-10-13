@@ -717,8 +717,9 @@ export const zSplitReturnPallet = z.object({
   lpn_code: z.string().trim().min(1).max(30),
   /** equal split into this many pallets… */
   pallets: z.number().int().min(2).max(50).optional(),
-  /** …or the pieces each pallet keeps (first = the original pallet); the sum must be what the pallet holds */
-  parts: z.array(zQty).min(2).max(50).optional(),
+  /** …or the pieces per pallet; the sum must be what the return received. When the pallet also holds pieces that are
+   *  not from the return, every part goes to a NEW pallet and the original keeps only those other pieces. */
+  parts: z.array(zQty).min(1).max(50).optional(),
 }).refine((v) => v.pallets || v.parts, { message: 'pallets o parts' });
 export const zClassifyReturnLine = z.object({
   return_id: zUuid,

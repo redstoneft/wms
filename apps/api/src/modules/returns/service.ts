@@ -272,6 +272,8 @@ export async function openReturns(tx: Tx) {
   const rows = await tx.returns.findMany({ where: { status: { not: 'CLOSED' }, is_training: false }, include: { customer: { select: { code: true, name: true } }, lines: { include: { sku: { select: { code: true, description: true, uoms: { where: { uom_code: 'CASE' }, select: { base_qty: true } } } } } } }, orderBy: { created_at: 'desc' }, take: 50 });
   const lpnIds = rows.flatMap((r) => r.lines.map((l) => l.lpn_id).filter((x): x is string => !!x));
   const lpns = await tx.lpns.findMany({ where: { id: { in: lpnIds } }, select: { id: true, code: true, status: true, current_location_id: true } });
+  const bals = await tx.inventory_balances.groupBy({ by: ['lpn_id', 'sku_id'], where: { lpn_id: { in: lpnIds }, qty: { gt: 0n } }, _sum: { qty: true } });
+  const balOf = (lpnId: string, skuId: string) => (bals.find((b) => b.lpn_id === lpnId && b.sku_id === skuId)?._sum.qty ?? 0n).toString();
   const tasks = await tx.putaway_tasks.findMany({ where: { lpn_id: { in: lpnIds }, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, select: { id: true, lpn_id: true, suggested_location_id: true }, orderBy: { created_at: 'desc' } });
   const locIds = [...new Set([...lpns.map((l) => l.current_location_id), ...tasks.map((t) => t.suggested_location_id)].filter((x): x is string => !!x))];
   const locs = new Map((await tx.locations.findMany({ where: { id: { in: locIds } }, select: { id: true, code: true } })).map((l) => [l.id, l.code]));
@@ -283,7 +285,7 @@ export async function openReturns(tx: Tx) {
     lines: r.lines.map((l) => {
       const p = l.lpn_id ? byId.get(l.lpn_id) : null;
       const t = p ? taskByLpn.get(p.id) : undefined;
-      return { id: l.id, sku_code: l.sku.code, description: l.sku.description, case_qty: l.sku.uoms[0]?.base_qty?.toString() ?? null, expected_qty: l.expected_qty.toString(), received_qty: l.received_qty.toString(), lpn: p ? { code: p.code, status: p.status, location: p.current_location_id ? (locs.get(p.current_location_id) ?? null) : null, putaway_task_id: t?.id ?? null, suggested: t?.suggested_location_id ? (locs.get(t.suggested_location_id) ?? null) : null } : null };
+      return { id: l.id, sku_code: l.sku.code, description: l.sku.description, case_qty: l.sku.uoms[0]?.base_qty?.toString() ?? null, expected_qty: l.expected_qty.toString(), received_qty: l.received_qty.toString(), lpn: p ? { code: p.code, status: p.status, on_pallet: balOf(p.id, l.sku_id), location: p.current_location_id ? (locs.get(p.current_location_id) ?? null) : null, putaway_task_id: t?.id ?? null, suggested: t?.suggested_location_id ? (locs.get(t.suggested_location_id) ?? null) : null } : null };
     }),
   }));
 }
@@ -319,22 +321,37 @@ export async function splitReturnPallet(tx: Tx, ctx: ActorContext, input: { retu
     parts = splitQty(total, n);
   }
   const nParts = parts.length;
+  // pieces on the pallet that are NOT from this return stay on it; then every part goes to a new pallet
+  const extra = bal.qty - total;
+  const keepOriginal = extra === 0n;
+  if (keepOriginal && nParts < 2) throw new RuleError('INVALID_QTY', 'Para separar hacen falta al menos 2 tarimas');
   const pallets: { code: string; qty: string; putaway_task_id: string | null; suggested: string | null; line_id: string }[] = [];
-  // the original keeps the first part; each other part goes to a new pallet (same spot) via the ledger split
-  for (let i = 1; i < nParts; i++) {
+  const sugOf = async (locId: string | null) => (locId ? (await tx.locations.findUnique({ where: { id: locId }, select: { code: true } }))?.code ?? null : null);
+  for (let i = 0; i < nParts; i++) {
+    if (keepOriginal && i === 0) continue; // the original keeps the first part
     const r = await splitPallet(tx, ctx, { from_lpn_code: lpn.code, sku_code: line.sku.code, qty: parts[i]!, uom_code: 'PIECE' });
     const newLpn = await lockLpnByCode(tx, r.to_lpn);
     const task = await createPutawayTask(tx, ctx, newLpn, { allowStoredLocation: true });
-    const nl = await tx.return_lines.create({ data: { return_id: ret.id, sku_id: line.sku_id, expected_qty: parts[i]!, received_qty: parts[i]!, disposition: line.disposition, disposition_qty: line.disposition ? parts[i]! : 0n, lpn_id: newLpn.id, inspected_by: line.inspected_by, notes: line.notes } });
-    const sug = task.suggested_location_id ? (await tx.locations.findUnique({ where: { id: task.suggested_location_id }, select: { code: true } }))?.code ?? null : null;
-    pallets.push({ code: newLpn.code, qty: parts[i]!.toString(), putaway_task_id: task.id, suggested: sug, line_id: nl.id });
+    let lineId: string;
+    if (i === 0) {
+      // the return line now lives on the first new pallet; the original pallet is no longer part of the return
+      await tx.return_lines.update({ where: { id: line.id }, data: { lpn_id: newLpn.id, expected_qty: parts[0]!, received_qty: parts[0]!, disposition_qty: line.disposition ? parts[0]! : 0n } });
+      lineId = line.id;
+    } else {
+      lineId = (await tx.return_lines.create({ data: { return_id: ret.id, sku_id: line.sku_id, expected_qty: parts[i]!, received_qty: parts[i]!, disposition: line.disposition, disposition_qty: line.disposition ? parts[i]! : 0n, lpn_id: newLpn.id, inspected_by: line.inspected_by, notes: line.notes } })).id;
+    }
+    pallets.push({ code: newLpn.code, qty: parts[i]!.toString(), putaway_task_id: task.id, suggested: await sugOf(task.suggested_location_id), line_id: lineId });
   }
-  const fresh = await lockLpn(tx, lpn.id);
-  const task0 = await createPutawayTask(tx, ctx, fresh, { allowStoredLocation: true });
-  await tx.return_lines.update({ where: { id: line.id }, data: { expected_qty: parts[0]!, received_qty: parts[0]!, disposition_qty: line.disposition ? parts[0]! : 0n } });
-  const sug0 = task0.suggested_location_id ? (await tx.locations.findUnique({ where: { id: task0.suggested_location_id }, select: { code: true } }))?.code ?? null : null;
-  pallets.unshift({ code: lpn.code, qty: parts[0]!.toString(), putaway_task_id: task0.id, suggested: sug0, line_id: line.id });
-  await audit(tx, ctx, { action: 'return.split_pallet', entity_type: 'return', entity_id: ret.id, after: { lpn: lpn.code, sku: line.sku.code, total: total.toString(), pallets } });
-  return { return_number: ret.return_number, sku: line.sku.code, total: total.toString(), pallets };
+  if (keepOriginal) {
+    const fresh = await lockLpn(tx, lpn.id);
+    const task0 = await createPutawayTask(tx, ctx, fresh, { allowStoredLocation: true });
+    await tx.return_lines.update({ where: { id: line.id }, data: { expected_qty: parts[0]!, received_qty: parts[0]!, disposition_qty: line.disposition ? parts[0]! : 0n } });
+    pallets.unshift({ code: lpn.code, qty: parts[0]!.toString(), putaway_task_id: task0.id, suggested: await sugOf(task0.suggested_location_id), line_id: line.id });
+  } else {
+    // the original stays where it is with the pieces that were never part of the return: no put-away for it
+    await tx.putaway_tasks.updateMany({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED'] } }, data: { status: 'CANCELLED' } });
+  }
+  await audit(tx, ctx, { action: 'return.split_pallet', entity_type: 'return', entity_id: ret.id, after: { lpn: lpn.code, sku: line.sku.code, total: total.toString(), kept_on_original: extra.toString(), pallets } });
+  return { return_number: ret.return_number, sku: line.sku.code, total: total.toString(), original: lpn.code, kept_on_original: extra.toString(), pallets };
 }
 

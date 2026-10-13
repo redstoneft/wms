@@ -130,7 +130,9 @@ describe('splitting a pallet of an open return into several, each with its own p
     expect(r.body.pallets.every((x: { putaway_task_id: string | null }) => !!x.putaway_task_id)).toBe(true);
     const lines = await sql<{ received_qty: bigint; lpn_id: string }>(`SELECT received_qty, lpn_id FROM return_lines WHERE return_id = '${c.body.id}'`);
     expect(lines.length).toBe(3);
-    expect((await sql<{ qty: bigint }>(`SELECT qty FROM inventory_balances WHERE lpn_id = '${p.id}' AND qty > 0`))[0]!.qty).toBe(48n); // 40 of the return + the 8 that were there
+    expect((await sql<{ qty: bigint }>(`SELECT qty FROM inventory_balances WHERE lpn_id = '${p.id}' AND qty > 0`))[0]!.qty).toBe(8n); // only the pieces that were never part of the return stay
+    expect(r.body.pallets.every((x: { code: string }) => x.code !== p.code)).toBe(true);
+    expect(r.body.kept_on_original).toBe('8');
     expect(new Set(lines.map((l) => l.lpn_id)).size).toBe(3);
     const open = await recv.get('/returns/open');
     const mine = open.body.find((x: { id: string }) => x.id === c.body.id);

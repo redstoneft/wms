@@ -41,7 +41,8 @@ export function ReturnPallets({ ret, onChanged }: { ret: OpenReturn | null; onCh
     const useCases = caseQty > 1 && total % caseQty === 0;
     setUnit(useCases ? 'CASE' : 'PIECE');
     const t = useCases ? total / caseQty : total;
-    setParts([String(Math.ceil(t / 2)), String(Math.floor(t / 2))]);
+    const extra = Number(line.lpn!.on_pallet) - total;
+    setParts(extra > 0 ? [String(t)] : [String(Math.ceil(t / 2)), String(Math.floor(t / 2))]);
     setView({ kind: 'SPLIT', line });
   };
   const toPieces = (v: string, line: Line) => (unit === 'CASE' ? (Number(v) || 0) * Number(line.case_qty ?? 1) : Number(v) || 0);
@@ -49,13 +50,15 @@ export function ReturnPallets({ ret, onChanged }: { ret: OpenReturn | null; onCh
     const pieces = parts.map((p) => toPieces(p, line));
     const sum = pieces.reduce((a, b) => a + b, 0);
     const total = Number(line.received_qty);
+    const extra = Number(line.lpn!.on_pallet) - total;
+    if (extra <= 0 && pieces.length < 2) { wm.warn('ELIGE AL MENOS 2 TARIMAS'); return; }
     if (pieces.some((p) => p <= 0)) { wm.warn('CADA TARIMA DEBE LLEVAR ALGO'); return; }
     if (sum !== total) { wm.warn(`SUMAN ${fmtQty(String(sum))} Y LA TARIMA TIENE ${fmtQty(line.received_qty)}`); return; }
     setBusy(true);
     try {
       const r = await returnsApi.splitPallet({ return_id: ret.id, lpn_code: line.lpn!.code, parts: pieces.map(String) }, api.newKey());
       setCreated(r.data.pallets.map((p) => p.code));
-      wm.ok(`${r.data.sku}: ${r.data.pallets.length} TARIMAS · ${r.data.pallets.map((p) => `${p.code} ${fmtQty(p.qty)}`).join(' · ')}`);
+      wm.ok(`${r.data.sku}: ${r.data.pallets.length} TARIMA(S) · ${r.data.pallets.map((p) => `${p.code} ${fmtQty(p.qty)}`).join(' · ')}${Number(r.data.kept_on_original) > 0 ? ` · ${r.data.original} SE QUEDA CON ${fmtQty(r.data.kept_on_original)} QUE NO SON DEVOLUCIÓN` : ''}`);
       setView({ kind: 'LIST' });
       onChanged();
     } catch (e) {
@@ -107,13 +110,15 @@ export function ReturnPallets({ ret, onChanged }: { ret: OpenReturn | null; onCh
     const total = Number(line.received_qty);
     const caseQty = line.case_qty ? Number(line.case_qty) : 0;
     const sum = parts.reduce((a, p) => a + toPieces(p, line), 0);
+    const extra = Number(line.lpn!.on_pallet) - total;
     return (
       <div className="mt-3" data-testid="return-split-form">
         <StepBar text={`SEPARAR ${line.lpn!.code} · ${fmtQty(line.received_qty)} PZAS DE ${line.sku_code}`} />
+        {extra > 0 && <div className="mb-2 rounded-xl border-2 border-amber-400 bg-amber-900/40 px-3 py-2 text-sm text-amber-100">{line.lpn!.code} tiene además {fmtQty(String(extra))} pzas que no son de la devolución: esas se quedan ahí. Toda la devolución pasa a tarimas nuevas con etiqueta nueva.</div>}
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-300">Tarimas:</span>
-            <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setParts(parts.length > 2 ? parts.slice(0, -1) : parts)} aria-label="menos">−</button>
+            <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setParts(parts.length > (extra > 0 ? 1 : 2) ? parts.slice(0, -1) : parts)} aria-label="menos">−</button>
             <div className="w-8 text-center font-mono text-3xl font-black">{parts.length}</div>
             <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setParts(parts.length < 50 ? [...parts, '0'] : parts)} aria-label="más">+</button>
           </div>
@@ -126,7 +131,7 @@ export function ReturnPallets({ ret, onChanged }: { ret: OpenReturn | null; onCh
         <ul className="grid gap-2">
           {parts.map((p, i) => (
             <li key={i} className="flex items-center gap-3 rounded-xl bg-slate-800 px-3 py-2">
-              <div className="w-28 text-sm text-slate-300">{i === 0 ? `${line.lpn!.code.slice(-5)} (actual)` : `Tarima nueva ${i}`}</div>
+              <div className="w-28 text-sm text-slate-300">{extra > 0 ? `Tarima nueva ${i + 1}` : i === 0 ? `${line.lpn!.code.slice(-5)} (actual)` : `Tarima nueva ${i}`}</div>
               <input inputMode="numeric" value={p} onChange={(e) => setParts(parts.map((x, j) => (j === i ? e.target.value.replace(/\D/g, '') : x)))} className="h-12 w-24 rounded-lg bg-slate-900 px-2 text-center font-mono text-2xl font-black text-white" data-testid={`return-part-${i}`} />
               <div className="text-sm text-slate-400">{unit === 'CASE' ? `cajas = ${fmtQty(String(toPieces(p, line)))} pzas` : 'pzas'}</div>
             </li>
