@@ -44,6 +44,7 @@ function Flow() {
   const openRet = useQuery({ queryKey: ['returns-open'], queryFn: returnsApi.open, refetchInterval: 30_000 });
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<QuickReturnResult | null>(null);
+  const pieces = qty && sku ? Number(qty.qty) * Number(sku.uoms.find((u) => u.uom_code === qty.uom)?.base_qty ?? 1) : 0;
   const chosen = options.find((o) => o.code === selected) ?? null;
   const onProduct = async (code: string) => {
     setBusy(true);
