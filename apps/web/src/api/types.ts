@@ -425,6 +425,8 @@ export interface QuickReturnResult {
   location: string;
   damaged: boolean;
   incident: string | null;
+  /** whole pallets returned: the new pallets born at the returns area */
+  pallets: { code: string; qty: Qty; putaway_task: string | null }[];
 }
 export interface Attachment {
   id: Uuid;

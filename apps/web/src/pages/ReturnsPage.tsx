@@ -67,15 +67,16 @@ function ReturnDrawer({ id, onClose }: { id?: string; onClose: () => void }) {
   const { can } = useAuth();
   const q = useQuery({ queryKey: ['return', id], queryFn: () => returnsApi.get(id!), enabled: !!id });
   const locs = useQuery({ queryKey: ['locations', 'RETURNS'], queryFn: () => layoutApi.locations({ type: 'RETURNS', limit: 50 }), enabled: !!id });
-  const [recv, setRecv] = useState<{ line: ReturnLine; qty: string; loc: string } | null>(null);
+  const [recv, setRecv] = useState<{ line: ReturnLine; qty: string; loc: string; pallets: string } | null>(null);
+  const [reopenReason, setReopenReason] = useState<string | null>(null);
   const [cls, setCls] = useState<{ line: ReturnLine; qty: string; disposition: string; reason: string } | null>(null);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['return', id] });
     void qc.invalidateQueries({ queryKey: ['returns'] });
   };
   const receive = useMutation({
-    mutationFn: () => returnsApi.receive({ return_id: id!, line_id: recv!.line.id, qty: recv!.qty, uom_code: 'PIECE', returns_location_barcode: recv!.loc }, api.newKey()),
-    onSuccess: (r) => { toast.success(`Recibido en ${r.data.lpn_code}`); setRecv(null); refresh(); },
+    mutationFn: () => returnsApi.receive({ return_id: id!, line_id: recv!.line.id, qty: recv!.qty, uom_code: 'PIECE', returns_location_barcode: recv!.loc, pallets: Math.max(1, Number(recv!.pallets) || 1) }, api.newKey()),
+    onSuccess: (r) => { toast.success(r.data.pallets.length > 1 ? `Recibido en ${r.data.pallets.length} tarimas: ${r.data.pallets.map((p) => p.code).join(', ')}` : `Recibido en ${r.data.lpn_code}`); setRecv(null); refresh(); },
     onError: (e) => toast.error('No se pudo recibir', e),
   });
   const classify = useMutation({
@@ -84,9 +85,10 @@ function ReturnDrawer({ id, onClose }: { id?: string; onClose: () => void }) {
     onError: (e) => toast.error('No se pudo clasificar', e),
   });
   const close = useMutation({ mutationFn: () => returnsApi.close(id!), onSuccess: () => { toast.success('Devolución cerrada'); refresh(); }, onError: (e) => toast.error('No se pudo cerrar', e) });
+  const reopen = useMutation({ mutationFn: () => returnsApi.reopen(id!, (reopenReason ?? '').trim()), onSuccess: (r) => { toast.success('Devolución reabierta', `Ahora está ${es(r.status)}: se puede recibir más o reclasificar.`); setReopenReason(null); refresh(); }, onError: (e) => toast.error('No se pudo reabrir', e) });
   const r = q.data;
   return (
-    <Drawer open={!!id} onClose={onClose} title={r ? `${r.return_number} · ${r.customer?.name ?? 'sin cliente'}` : 'Devolución'} width="max-w-3xl" footer={r && can('returns.manage') && r.status === 'CLASSIFIED' ? <Button onClick={() => close.mutate()} loading={close.isPending}>Cerrar devolución</Button> : undefined}>
+    <Drawer open={!!id} onClose={onClose} title={r ? `${r.return_number} · ${r.customer?.name ?? 'sin cliente'}` : 'Devolución'} width="max-w-3xl" footer={r && ((can('returns.manage') && r.status === 'CLASSIFIED') || (can('returns.reopen') && r.status === 'CLOSED')) ? <div className="flex justify-end gap-2">{can('returns.reopen') && r.status === 'CLOSED' && <Button variant="secondary" onClick={() => setReopenReason('')}>Reabrir devolución</Button>}{can('returns.manage') && r.status === 'CLASSIFIED' && <Button onClick={() => close.mutate()} loading={close.isPending}>Cerrar devolución</Button>}</div> : undefined}>
       {r && (
         <>
           <dl className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -110,7 +112,7 @@ function ReturnDrawer({ id, onClose }: { id?: string; onClose: () => void }) {
                 render: (l) =>
                   can('returns.manage') && r.status !== 'CLOSED' && (
                     <div className="flex gap-1">
-                      <Button size="sm" variant="secondary" onClick={() => setRecv({ line: l, qty: (toBigInt(l.expected_qty) - toBigInt(l.received_qty)).toString(), loc: locs.data?.items[0]?.barcode ?? '' })}>Recibir</Button>
+                      <Button size="sm" variant="secondary" onClick={() => setRecv({ line: l, qty: (toBigInt(l.expected_qty) - toBigInt(l.received_qty)).toString(), loc: locs.data?.items[0]?.barcode ?? '', pallets: '1' })}>Recibir</Button>
                       {toBigInt(l.received_qty) > toBigInt(l.disposition_qty) && <Button size="sm" onClick={() => setCls({ line: l, qty: (toBigInt(l.received_qty) - toBigInt(l.disposition_qty)).toString(), disposition: 'RESTOCK', reason: '' })}>Clasificar</Button>}
                     </div>
                   ),
@@ -125,8 +127,17 @@ function ReturnDrawer({ id, onClose }: { id?: string; onClose: () => void }) {
                   {locs.data?.items.map((l) => <option key={l.id} value={l.barcode}>{l.code}</option>)}
                 </Select>
               </Field>
+              {!recv?.line.lpn_id && (
+                <Field label="¿En cuántas tarimas viene?" hint="La cantidad se reparte en partes iguales; cada tarima se clasifica por separado">
+                  <Input inputMode="numeric" value={recv?.pallets ?? '1'} onChange={(e) => recv && setRecv({ ...recv, pallets: e.target.value.replace(/\D/g, '') })} />
+                </Field>
+              )}
               <Alert tone="info">Entra al libro mayor en estado CUARENTENA.</Alert>
             </div>
+          </Modal>
+          <Modal open={reopenReason !== null} onClose={() => setReopenReason(null)} title={`Reabrir ${r.return_number}`} footer={<><Button variant="secondary" onClick={() => setReopenReason(null)}>Cancelar</Button><Button onClick={() => reopen.mutate()} loading={reopen.isPending} disabled={(reopenReason ?? '').trim().length < 3}>Reabrir</Button></>}>
+            <Field label="Motivo" required><Input value={reopenReason ?? ''} onChange={(e) => setReopenReason(e.target.value)} placeholder="Ej. faltó recibir una tarima" /></Field>
+            <div className="mt-2 text-xs text-slate-500">La devolución vuelve a estar abierta: sus tarimas no cambian; se puede recibir más producto o clasificar de nuevo y después cerrarla.</div>
           </Modal>
           <Modal open={!!cls} onClose={() => setCls(null)} title={`Clasificar ${cls?.line.sku.code}`} footer={<><Button variant="secondary" onClick={() => setCls(null)}>Cancelar</Button><Button onClick={() => classify.mutate()} loading={classify.isPending} disabled={!cls?.qty || (cls?.reason.trim().length ?? 0) < 3}>Aplicar</Button></>}>
             <div className="grid gap-3">

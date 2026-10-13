@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { UomCode } from '@wms/shared';
 import { api } from '../api/client';
 import { inventoryApi } from '../api/inventory';
+import { labelsApi } from '../api/labels';
 import { masterdataApi } from '../api/masterdata';
 import { returnsApi } from '../api/returns';
 import type { QuickReturnResult } from '../api/types';
@@ -34,6 +35,8 @@ function Flow() {
   const [options, setOptions] = useState<Option[]>([]);
   const [selected, setSelected] = useState('');
   const [note, setNote] = useState('');
+  // whole pallets coming back: how many NEW pallets are born at the returns area (0 = onto an existing pallet)
+  const [newPallets, setNewPallets] = useState(0);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<QuickReturnResult | null>(null);
   const pieces = qty && sku ? Number(qty.qty) * Number(sku.uoms.find((u) => u.uom_code === qty.uom)?.base_qty ?? 1) : 0;
@@ -62,12 +65,9 @@ function Flow() {
         .map((l) => ({ code: l.code, location: l.location_code ?? '', available: String((l.contents ?? []).filter((c) => c.sku_code === sku.code).reduce((a, c) => a + Number(c.qty), 0)) }))
         .filter((o) => o.location)
         .sort((a, b) => a.location.localeCompare(b.location));
-      if (!opts.length) {
-        wm.warn(`NO HAY TARIMAS GUARDADAS CON ${sku.code}: márcala como dañada o recíbela en Recibir`);
-        return;
-      }
       setOptions(opts);
-      setSelected(opts[0]!.code);
+      setSelected(opts[0]?.code ?? '');
+      if (!opts.length) { setNewPallets(1); wm.warn(`NO HAY TARIMAS GUARDADAS CON ${sku.code}: entra como tarima(s) nueva(s) en devoluciones`); }
       setStep('PALLET');
     } catch (e) {
       wm.fail(e);
@@ -79,17 +79,17 @@ function Flow() {
     if (!sku || !qty) return;
     setBusy(true);
     try {
-      const r = await returnsApi.quick({ sku_code: sku.code, qty: qty.qty, uom_code: qty.uom, damaged, to_lpn_code: damaged ? undefined : selected, scanned, note: note.trim() || undefined }, api.newKey());
+      const r = await returnsApi.quick({ sku_code: sku.code, qty: qty.qty, uom_code: qty.uom, damaged, to_lpn_code: damaged || newPallets > 0 ? undefined : selected, scanned, note: note.trim() || undefined, new_pallets: newPallets > 0 ? newPallets : undefined }, api.newKey());
       setResult(r.data);
       setStep('DONE');
-      wm.ok(r.replayed ? 'YA REGISTRADA' : damaged ? `DEVOLUCIÓN ${r.data.return_number} · A DEVOLUCIONES ${r.data.location}` : `DEVOLUCIÓN ${r.data.return_number} · ${fmtQty(r.data.qty_base)} PZAS EN ${r.data.lpn}`);
+      wm.ok(r.replayed ? 'YA REGISTRADA' : r.data.pallets.length ? `DEVOLUCIÓN ${r.data.return_number} · ${r.data.pallets.length} TARIMA(S) NUEVA(S) EN ${r.data.location}` : damaged ? `DEVOLUCIÓN ${r.data.return_number} · A DEVOLUCIONES ${r.data.location}` : `DEVOLUCIÓN ${r.data.return_number} · ${fmtQty(r.data.qty_base)} PZAS EN ${r.data.lpn}`);
     } catch (e) {
       wm.fail(e);
     } finally {
       setBusy(false);
     }
   };
-  const reset = () => { setStep('PRODUCT'); setSku(null); setQty(null); setDamaged(false); setOptions([]); setSelected(''); setNote(''); setResult(null); };
+  const reset = () => { setStep('PRODUCT'); setSku(null); setQty(null); setDamaged(false); setOptions([]); setSelected(''); setNote(''); setNewPallets(0); setResult(null); };
 
   if (step === 'PRODUCT')
     return (
@@ -118,20 +118,41 @@ function Flow() {
       <div>
         <StepBar text="3 · ¿A QUÉ TARIMA VA?" />
         <BigValue label="Regresa" value={`${fmtQty(pieces)} pzas de ${sku.code}`} tone="accent" />
-        <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3">
-          <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Tarimas que ya tienen este producto</div>
-          <select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="return-pallet-select">
-            {options.map((o) => (
-              <option key={o.code} value={o.code}>
-                {o.location} · {o.code} · {fmtQty(o.available)} pzas
-              </option>
-            ))}
-          </select>
+        <div className={`mt-3 rounded-2xl border-2 p-3 ${newPallets === 0 ? 'border-violet-500' : 'border-slate-700'} bg-slate-900`}>
+          <button type="button" className="mb-1 w-full text-left text-sm font-semibold uppercase tracking-wide text-violet-300" onClick={() => setNewPallets(0)} disabled={!options.length}>{newPallets === 0 ? '● ' : '○ '}A una tarima que ya tiene este producto</button>
+          {options.length ? (
+            <select value={selected} onChange={(e) => { setSelected(e.target.value); setNewPallets(0); }} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-3 py-3 text-lg text-white" data-testid="return-pallet-select">
+              {options.map((o) => (
+                <option key={o.code} value={o.code}>
+                  {o.location} · {o.code} · {fmtQty(o.available)} pzas
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="text-sm text-slate-400">No hay tarimas guardadas con {sku.code}</div>
+          )}
+        </div>
+        <div className={`mt-2 rounded-2xl border-2 p-3 ${newPallets > 0 ? 'border-violet-500' : 'border-slate-700'} bg-slate-900`} data-testid="return-new-pallets">
+          <div className="flex items-center justify-between gap-2">
+            <button type="button" className="text-left text-sm font-semibold uppercase tracking-wide text-violet-300" onClick={() => setNewPallets((n) => (n > 0 ? n : 1))}>{newPallets > 0 ? '● ' : '○ '}Tarimas nuevas (regresan tarimas completas)</button>
+            <div className="flex items-center gap-2">
+              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setNewPallets((n) => Math.max(0, n - 1))} aria-label="menos tarimas">−</button>
+              <div className="w-8 text-center font-mono text-3xl font-black">{newPallets}</div>
+              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setNewPallets((n) => Math.min(200, n + 1))} aria-label="más tarimas">+</button>
+            </div>
+          </div>
+          <div className="mt-1 text-xs text-slate-400">Las {fmtQty(pieces)} pzas se reparten en {newPallets || 'N'} tarimas nuevas en el área de devoluciones, disponibles y con su acomodo. Imprime sus etiquetas al terminar.</div>
         </div>
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota (opcional): cliente, motivo…" className="mt-3 w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-lg text-white" data-testid="return-note" />
-        <BigButton tone="primary" className="mt-3" disabled={busy || !selected} onClick={() => setStep('CONFIRM')} testId="return-pallet-ok">
-          Llevar a {chosen?.location ?? ''}
-        </BigButton>
+        {newPallets > 0 ? (
+          <BigButton tone="success" className="mt-3" disabled={busy} onClick={() => submit()} testId="return-submit-new">
+            Registrar en {newPallets} tarima{newPallets > 1 ? 's' : ''} nueva{newPallets > 1 ? 's' : ''}
+          </BigButton>
+        ) : (
+          <BigButton tone="primary" className="mt-3" disabled={busy || !selected} onClick={() => setStep('CONFIRM')} testId="return-pallet-ok">
+            Llevar a {chosen?.location ?? ''}
+          </BigButton>
+        )}
         <BigButton tone="neutral" className="mt-3" onClick={() => setStep('QTY')}>
           Regresar
         </BigButton>
@@ -168,7 +189,19 @@ function Flow() {
     return (
       <div>
         <StepBar text={`DEVOLUCIÓN ${result.return_number} REGISTRADA`} />
-        <BigValue label={result.damaged ? 'Tarima nueva en devoluciones' : 'Agregado a la tarima'} value={`${result.lpn} · ${result.location}`} tone="ok" testId="return-done" />
+        <BigValue label={result.pallets.length ? `${result.pallets.length} tarima(s) nueva(s) en ${result.location}` : result.damaged ? 'Tarima nueva en devoluciones' : 'Agregado a la tarima'} value={result.pallets.length ? `${fmtQty(result.qty_base)} pzas de ${result.sku.code}` : `${result.lpn} · ${result.location}`} tone="ok" testId="return-done" />
+        {result.pallets.length > 0 && (
+          <>
+            <ul className="mt-3 grid gap-1">
+              {result.pallets.map((p) => (
+                <li key={p.code} className="flex items-center justify-between rounded-xl bg-slate-800 px-3 py-2"><span className="font-mono text-lg font-black">{p.code}</span><span className="text-slate-300">{fmtQty(p.qty)} pzas{p.putaway_task ? ' · con acomodo' : ''}</span></li>
+              ))}
+            </ul>
+            <BigButton tone="primary" className="mt-3" disabled={busy} onClick={async () => { setBusy(true); try { for (const p of result.pallets) await labelsApi.print({ label_type: 'LPN', entity_id: p.code }); wm.ok(`${result.pallets.length} ETIQUETAS ENVIADAS`); } catch (e) { wm.fail(e); } finally { setBusy(false); } }} testId="return-print-labels">
+              Imprimir las {result.pallets.length} etiquetas
+            </BigButton>
+          </>
+        )}
         <div className="mt-2 text-center text-lg text-slate-300">
           {fmtQty(result.qty_base)} pzas de {result.sku.code}{result.incident ? ` · incidencia ${result.incident}` : ''}
         </div>

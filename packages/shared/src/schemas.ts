@@ -694,6 +694,8 @@ export const zQuickReturn = z.object({
   customer_code: zCode.optional(),
   original_order_number: z.string().trim().max(60).optional(),
   note: z.string().trim().max(300).optional(),
+  /** whole pallets coming back: this many NEW pallets are born at the returns area (available, with put-away; damaged → DAMAGED). to_lpn_code/scanned not needed. */
+  new_pallets: z.number().int().min(0).max(200).default(0),
 });
 export type QuickReturnInput = z.infer<typeof zQuickReturn>;
 
@@ -703,7 +705,10 @@ export const zReceiveReturnLine = z.object({
   qty: zQty,
   uom_code: zUom,
   returns_location_barcode: zBarcode,
+  /** the quantity arrives on this many pallets: the line is split, one pallet each */
+  pallets: z.number().int().min(1).max(200).default(1),
 });
+export const zReopenReturn = z.object({ reason: zReason });
 export const zClassifyReturnLine = z.object({
   return_id: zUuid,
   line_id: zUuid,

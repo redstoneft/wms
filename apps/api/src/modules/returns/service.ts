@@ -34,7 +34,41 @@ export async function createReturn(tx: Tx, ctx: ActorContext, input: { customer_
   return r;
 }
 
-export async function receiveReturnLine(tx: Tx, ctx: ActorContext, input: { return_id: string; line_id: string; qty: bigint; uom_code?: UomCode; returns_location_barcode: string }) {
+/** Splits `total` into `n` parts, remainder on the first ones. */
+function splitQty(total: bigint, n: number): bigint[] {
+  const each = total / BigInt(n);
+  let rest = total - each * BigInt(n);
+  return Array.from({ length: n }, () => { const q = each + (rest > 0n ? 1n : 0n); if (rest > 0n) rest -= 1n; return q; });
+}
+
+/**
+ * A return line received on several pallets: the line is split into one line per pallet (expected and received
+ * proportional), each with its own RETURN pallet at the returns location, so each pallet is classified on its own.
+ */
+export async function receiveReturnLine(tx: Tx, ctx: ActorContext, input: { return_id: string; line_id: string; qty: bigint; uom_code?: UomCode; returns_location_barcode: string; pallets?: number }) {
+  const n = input.pallets ?? 1;
+  if (n <= 1) return receiveReturnLineOne(tx, ctx, input);
+  const line = await tx.return_lines.findUnique({ where: { id: input.line_id } });
+  if (!line || line.return_id !== input.return_id) throw new NotFoundError('return line', input.line_id);
+  if (line.lpn_id) throw new RuleError('LINE_HAS_PALLET', 'Esta línea ya tiene tarima; recibe el resto como líneas nuevas o en una sola tarima');
+  const { base } = await toBaseQty(tx, line.sku_id, input.qty, input.uom_code ?? 'PIECE');
+  if (base < BigInt(n)) throw new RuleError('QTY_LT_PALLETS', `${base} piezas no se pueden repartir en ${n} tarimas`);
+  const parts = splitQty(base, n);
+  const expParts = splitQty(line.expected_qty, n);
+  const pallets: { code: string; qty: string; line_id: string }[] = [];
+  let last: Awaited<ReturnType<typeof receiveReturnLineOne>> | null = null;
+  for (let i = 0; i < n; i++) {
+    let lineId = line.id;
+    if (i === 0) await tx.return_lines.update({ where: { id: line.id }, data: { expected_qty: expParts[0]! } });
+    else lineId = (await tx.return_lines.create({ data: { return_id: line.return_id, sku_id: line.sku_id, expected_qty: expParts[i]!, notes: line.notes } })).id;
+    last = await receiveReturnLineOne(tx, ctx, { ...input, line_id: lineId, qty: parts[i]!, uom_code: 'PIECE' });
+    pallets.push({ code: last.lpn_code, qty: last.qty.toString(), line_id: lineId });
+  }
+  await audit(tx, ctx, { action: 'return.receive_multi', entity_type: 'return', entity_id: input.return_id, after: { sku: last!.sku, total: base.toString(), pallets } });
+  return { ...last!, qty: base, pallets };
+}
+
+async function receiveReturnLineOne(tx: Tx, ctx: ActorContext, input: { return_id: string; line_id: string; qty: bigint; uom_code?: UomCode; returns_location_barcode: string }) {
   const rrows = await tx.$queryRaw<{ id: string; status: string }[]>`SELECT id, status FROM returns WHERE id = ${input.return_id}::uuid FOR UPDATE`;
   const ret = rrows[0];
   if (!ret) throw new NotFoundError('return', input.return_id);
@@ -54,7 +88,7 @@ export async function receiveReturnLine(tx: Tx, ctx: ActorContext, input: { retu
   await tx.return_lines.update({ where: { id: line.id }, data: { received_qty: { increment: base }, lpn_id: lpn.id } });
   await tx.returns.update({ where: { id: ret.id }, data: { status: 'RECEIVED', received_by: ctx.userId, received_at: new Date() } });
   await audit(tx, ctx, { action: 'return.receive', entity_type: 'return', entity_id: ret.id, after: { sku: line.sku.code, qty: base.toString(), lpn: lpn.code } });
-  return { lpn_code: lpn.code, sku: line.sku.code, qty: base };
+  return { lpn_code: lpn.code, sku: line.sku.code, qty: base, pallets: [] as { code: string; qty: string; line_id: string }[] };
 }
 
 export async function classifyReturnLine(tx: Tx, ctx: ActorContext, input: { return_id: string; line_id: string; disposition: ReturnDisposition; qty: bigint; reason: string }) {
@@ -115,7 +149,26 @@ export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnI
   let lpn: LpnRow;
   let locationCode: string;
   let status: 'AVAILABLE' | 'DAMAGED';
-  if (!input.damaged) {
+  const extraPallets: LpnRow[] = [];
+  const palletQtys: bigint[] = [];
+  if ((input.new_pallets ?? 0) > 0) {
+    // whole pallets coming back: N new pallets born at the returns area (available with put-away, or damaged)
+    const n = input.new_pallets!;
+    if (base < BigInt(n)) throw new RuleError('QTY_LT_PALLETS', `${base} piezas no se pueden repartir en ${n} tarimas`);
+    const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true, NOT: { code: 'ESCUELA' } }, orderBy: { created_at: 'asc' } }));
+    if (!wh) throw new RuleError('NO_WAREHOUSE', 'No hay almacén configurado');
+    const ret = await tx.locations.findFirst({ where: { warehouse_id: wh.id, location_type: 'RETURNS', is_active: true }, orderBy: { code: 'asc' } });
+    if (!ret) throw new RuleError('NO_RETURNS_LOCATION', 'El almacén no tiene un área de devoluciones (RETURNS)');
+    for (const q of splitQty(base, n)) {
+      const created = await createLpn(tx, ctx, { warehouse_id: wh.id, lpn_type: input.damaged ? 'RETURN' : 'STORAGE', location_id: ret.id });
+      await tx.lpns.update({ where: { id: created.id }, data: { status: 'STORED' } });
+      extraPallets.push({ ...created, status: 'STORED' });
+      palletQtys.push(q);
+    }
+    lpn = extraPallets[0]!;
+    locationCode = ret.code;
+    status = input.damaged ? 'DAMAGED' : 'AVAILABLE';
+  } else if (!input.damaged) {
     if (!input.to_lpn_code) throw new RuleError('PALLET_REQUIRED', 'Elige la tarima donde va la devolución');
     lpn = await lockLpnByCode(tx, input.to_lpn_code);
     if (lpn.status !== 'STORED' || !lpn.current_location_id) throw new RuleError('LPN_STATUS', `La tarima ${lpn.code} está ${lpn.status}; elige una tarima guardada en rack`);
@@ -156,14 +209,26 @@ export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnI
       lines: { create: [{ sku_id: sku.id, expected_qty: base, received_qty: base, disposition: input.damaged ? 'DAMAGED' : 'RESTOCK', disposition_qty: base, lpn_id: lpn.id, inspected_by: ctx.userId, notes: input.note ?? null }] },
     },
   });
-  const movementId = await createInventory(tx, ctx, { movement_type: 'RETURN_RECEIPT', to_lpn: lpn, sku_id: sku.id, qty: base, uom_code: input.uom_code, uom_qty: input.qty, status, location_id: lpn.current_location_id!, reference_type: 'return', reference_id: r.id, order_id: order?.id ?? null, reason });
+  let movementId: bigint;
+  const pallets: { code: string; qty: string; putaway_task: string | null }[] = [];
+  if (extraPallets.length) {
+    movementId = 0n;
+    for (let i = 0; i < extraPallets.length; i++) {
+      const p = extraPallets[i]!;
+      movementId = await createInventory(tx, ctx, { movement_type: 'RETURN_RECEIPT', to_lpn: p, sku_id: sku.id, qty: palletQtys[i]!, uom_code: 'PIECE', uom_qty: palletQtys[i]!, status, location_id: p.current_location_id!, reference_type: 'return', reference_id: r.id, order_id: order?.id ?? null, reason });
+      const task = input.damaged ? null : await createPutawayTask(tx, ctx, p, { allowStoredLocation: true });
+      pallets.push({ code: p.code, qty: palletQtys[i]!.toString(), putaway_task: task?.id ?? null });
+    }
+  } else {
+    movementId = await createInventory(tx, ctx, { movement_type: 'RETURN_RECEIPT', to_lpn: lpn, sku_id: sku.id, qty: base, uom_code: input.uom_code, uom_qty: input.qty, status, location_id: lpn.current_location_id!, reference_type: 'return', reference_id: r.id, order_id: order?.id ?? null, reason });
+  }
   let incident: string | null = null;
   if (input.damaged) {
     const inc = await createIncident(tx, ctx, { incident_type: 'DAMAGED', severity: 'MEDIUM', title: `Devolución dañada: ${sku.code} x${base}`, description: reason, entity_type: 'return', entity_id: r.id, sku_id: sku.id, lpn_id: lpn.id, location_id: lpn.current_location_id, order_id: order?.id ?? null, qty: base });
     incident = inc.incident_number;
   }
-  await audit(tx, ctx, { action: 'return.quick', entity_type: 'return', entity_id: r.id, after: { number: r.return_number, sku: sku.code, qty: base.toString(), lpn: lpn.code, location: locationCode, damaged: input.damaged, customer: customer?.code ?? null, order: order?.order_number ?? null, movement_id: movementId.toString() }, reason });
-  return { return_number: r.return_number, sku: { code: sku.code, description: sku.description }, qty_base: base, lpn: lpn.code, location: locationCode, damaged: input.damaged, incident };
+  await audit(tx, ctx, { action: 'return.quick', entity_type: 'return', entity_id: r.id, after: { number: r.return_number, sku: sku.code, qty: base.toString(), lpn: lpn.code, location: locationCode, damaged: input.damaged, customer: customer?.code ?? null, order: order?.order_number ?? null, movement_id: movementId.toString(), pallets }, reason });
+  return { return_number: r.return_number, sku: { code: sku.code, description: sku.description }, qty_base: base, lpn: lpn.code, location: locationCode, damaged: input.damaged, incident, pallets };
 }
 
 export async function closeReturn(tx: Tx, ctx: ActorContext, returnId: string) {
@@ -173,4 +238,16 @@ export async function closeReturn(tx: Tx, ctx: ActorContext, returnId: string) {
   await tx.returns.update({ where: { id: returnId }, data: { status: 'CLOSED', closed_at: new Date() } });
   await audit(tx, ctx, { action: 'return.close', entity_type: 'return', entity_id: returnId });
   return { ok: true };
+}
+
+/** Admin: a closed return is opened again (more product to receive, or a pallet to reclassify). Audited with the reason. */
+export async function reopenReturn(tx: Tx, ctx: ActorContext, returnId: string, reason: string) {
+  const r = await tx.returns.findUnique({ where: { id: returnId }, include: { lines: true } });
+  if (!r) throw new NotFoundError('return', returnId);
+  if (r.status !== 'CLOSED') throw new RuleError('RETURN_STATUS', `La devolución ${r.return_number} está ${r.status}; solo se reabren devoluciones cerradas`);
+  const received = r.lines.some((l) => l.received_qty > 0n);
+  const status = received ? 'INSPECTING' : 'OPEN';
+  await tx.returns.update({ where: { id: returnId }, data: { status, closed_at: null } });
+  await audit(tx, ctx, { action: 'return.reopen', entity_type: 'return', entity_id: returnId, before: { status: 'CLOSED' }, after: { status }, reason });
+  return { id: returnId, return_number: r.return_number, status };
 }

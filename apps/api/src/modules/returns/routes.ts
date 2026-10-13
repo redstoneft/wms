@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zClassifyReturnLine, zCreateReturn, zQuickReturn, zReceiveReturnLine, zUuid } from '@wms/shared';
+import { zClassifyReturnLine, zCreateReturn, zQuickReturn, zReceiveReturnLine, zUuid, zReopenReturn } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { trainingWhere } from '../../lib/training-scope.js';
 import { NotFoundError } from '../../errors.js';
@@ -47,6 +47,11 @@ export async function returnRoutes(app: FastifyInstance) {
     reply.status(r.status);
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
+  });
+  app.post('/returns/:id/reopen', { preHandler: app.requirePermission('returns.reopen') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const body = zReopenReturn.parse(req.body);
+    return withTx((tx) => svc.reopenReturn(tx, req.actor!, id, body.reason));
   });
   app.post('/returns/:id/close', { preHandler: perm }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

@@ -55,3 +55,42 @@ describe('quick return', () => {
     await expectReconciled();
   });
 });
+
+describe('whole pallets returned, and reopening a closed return (admin)', () => {
+  it('N new pallets are born at the returns area, available with put-away; a closed return can be reopened by an admin only', async () => {
+    const adminC = await userWithRoles('qradm', ['ADMIN']);
+    const enroll = await adminC.post('/auth/mfa/enroll');
+    const { totp } = await import('../../src/lib/crypto.js');
+    expect((await adminC.post('/auth/mfa/enroll/confirm', { code: totp(enroll.body.secret) })).status).toBe(200);
+    const r = await recv.post('/returns/quick', { sku_code: f.skus[1]!.code, qty: 100, new_pallets: 3, note: 'regresaron 3 tarimas' }, idem());
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.pallets.map((p: { qty: string }) => p.qty)).toEqual(['34', '33', '33']);
+    expect(r.body.pallets.every((p: { putaway_task: string | null }) => !!p.putaway_task), JSON.stringify(r.body.pallets)).toBe(true);
+    const lpns = await sql<{ status: string; lpn_type: string; loc: string; bst: string; qty: bigint }>(`SELECT l.status, l.lpn_type, loc.location_type AS loc, b.status AS bst, b.qty FROM lpns l JOIN locations loc ON loc.id = l.current_location_id JOIN inventory_balances b ON b.lpn_id = l.id AND b.qty > 0 WHERE l.code IN (${r.body.pallets.map((p: { code: string }) => `'${p.code}'`).join(',')}) ORDER BY b.qty DESC`);
+    expect(lpns.length).toBe(3);
+    expect(lpns.every((l) => l.status === 'STORED' && l.lpn_type === 'STORAGE' && l.loc === 'RETURNS' && l.bst === 'AVAILABLE'), JSON.stringify(lpns, (k, v) => (typeof v === 'bigint' ? v.toString() : v))).toBe(true); // the returns area of the default warehouse, like damaged quick returns
+    const ret = await sql<{ id: string; status: string }>(`SELECT id, status FROM returns WHERE return_number = '${r.body.return_number}'`);
+    expect(ret[0]!.status).toBe('CLOSED');
+    expect((await sup.post(`/returns/${ret[0]!.id}/reopen`, { reason: 'prueba' })).status).toBe(403);
+    const ro = await adminC.post(`/returns/${ret[0]!.id}/reopen`, { reason: 'faltó una tarima' });
+    expect(ro.status, JSON.stringify(ro.body)).toBe(200);
+    expect(ro.body.status).toBe('INSPECTING');
+    // too few pieces for the pallets is refused
+    const bad = await recv.post('/returns/quick', { sku_code: f.skus[1]!.code, qty: 2, new_pallets: 3 }, idem());
+    expect(bad.status).toBe(422);
+    expect(bad.body.error).toBe('QTY_LT_PALLETS');
+    await expectReconciled();
+  });
+  it('a formal return line received on 2 pallets is split into 2 lines with one pallet each', async () => {
+    const c = await sup.post('/returns', { customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 50, uom_code: 'PIECE' }] });
+    expect(c.status, JSON.stringify(c.body)).toBe(201);
+    const line = c.body.lines[0];
+    const rc = await sup.post('/returns/receive', { return_id: c.body.id, line_id: line.id, qty: 50, uom_code: 'PIECE', returns_location_barcode: f.returns.barcode, pallets: 2 }, idem());
+    expect(rc.status, JSON.stringify(rc.body)).toBe(200);
+    expect(rc.body.pallets.length).toBe(2);
+    const lines = await sql<{ expected_qty: bigint; received_qty: bigint; lpn_id: string | null }>(`SELECT expected_qty, received_qty, lpn_id FROM return_lines WHERE return_id = '${c.body.id}' ORDER BY received_qty DESC`);
+    expect(lines.map((l) => [l.expected_qty, l.received_qty])).toEqual([[25n, 25n], [25n, 25n]]);
+    expect(lines.every((l) => !!l.lpn_id)).toBe(true);
+    await expectReconciled();
+  });
+});

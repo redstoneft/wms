@@ -58,6 +58,7 @@ export const PERMISSIONS = {
   'shipments.release': 'Release a shipment (all validations must pass)',
   // returns, incidents
   'returns.manage': 'Receive and classify returns',
+  'returns.reopen': 'Reopen a closed return so more product can be received or reclassified (admin only)',
   'incidents.read': 'View incidents',
   'incidents.create': 'Report incidents',
   'incidents.resolve': 'Resolve/close incidents',
@@ -90,7 +91,7 @@ const OPERATOR_COMMON: Permission[] = [
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ADMIN: ALL_PERMISSIONS,
-  SUPERVISOR: ALL_PERMISSIONS.filter((p) => p !== 'users.manage' && p !== 'settings.manage' && p !== 'orders.force_deliver' && p !== 'orders.adjust' && p !== 'orders.reopen' && p !== 'receiving.cancel_received' && p !== 'receiving.reopen'),
+  SUPERVISOR: ALL_PERMISSIONS.filter((p) => p !== 'users.manage' && p !== 'settings.manage' && p !== 'orders.force_deliver' && p !== 'orders.adjust' && p !== 'orders.reopen' && p !== 'receiving.cancel_received' && p !== 'receiving.reopen' && p !== 'returns.reopen'),
   RECEIVING: [
     ...OPERATOR_COMMON,
     'containers.read',
