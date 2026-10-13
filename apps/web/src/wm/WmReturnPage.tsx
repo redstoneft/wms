@@ -2,6 +2,7 @@
 // product (chosen from the list, confirmed by scanning the pallet or its location at the rack). Damaged pieces go to
 // the returns area. The return document is created closed; the office sees it in Devoluciones.
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { UomCode } from '@wms/shared';
 import { api } from '../api/client';
 import { inventoryApi } from '../api/inventory';
@@ -37,6 +38,9 @@ function Flow() {
   const [note, setNote] = useState('');
   // whole pallets coming back: how many NEW pallets are born at the returns area (0 = onto an existing pallet)
   const [newPallets, setNewPallets] = useState(0);
+  // receiving onto an open return (reopened by the admin, or a formal one) instead of creating a new closed one
+  const [onReturn, setOnReturn] = useState<{ id: string; return_number: string; customer: string | null } | null>(null);
+  const openRet = useQuery({ queryKey: ['returns-open'], queryFn: returnsApi.open, refetchInterval: 30_000 });
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<QuickReturnResult | null>(null);
   const pieces = qty && sku ? Number(qty.qty) * Number(sku.uoms.find((u) => u.uom_code === qty.uom)?.base_qty ?? 1) : 0;
@@ -79,7 +83,8 @@ function Flow() {
     if (!sku || !qty) return;
     setBusy(true);
     try {
-      const r = await returnsApi.quick({ sku_code: sku.code, qty: qty.qty, uom_code: qty.uom, damaged, to_lpn_code: damaged || newPallets > 0 ? undefined : selected, scanned, note: note.trim() || undefined, new_pallets: newPallets > 0 ? newPallets : undefined }, api.newKey());
+      const r = await returnsApi.quick({ sku_code: sku.code, qty: qty.qty, uom_code: qty.uom, damaged, to_lpn_code: damaged || newPallets > 0 ? undefined : selected, scanned, note: note.trim() || undefined, new_pallets: newPallets > 0 ? newPallets : undefined, return_id: onReturn?.id }, api.newKey());
+      void openRet.refetch();
       setResult(r.data);
       setStep('DONE');
       wm.ok(r.replayed ? 'YA REGISTRADA' : r.data.pallets.length ? `DEVOLUCIÓN ${r.data.return_number} · ${r.data.pallets.length} TARIMA(S) NUEVA(S) EN ${r.data.location}` : damaged ? `DEVOLUCIÓN ${r.data.return_number} · A DEVOLUCIONES ${r.data.location}` : `DEVOLUCIÓN ${r.data.return_number} · ${fmtQty(r.data.qty_base)} PZAS EN ${r.data.lpn}`);
@@ -89,14 +94,35 @@ function Flow() {
       setBusy(false);
     }
   };
-  const reset = () => { setStep('PRODUCT'); setSku(null); setQty(null); setDamaged(false); setOptions([]); setSelected(''); setNote(''); setNewPallets(0); setResult(null); };
+  const reset = () => { setStep('PRODUCT'); setSku(null); setQty(null); setDamaged(false); setOptions([]); setSelected(''); setNote(''); setNewPallets(0); setOnReturn(null); setResult(null); };
 
   if (step === 'PRODUCT')
     return (
       <div>
         <StepBar text="1 · ¿QUÉ PRODUCTO REGRESA?" />
+        {onReturn && (
+          <div className="mb-2 flex items-center justify-between rounded-2xl border-2 border-amber-400 bg-amber-900/40 px-3 py-2 text-sm text-amber-100" data-testid="return-on">
+            <span>Recibiendo sobre <b>{onReturn.return_number}</b>{onReturn.customer ? ` · ${onReturn.customer}` : ''}</span>
+            <button type="button" className="rounded-lg bg-slate-800 px-2 py-1 text-xs font-bold text-white" onClick={() => setOnReturn(null)}>quitar</button>
+          </div>
+        )}
         <ProductInput label="Escanea la pieza o la caja, o escribe clave o nombre" onPick={onProduct} disabled={busy} testId="return-product" />
-        <div className="mt-2 text-xs text-slate-400">Para una o dos piezas que regresan: van directo a la tarima que ya tiene ese producto. Queda registrada como devolución.</div>
+        <div className="mt-2 text-xs text-slate-400">{onReturn ? 'Lo que registres se agrega a esa devolución (no se crea una nueva).' : 'Para una o dos piezas que regresan: van directo a la tarima que ya tiene ese producto. Queda registrada como devolución.'}</div>
+        {!onReturn && (openRet.data?.length ?? 0) > 0 && (
+          <div className="mt-4" data-testid="returns-open">
+            <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Devoluciones abiertas · toca una para recibir sobre ella</div>
+            <ul className="grid gap-1">
+              {openRet.data!.map((r) => (
+                <li key={r.id}>
+                  <button type="button" className="w-full rounded-xl bg-slate-800 px-3 py-2 text-left" onClick={() => { setOnReturn({ id: r.id, return_number: r.return_number, customer: r.customer }); wm.ok(`RECIBIENDO SOBRE ${r.return_number}`); }}>
+                    <div className="font-mono text-base font-black">{r.return_number} <span className="text-xs font-normal text-slate-400">· {r.status}</span>{r.customer ? <span className="text-sm font-normal text-slate-300"> · {r.customer}</span> : null}</div>
+                    <div className="text-xs text-slate-300">{r.lines.map((l) => `${l.sku_code} ${fmtQty(l.received_qty)}/${fmtQty(l.expected_qty)}`).join(' · ')}{r.reason ? ` · ${r.reason}` : ''}</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     );
   if (step === 'QTY' && sku)
@@ -188,7 +214,7 @@ function Flow() {
   if (step === 'DONE' && result)
     return (
       <div>
-        <StepBar text={`DEVOLUCIÓN ${result.return_number} REGISTRADA`} />
+        <StepBar text={`DEVOLUCIÓN ${result.return_number} ${result.return_status === 'CLOSED' ? 'REGISTRADA' : 'ACTUALIZADA (sigue abierta)'}`} />
         <BigValue label={result.pallets.length ? `${result.pallets.length} tarima(s) nueva(s) en ${result.location}` : result.damaged ? 'Tarima nueva en devoluciones' : 'Agregado a la tarima'} value={result.pallets.length ? `${fmtQty(result.qty_base)} pzas de ${result.sku.code}` : `${result.lpn} · ${result.location}`} tone="ok" testId="return-done" />
         {result.pallets.length > 0 && (
           <>

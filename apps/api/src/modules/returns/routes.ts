@@ -22,6 +22,8 @@ export async function returnRoutes(app: FastifyInstance) {
     const lpns = await db.lpns.findMany({ where: { id: { in: r.lines.map((l) => l.lpn_id).filter((x): x is string => !!x) } }, select: { id: true, code: true, status: true } });
     return { ...r, lpns };
   });
+  /** The handheld lists the returns still open (every operator may receive onto them). */
+  app.get('/returns/open', { preHandler: perm }, async () => withTx((tx) => svc.openReturns(tx)));
   app.post('/returns', { preHandler: perm }, async (req, reply) => {
     const body = zCreateReturn.parse(req.body);
     const r = await withTx((tx) => svc.createReturn(tx, req.actor!, body));

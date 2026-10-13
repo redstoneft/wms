@@ -696,6 +696,8 @@ export const zQuickReturn = z.object({
   note: z.string().trim().max(300).optional(),
   /** whole pallets coming back: this many NEW pallets are born at the returns area (available, with put-away; damaged → DAMAGED). to_lpn_code/scanned not needed. */
   new_pallets: z.number().int().min(0).max(200).default(0),
+  /** receive onto an OPEN return (reopened or formal) instead of creating a new closed one: a line is added to it */
+  return_id: zUuid.optional(),
 });
 export type QuickReturnInput = z.infer<typeof zQuickReturn>;
 

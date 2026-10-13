@@ -13,6 +13,7 @@ export const returnsApi = {
   classify: (body: { return_id: string; line_id: string; disposition: string; qty: string; reason: string }, key: string) =>
     api.postIdem<{ disposition: string; qty: string; lpn_code: string; return_status: string; putaway_task: string | null }>('/returns/classify', body, key),
   /** quick return from the handheld; idempotent */
-  quick: (body: { sku_code: string; qty: string; uom_code?: string; damaged?: boolean; to_lpn_code?: string; scanned?: string; note?: string; new_pallets?: number }, key: string) => api.postIdem<QuickReturnResult>('/returns/quick', body, key),
+  open: () => api.get<{ id: string; return_number: string; status: string; customer: string | null; reason: string | null; created_at: string; lines: { sku_code: string; description: string; expected_qty: string; received_qty: string }[] }[]>('/returns/open'),
+  quick: (body: { sku_code: string; qty: string; uom_code?: string; damaged?: boolean; to_lpn_code?: string; scanned?: string; note?: string; new_pallets?: number; return_id?: string }, key: string) => api.postIdem<QuickReturnResult>('/returns/quick', body, key),
   close: (id: string) => api.post<{ ok: true }>(`/returns/${id}/close`),
 };

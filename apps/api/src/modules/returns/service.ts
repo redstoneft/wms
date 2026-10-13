@@ -143,7 +143,11 @@ export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnI
   if (input.customer_code && !customer) throw new NotFoundError('customer', input.customer_code);
   const order = input.original_order_number ? await tx.orders.findUnique({ where: { order_number: input.original_order_number } }) : null;
   if (input.original_order_number && !order) throw new NotFoundError('order', input.original_order_number);
-  const num = await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('RET', 'return_seq') AS n`;
+  // onto an existing open return (reopened by the admin, or a formal one): no new document, one more line
+  const existing = input.return_id ? await tx.$queryRaw<{ id: string; status: string; return_number: string; customer_id: string | null; original_order_id: string | null }[]>`SELECT id, status, return_number, customer_id, original_order_id FROM returns WHERE id = ${input.return_id}::uuid FOR UPDATE` : [];
+  if (input.return_id && !existing[0]) throw new NotFoundError('return', input.return_id);
+  if (existing[0] && existing[0].status === 'CLOSED') throw new RuleError('RETURN_CLOSED', `La devolución ${existing[0].return_number} está cerrada; pide al administrador que la reabra`);
+  const num = existing[0] ? [{ n: existing[0].return_number }] : await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('RET', 'return_seq') AS n`;
   const reason = input.note?.trim() || (input.damaged ? 'Devolución rápida (dañada)' : 'Devolución rápida');
 
   let lpn: LpnRow;
@@ -195,20 +199,30 @@ export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnI
     status = 'DAMAGED';
   }
 
-  const r = await tx.returns.create({
-    data: {
-      return_number: num[0]!.n,
-      customer_id: customer?.id ?? null,
-      original_order_id: order?.id ?? null,
-      reason,
-      status: 'CLOSED',
-      created_by: ctx.userId,
-      received_by: ctx.userId,
-      received_at: new Date(),
-      closed_at: new Date(),
-      lines: { create: [{ sku_id: sku.id, expected_qty: base, received_qty: base, disposition: input.damaged ? 'DAMAGED' : 'RESTOCK', disposition_qty: base, lpn_id: lpn.id, inspected_by: ctx.userId, notes: input.note ?? null }] },
-    },
-  });
+  const lineData = { sku_id: sku.id, expected_qty: base, received_qty: base, disposition: input.damaged ? 'DAMAGED' : 'RESTOCK', disposition_qty: base, lpn_id: lpn.id, inspected_by: ctx.userId, notes: input.note ?? null };
+  const r = existing[0]
+    ? await tx.returns.update({ where: { id: existing[0].id }, data: { status: 'INSPECTING', received_by: ctx.userId, received_at: new Date(), lines: { create: [lineData] } } })
+    : await tx.returns.create({
+        data: {
+          return_number: num[0]!.n,
+          customer_id: customer?.id ?? null,
+          original_order_id: order?.id ?? null,
+          reason,
+          status: 'CLOSED',
+          created_by: ctx.userId,
+          received_by: ctx.userId,
+          received_at: new Date(),
+          closed_at: new Date(),
+          lines: { create: [lineData] },
+        },
+      });
+  // extra pallets of a multi-pallet quick return each get their own line, so each pallet can be classified alone
+  if (extraPallets.length > 1) {
+    await tx.return_lines.deleteMany({ where: { return_id: r.id, lpn_id: lpn.id, sku_id: sku.id, received_qty: base } });
+    for (let i = 0; i < extraPallets.length; i++) {
+      await tx.return_lines.create({ data: { ...lineData, return_id: r.id, lpn_id: extraPallets[i]!.id, expected_qty: palletQtys[i]!, received_qty: palletQtys[i]!, disposition_qty: palletQtys[i]! } });
+    }
+  }
   let movementId: bigint;
   const pallets: { code: string; qty: string; putaway_task: string | null }[] = [];
   if (extraPallets.length) {
@@ -228,7 +242,7 @@ export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnI
     incident = inc.incident_number;
   }
   await audit(tx, ctx, { action: 'return.quick', entity_type: 'return', entity_id: r.id, after: { number: r.return_number, sku: sku.code, qty: base.toString(), lpn: lpn.code, location: locationCode, damaged: input.damaged, customer: customer?.code ?? null, order: order?.order_number ?? null, movement_id: movementId.toString(), pallets }, reason });
-  return { return_number: r.return_number, sku: { code: sku.code, description: sku.description }, qty_base: base, lpn: lpn.code, location: locationCode, damaged: input.damaged, incident, pallets };
+  return { return_number: r.return_number, return_status: r.status, sku: { code: sku.code, description: sku.description }, qty_base: base, lpn: lpn.code, location: locationCode, damaged: input.damaged, incident, pallets };
 }
 
 export async function closeReturn(tx: Tx, ctx: ActorContext, returnId: string) {
@@ -250,4 +264,10 @@ export async function reopenReturn(tx: Tx, ctx: ActorContext, returnId: string, 
   await tx.returns.update({ where: { id: returnId }, data: { status, closed_at: null } });
   await audit(tx, ctx, { action: 'return.reopen', entity_type: 'return', entity_id: returnId, before: { status: 'CLOSED' }, after: { status }, reason });
   return { id: returnId, return_number: r.return_number, status };
+}
+
+/** Open returns for the handheld (reopened by the admin or formal ones still being received): number, customer, lines. */
+export async function openReturns(tx: Tx) {
+  const rows = await tx.returns.findMany({ where: { status: { not: 'CLOSED' }, is_training: false }, include: { customer: { select: { code: true, name: true } }, lines: { include: { sku: { select: { code: true, description: true } } } } }, orderBy: { created_at: 'desc' }, take: 50 });
+  return rows.map((r) => ({ id: r.id, return_number: r.return_number, status: r.status, customer: r.customer?.name ?? null, reason: r.reason, created_at: r.created_at, lines: r.lines.map((l) => ({ sku_code: l.sku.code, description: l.sku.description, expected_qty: l.expected_qty.toString(), received_qty: l.received_qty.toString() })) }));
 }

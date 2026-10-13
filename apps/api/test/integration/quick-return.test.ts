@@ -94,3 +94,21 @@ describe('whole pallets returned, and reopening a closed return (admin)', () => 
     await expectReconciled();
   });
 });
+
+describe('receiving onto an open return from the handheld', () => {
+  it('lists open returns and adds a line to the chosen one instead of creating a new closed return', async () => {
+    const c = await sup.post('/returns', { customer_code: f.customer.code, reason: 'reabierta', lines: [{ sku_code: f.skus[0]!.code, qty: 10, uom_code: 'PIECE' }] });
+    expect(c.status).toBe(201);
+    const open = await recv.get('/returns/open');
+    expect(open.status).toBe(200);
+    expect(open.body.some((r: { id: string }) => r.id === c.body.id)).toBe(true);
+    const r = await recv.post('/returns/quick', { sku_code: f.skus[1]!.code, qty: 40, new_pallets: 2, return_id: c.body.id, note: 'dos tarimas más' }, idem());
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.return_number).toBe(c.body.return_number);
+    expect(r.body.return_status).toBe('INSPECTING');
+    const lines = await sql<{ n: bigint }>(`SELECT count(*)::bigint AS n FROM return_lines WHERE return_id = '${c.body.id}' AND lpn_id IS NOT NULL`);
+    expect(Number(lines[0]!.n)).toBe(2);
+    expect((await sql<{ n: bigint }>(`SELECT count(*)::bigint AS n FROM returns WHERE return_number = '${c.body.return_number}'`))[0]!.n).toBe(1n);
+    await expectReconciled();
+  });
+});

@@ -419,6 +419,7 @@ export interface PutawayOption {
 }
 export interface QuickReturnResult {
   return_number: string;
+  return_status: string;
   sku: { code: string; description: string };
   qty_base: Qty;
   lpn: string;
