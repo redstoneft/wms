@@ -52,7 +52,7 @@ export async function returnRoutes(app: FastifyInstance) {
   });
   app.post('/returns/split-pallet', { preHandler: perm }, async (req, reply) => {
     const body = zSplitReturnPallet.parse(req.body);
-    const r = await runIdempotent(req.actor!, fingerprint('POST', '/returns/split-pallet', body), async (tx) => ({ status: 200, body: await svc.splitReturnPallet(tx, req.actor!, body) }));
+    const r = await runIdempotent(req.actor!, fingerprint('POST', '/returns/split-pallet', body), async (tx) => ({ status: 200, body: await svc.splitReturnPallet(tx, req.actor!, { ...body, parts: body.parts?.map((q) => BigInt(q)) }) }));
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
   });

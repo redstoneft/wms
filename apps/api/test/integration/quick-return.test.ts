@@ -121,9 +121,12 @@ describe('splitting a pallet of an open return into several, each with its own p
     // bind the pallet to the return line as if the pieces had been received onto it
     await sql(`UPDATE return_lines SET lpn_id = '${p.id}', received_qty = 90, disposition = 'RESTOCK', disposition_qty = 90 WHERE return_id = '${c.body.id}'`);
     await sql(`UPDATE returns SET status = 'INSPECTING' WHERE id = '${c.body.id}'`);
-    const r = await recv.post('/returns/split-pallet', { return_id: c.body.id, lpn_code: p.code, pallets: 3 }, idem());
+    const bad = await recv.post('/returns/split-pallet', { return_id: c.body.id, lpn_code: p.code, parts: ['50', '50'] }, idem());
+    expect(bad.status).toBe(422);
+    expect(bad.body.error).toBe('PARTS_SUM');
+    const r = await recv.post('/returns/split-pallet', { return_id: c.body.id, lpn_code: p.code, parts: ['40', '30', '20'] }, idem());
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body.pallets.map((x: { qty: string }) => x.qty)).toEqual(['30', '30', '30']);
+    expect(r.body.pallets.map((x: { qty: string }) => x.qty)).toEqual(['40', '30', '20']);
     expect(r.body.pallets.every((x: { putaway_task_id: string | null }) => !!x.putaway_task_id)).toBe(true);
     const lines = await sql<{ received_qty: bigint; lpn_id: string }>(`SELECT received_qty, lpn_id FROM return_lines WHERE return_id = '${c.body.id}'`);
     expect(lines.length).toBe(3);

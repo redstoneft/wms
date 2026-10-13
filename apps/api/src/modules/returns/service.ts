@@ -269,7 +269,7 @@ export async function reopenReturn(tx: Tx, ctx: ActorContext, returnId: string, 
 
 /** Open returns for the handheld (reopened by the admin or formal ones still being received): number, customer, lines. */
 export async function openReturns(tx: Tx) {
-  const rows = await tx.returns.findMany({ where: { status: { not: 'CLOSED' }, is_training: false }, include: { customer: { select: { code: true, name: true } }, lines: { include: { sku: { select: { code: true, description: true } } } } }, orderBy: { created_at: 'desc' }, take: 50 });
+  const rows = await tx.returns.findMany({ where: { status: { not: 'CLOSED' }, is_training: false }, include: { customer: { select: { code: true, name: true } }, lines: { include: { sku: { select: { code: true, description: true, uoms: { where: { uom_code: 'CASE' }, select: { base_qty: true } } } } } } }, orderBy: { created_at: 'desc' }, take: 50 });
   const lpnIds = rows.flatMap((r) => r.lines.map((l) => l.lpn_id).filter((x): x is string => !!x));
   const lpns = await tx.lpns.findMany({ where: { id: { in: lpnIds } }, select: { id: true, code: true, status: true, current_location_id: true } });
   const tasks = await tx.putaway_tasks.findMany({ where: { lpn_id: { in: lpnIds }, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, select: { id: true, lpn_id: true, suggested_location_id: true }, orderBy: { created_at: 'desc' } });
@@ -283,7 +283,7 @@ export async function openReturns(tx: Tx) {
     lines: r.lines.map((l) => {
       const p = l.lpn_id ? byId.get(l.lpn_id) : null;
       const t = p ? taskByLpn.get(p.id) : undefined;
-      return { id: l.id, sku_code: l.sku.code, description: l.sku.description, expected_qty: l.expected_qty.toString(), received_qty: l.received_qty.toString(), lpn: p ? { code: p.code, status: p.status, location: p.current_location_id ? (locs.get(p.current_location_id) ?? null) : null, putaway_task_id: t?.id ?? null, suggested: t?.suggested_location_id ? (locs.get(t.suggested_location_id) ?? null) : null } : null };
+      return { id: l.id, sku_code: l.sku.code, description: l.sku.description, case_qty: l.sku.uoms[0]?.base_qty?.toString() ?? null, expected_qty: l.expected_qty.toString(), received_qty: l.received_qty.toString(), lpn: p ? { code: p.code, status: p.status, location: p.current_location_id ? (locs.get(p.current_location_id) ?? null) : null, putaway_task_id: t?.id ?? null, suggested: t?.suggested_location_id ? (locs.get(t.suggested_location_id) ?? null) : null } : null };
     }),
   }));
 }
@@ -293,7 +293,7 @@ export async function openReturns(tx: Tx) {
  * evenly into N pallets at the same spot, every pallet (the original included) gets a put-away task so the operator
  * chooses where each one goes, and the return line becomes one line per pallet.
  */
-export async function splitReturnPallet(tx: Tx, ctx: ActorContext, input: { return_id: string; lpn_code: string; pallets: number }) {
+export async function splitReturnPallet(tx: Tx, ctx: ActorContext, input: { return_id: string; lpn_code: string; pallets?: number; parts?: bigint[] }) {
   const rrows = await tx.$queryRaw<{ id: string; status: string; return_number: string }[]>`SELECT id, status, return_number FROM returns WHERE id = ${input.return_id}::uuid FOR UPDATE`;
   const ret = rrows[0];
   if (!ret) throw new NotFoundError('return', input.return_id);
@@ -305,11 +305,21 @@ export async function splitReturnPallet(tx: Tx, ctx: ActorContext, input: { retu
   const bal = await tx.inventory_balances.findFirst({ where: { lpn_id: lpn.id, sku_id: line.sku_id, qty: { gt: 0n }, status: { in: ['AVAILABLE', 'QUARANTINE', 'DAMAGED'] } }, orderBy: { qty: 'desc' } });
   if (!bal || bal.status !== 'AVAILABLE') throw new RuleError('NOT_AVAILABLE', `La tarima ${lpn.code} no tiene ${line.sku.code} disponible para repartir (está ${bal?.status ?? 'vacía'})`);
   const total = bal.qty;
-  if (total < BigInt(input.pallets)) throw new RuleError('QTY_LT_PALLETS', `${total} piezas no se pueden repartir en ${input.pallets} tarimas`);
-  const parts = splitQty(total, input.pallets);
+  let parts: bigint[];
+  if (input.parts && input.parts.length) {
+    parts = input.parts.map((q) => BigInt(q));
+    if (parts.some((q) => q <= 0n)) throw new RuleError('INVALID_QTY', 'Cada tarima debe llevar al menos una pieza');
+    const sum = parts.reduce((a, b) => a + b, 0n);
+    if (sum !== total) throw new RuleError('PARTS_SUM', `Las tarimas suman ${sum} y la tarima tiene ${total} de ${line.sku.code}`, { total: total.toString(), sum: sum.toString() });
+  } else {
+    const n = input.pallets ?? 2;
+    if (total < BigInt(n)) throw new RuleError('QTY_LT_PALLETS', `${total} piezas no se pueden repartir en ${n} tarimas`);
+    parts = splitQty(total, n);
+  }
+  const nParts = parts.length;
   const pallets: { code: string; qty: string; putaway_task_id: string | null; suggested: string | null; line_id: string }[] = [];
   // the original keeps the first part; each other part goes to a new pallet (same spot) via the ledger split
-  for (let i = 1; i < input.pallets; i++) {
+  for (let i = 1; i < nParts; i++) {
     const r = await splitPallet(tx, ctx, { from_lpn_code: lpn.code, sku_code: line.sku.code, qty: parts[i]!, uom_code: 'PIECE' });
     const newLpn = await lockLpnByCode(tx, r.to_lpn);
     const task = await createPutawayTask(tx, ctx, newLpn, { allowStoredLocation: true });

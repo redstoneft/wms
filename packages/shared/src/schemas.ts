@@ -712,7 +712,14 @@ export const zReceiveReturnLine = z.object({
 });
 export const zReopenReturn = z.object({ reason: zReason });
 /** A pallet of an open return that is really several: split it evenly, every pallet gets a put-away task to choose its spot. */
-export const zSplitReturnPallet = z.object({ return_id: zUuid, lpn_code: z.string().trim().min(1).max(30), pallets: z.number().int().min(2).max(50) });
+export const zSplitReturnPallet = z.object({
+  return_id: zUuid,
+  lpn_code: z.string().trim().min(1).max(30),
+  /** equal split into this many pallets… */
+  pallets: z.number().int().min(2).max(50).optional(),
+  /** …or the pieces each pallet keeps (first = the original pallet); the sum must be what the pallet holds */
+  parts: z.array(zQty).min(2).max(50).optional(),
+}).refine((v) => v.pallets || v.parts, { message: 'pallets o parts' });
 export const zClassifyReturnLine = z.object({
   return_id: zUuid,
   line_id: zUuid,
