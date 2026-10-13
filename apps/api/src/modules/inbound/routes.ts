@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReason, zReceiveScan, zReceiveUndo, zUuid } from '@wms/shared';
+import { zCloseReceipt, zContainerTransition, zCreateContainer, zCreateReceipt, zReason, zReceiveScan, zReceiveUndo, zUuid, zReopenReceipt } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { includeTraining, trainingWhere } from '../../lib/training-scope.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
@@ -173,6 +173,11 @@ export async function inboundRoutes(app: FastifyInstance) {
     const id = zUuid.parse((req.params as { id: string }).id);
     const body = z.object({ reason: zReason }).parse(req.body);
     return withTx((tx) => svc.cancelReceipt(tx, req.actor!, id, body.reason));
+  });
+  app.post('/receipts/:id/reopen', { preHandler: app.requirePermission('receiving.reopen') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const body = zReopenReceipt.parse(req.body);
+    return withTx((tx) => svc.reopenReceipt(tx, req.actor!, id, body.reason));
   });
   app.post('/receipts/:id/close', { preHandler: app.requirePermission('receiving.close') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);

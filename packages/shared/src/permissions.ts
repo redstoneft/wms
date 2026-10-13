@@ -21,6 +21,7 @@ export const PERMISSIONS = {
   'receiving.scan': 'Receive product by scanning (creates LPNs and inventory)',
   'receiving.close': 'Close receipts',
   'receiving.cancel_received': 'Cancel a receipt that already has pallets: its inventory is reverted (admin only)',
+  'receiving.reopen': 'Reopen a completed or closed receipt so more product can be received on it (admin only)',
   'lpn.read': 'View LPNs and their history',
   'labels.print': 'Print labels',
   'labels.reprint': 'Reprint labels (audited)',
@@ -89,7 +90,7 @@ const OPERATOR_COMMON: Permission[] = [
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ADMIN: ALL_PERMISSIONS,
-  SUPERVISOR: ALL_PERMISSIONS.filter((p) => p !== 'users.manage' && p !== 'settings.manage' && p !== 'orders.force_deliver' && p !== 'orders.adjust' && p !== 'orders.reopen' && p !== 'receiving.cancel_received'),
+  SUPERVISOR: ALL_PERMISSIONS.filter((p) => p !== 'users.manage' && p !== 'settings.manage' && p !== 'orders.force_deliver' && p !== 'orders.adjust' && p !== 'orders.reopen' && p !== 'receiving.cancel_received' && p !== 'receiving.reopen'),
   RECEIVING: [
     ...OPERATOR_COMMON,
     'containers.read',

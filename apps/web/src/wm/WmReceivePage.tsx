@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { UomCode } from '@wms/shared';
 import { api, ApiError } from '../api/client';
 import { inboundApi } from '../api/inbound';
+import { labelsApi } from '../api/labels';
 import { inventoryApi } from '../api/inventory';
 import { masterdataApi } from '../api/masterdata';
 import type { Receipt, ReceiveScanResult, Sku } from '../api/types';
@@ -36,6 +37,8 @@ function Flow() {
   const [currentLpn, setCurrentLpn] = useState<string | null>(null);
   const [useCurrent, setUseCurrent] = useState(false);
   const [damaged, setDamaged] = useState(false);
+  // the quantity arrives on this many pallets of the same product (new pallets only)
+  const [pallets, setPallets] = useState(1);
   const [lot, setLot] = useState('');
   const [expiry, setExpiry] = useState('');
   const [last, setLast] = useState<ReceiveScanResult | null>(null);
@@ -128,6 +131,7 @@ function Flow() {
           qty,
           uom_code: uom,
           lpn_code: useCurrent && currentLpn ? currentLpn : undefined,
+          pallets: useCurrent && currentLpn ? 1 : pallets,
           damaged,
           lot: lot.trim() || undefined,
           expiry_date: expiry || undefined,
@@ -135,8 +139,9 @@ function Flow() {
         api.newKey(),
       );
       setLast(r.data);
-      setCurrentLpn(r.data.lpn.code);
-      wm.ok(r.replayed ? 'YA REGISTRADO (reintento)' : `${r.data.lpn.is_new ? 'NUEVO PALLET' : 'AGREGADO'} ${r.data.lpn.code}`);
+      setCurrentLpn(r.data.pallets.length > 1 ? null : r.data.lpn.code);
+      setPallets(1);
+      wm.ok(r.replayed ? 'YA REGISTRADO (reintento)' : r.data.pallets.length > 1 ? `${r.data.pallets.length} TARIMAS CREADAS Y CERRADAS` : `${r.data.lpn.is_new ? 'NUEVO PALLET' : 'AGREGADO'} ${r.data.lpn.code}`);
       if (r.data.unexpected_sku) wm.warn('SKU NO ESPERADO en esta recepción — se creó incidencia');
       void qc.invalidateQueries({ queryKey: ['receipt', receipt.id] });
       setStep('RESULT');
@@ -375,7 +380,46 @@ function Flow() {
             {sku.requires_expiry && <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="h-14 rounded-xl bg-slate-800 px-3 text-lg text-white" aria-label="Caducidad" />}
           </div>
         </div>
-        <QtyPad uoms={sku.uoms} defaultUom={scannedUom} onConfirm={submitQty} onCancel={() => setStep('SCAN')} busy={busy} confirmLabel="RECIBIR" />
+        {!(useCurrent && currentLpn) && (
+          <div className="mb-3 flex items-center justify-between rounded-2xl bg-slate-800 px-4 py-2" data-testid="pallet-count">
+            <div>
+              <div className="text-xs font-bold uppercase text-slate-400">¿En cuántas tarimas viene?</div>
+              <div className="text-xs text-slate-400">{pallets > 1 ? `La cantidad total se reparte en ${pallets} tarimas; cada una nace cerrada con su acomodo` : 'Una tarima (queda abierta para seguir cargándola)'}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setPallets((p) => Math.max(1, p - 1))} aria-label="menos tarimas">−</button>
+              <div className="w-10 text-center font-mono text-3xl font-black">{pallets}</div>
+              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setPallets((p) => Math.min(200, p + 1))} aria-label="más tarimas">+</button>
+            </div>
+          </div>
+        )}
+        <QtyPad uoms={sku.uoms} defaultUom={scannedUom} hint={pallets > 1 ? `CANTIDAD TOTAL DE LAS ${pallets} TARIMAS` : undefined} onConfirm={submitQty} onCancel={() => setStep('SCAN')} busy={busy} confirmLabel={pallets > 1 ? `RECIBIR EN ${pallets} TARIMAS` : 'RECIBIR'} />
+      </div>
+    );
+  }
+
+  if (step === 'RESULT' && last && last.pallets.length > 1) {
+    return (
+      <div>
+        <StepBar text={`5 · ${last.pallets.length} TARIMAS REGISTRADAS`} />
+        {header}
+        <BigValue label={`${last.sku.code} · total`} value={`${fmtQty(last.qty_base)} pzas`} tone="ok" testId="result-lpn" />
+        <ul className="mt-3 grid gap-1">
+          {last.pallets.map((p) => (
+            <li key={p.code} className="flex items-center justify-between rounded-xl bg-slate-800 px-3 py-2">
+              <span className="font-mono text-lg font-black">{p.code}</span>
+              <span className="text-slate-300">{fmtQty(p.qty)} pzas · cerrada{p.putaway_task ? ' · con acomodo' : ''}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 grid gap-2">
+          <BigButton tone="primary" onClick={async () => { setBusy(true); try { for (const p of last.pallets) await labelsApi.print({ label_type: 'LPN', entity_id: p.code }); wm.ok(`${last.pallets.length} ETIQUETAS ENVIADAS`); } catch (e) { wm.fail(e); } finally { setBusy(false); } }} disabled={busy} testId="print-labels-multi">
+            Imprimir las {last.pallets.length} etiquetas
+          </BigButton>
+          <BigButton tone="success" onClick={() => setStep('SCAN')} testId="continue-scan">
+            Seguir recibiendo
+          </BigButton>
+        </div>
       </div>
     );
   }

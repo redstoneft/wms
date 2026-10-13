@@ -38,6 +38,18 @@ export default function ReceiptDetailPage() {
       toast.error('No se pudo completar', e);
     },
   });
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+  const reopen = useMutation({
+    mutationFn: () => inboundApi.reopen(id, reopenReason.trim()),
+    onSuccess: () => {
+      toast.success('Recepción reabierta', 'Ya se puede recibir más producto en ella; al completarla se vuelven a evaluar las diferencias.');
+      setReopenOpen(false);
+      void qc.invalidateQueries({ queryKey: ['receipt', id] });
+      void qc.invalidateQueries({ queryKey: ['receipts'] });
+    },
+    onError: (e) => toast.error('No se pudo reabrir', e),
+  });
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const cancel = useMutation({
@@ -104,6 +116,11 @@ export default function ReceiptDetailPage() {
                 Cancelar recepción
               </Button>
             )}
+            {['COMPLETED', 'WITH_INCIDENT', 'CLOSED'].includes(r.status) && can('receiving.reopen') && (
+              <Button variant="secondary" onClick={() => setReopenOpen(true)}>
+                Reabrir recepción
+              </Button>
+            )}
             {(r.status === 'COMPLETED' || r.status === 'WITH_INCIDENT') && can('receiving.close') && (
               <Button variant="secondary" onClick={() => close.mutate()} loading={close.isPending}>
                 Cerrar recepción
@@ -112,6 +129,12 @@ export default function ReceiptDetailPage() {
           </>
         }
       />
+      <Modal open={reopenOpen} onClose={() => setReopenOpen(false)} title={`Reabrir recepción ${r.receipt_number}`} footer={<Button onClick={() => reopen.mutate()} disabled={reopenReason.trim().length < 3} loading={reopen.isPending}>Reabrir</Button>}>
+        <Field label="Motivo" required>
+          <Input value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="Ej. faltó capturar una tarima de SIC28G" />
+        </Field>
+        <div className="mt-2 text-xs text-slate-500">La recepción vuelve a "en proceso": sus tarimas y acomodos no cambian; se puede escanear más producto desde la handheld y después completarla otra vez.</div>
+      </Modal>
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancelar recepción" footer={<Button variant="danger" onClick={() => cancel.mutate()} disabled={cancelReason.trim().length < 3} loading={cancel.isPending}>Cancelar recepción</Button>}>
         {(r.lpns?.length ?? 0) === 0 ? (
           <p className="text-sm text-slate-600">La recepción no tiene pallets recibidos. El folio no se reutiliza y la cancelación queda en auditoría con el motivo.</p>

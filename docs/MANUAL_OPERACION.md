@@ -167,6 +167,10 @@ Si escaneaste la tarima de almacén pero la pieza ya estaba surtida para un pedi
 
 Las cajas organizadoras (claves CAPM…) son el único producto que se acomoda en el piso (HID-PISO-…): el acomodo no ofrece ni acepta piso para otra mercancía (`COMPAT_GROUP_NOT_ALLOWED`). En el surtido, las cajas nunca comparten tarima de salida con otra mercancía: si la tarima abierta trae otra cosa, el sistema abre una tarima nueva solo y avisa **TARIMA NUEVA … LAS CAJAS VAN SOLAS**; etiquétala como cualquier otra. Las cajas sí pueden ir a rack.
 
+## RECIBIR UN MODELO EN VARIAS TARIMAS
+
+En Recibir, al capturar la cantidad de un producto nuevo (no al agregar a una tarima abierta), elige **¿En cuántas tarimas viene?** con los botones − / +. La cantidad que tecleas es el TOTAL: el sistema la reparte en partes iguales (el residuo va a las primeras), crea cada tarima ya cerrada con su tarea de acomodo y muestra la lista para **imprimir las etiquetas**. Si una recepción ya se completó o cerró y faltó capturar algo, el administrador la reabre desde la oficina (Recepciones → ficha → **Reabrir recepción**, con motivo): vuelve a "en proceso", se escanea lo que faltó y se completa otra vez.
+
 ## DIVIDIR UNA TARIMA DE ALMACÉN (se capturó 1 tarima y en realidad son 3)
 
 Si una recepción o un armado se capturó como una sola tarima pero físicamente son varias, no hay que cancelar nada: en la handheld `Dividir tarima`, escanea la tarima de almacén (STORED), elige el producto, teclea cuántas piezas pasan a la nueva tarima y confirma. La tarima nueva nace en el mismo lugar, disponible, con su etiqueta y su propia tarea de acomodo (si la original aún tenía acomodo pendiente); si la original venía de un armado, el armado queda registrado con una tarima más. Repite por cada tarima física adicional. También se puede pasar producto a otra tarima de almacén que esté en el mismo lugar. Desde la oficina: Inventario → ficha de la tarima → botón **Dividir tarima**. Aplica a cualquier tarima de almacén o de salida, venga o no de un armado.

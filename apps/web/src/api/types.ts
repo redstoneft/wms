@@ -380,6 +380,8 @@ export interface ReceiveScanResult {
   line: { expected_qty: Qty; received_qty: Qty; status: string };
   movement_id: string;
   unexpected_sku: boolean;
+  /** when the product was received on several pallets at once: every pallet born (closed, with put-away) */
+  pallets: { code: string; qty: Qty; putaway_task: string | null }[];
 }
 export interface ReceiveUndoResult {
   lpn: { code: string; status: string; empty: boolean };

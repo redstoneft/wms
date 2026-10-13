@@ -329,7 +329,11 @@ export const zReceiveScan = z.object({
   expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),
   damaged: z.boolean().default(false),
   note: zNote,
+  /** the quantity arrives on this many pallets of the same product: each one is born, closed and gets its put-away (not with lpn_code) */
+  pallets: z.number().int().min(1).max(200).default(1),
 });
+
+export const zReopenReceipt = z.object({ reason: zReason });
 
 export const zCloseReceipt = z.object({
   receipt_id: zUuid,

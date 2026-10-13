@@ -123,6 +123,8 @@ export interface ReceiveScanInput {
   expiry_date?: string;
   damaged: boolean;
   note?: string;
+  /** receive the quantity on this many pallets at once (new pallets only) */
+  pallets?: number;
 }
 
 /**
@@ -131,7 +133,37 @@ export interface ReceiveScanInput {
  * AVAILABLE (or DAMAGED) status via the ledger. Over-receipt is allowed but
  * flagged: the line goes to OVER and an incident is created at close.
  */
+/**
+ * One product arriving on several pallets at once ("SIC28G, 1,260 pieces, 3 pallets"): the quantity is split evenly
+ * (the remainder goes to the first pallets), each pallet is born, closed and gets its own put-away task. Returns the
+ * last scan's shape plus the list of pallets so the handheld can print their labels.
+ */
 export async function receiveScan(tx: Tx, ctx: ActorContext, input: ReceiveScanInput) {
+  const n = input.pallets ?? 1;
+  if (n <= 1 || input.lpn_code) return receiveScanOne(tx, ctx, input);
+  const total = BigInt(input.qty);
+  if (total < BigInt(n)) throw new RuleError('QTY_LT_PALLETS', `${total} piezas no se pueden repartir en ${n} tarimas`);
+  const each = total / BigInt(n);
+  let rest = total - each * BigInt(n);
+  const cases = input.cases_count ?? 0;
+  const casesEach = Math.floor(cases / n);
+  let casesRest = cases - casesEach * n;
+  const pallets: { code: string; qty: string; putaway_task: string | null }[] = [];
+  let last: Awaited<ReturnType<typeof receiveScanOne>> | null = null;
+  for (let i = 0; i < n; i++) {
+    const q = each + (rest > 0n ? 1n : 0n);
+    if (rest > 0n) rest -= 1n;
+    const c = casesEach + (casesRest > 0 ? 1 : 0);
+    if (casesRest > 0) casesRest -= 1;
+    last = await receiveScanOne(tx, ctx, { ...input, qty: q, pallets: 1, lpn_code: undefined, cases_count: cases ? c : undefined });
+    const closed = await closeReceivingLpn(tx, ctx, last.lpn.code);
+    pallets.push({ code: last.lpn.code, qty: last.qty_base.toString(), putaway_task: closed.putaway_task?.id ?? null });
+  }
+  await audit(tx, ctx, { action: 'receipt.scan_multi', entity_type: 'receipt', entity_id: input.receipt_id, after: { sku: last!.sku.code, total: total.toString(), pallets } });
+  return { ...last!, lpn: { ...last!.lpn, is_new: true }, qty_base: total, pallets };
+}
+
+async function receiveScanOne(tx: Tx, ctx: ActorContext, input: ReceiveScanInput) {
   const receipt = await tx.$queryRaw<{ id: string; status: string; receiving_location_id: string; container_id: string | null; po_id: string | null }[]>`
     SELECT id, status, receiving_location_id, container_id, po_id FROM receipts WHERE id = ${input.receipt_id}::uuid FOR UPDATE`;
   const r = receipt[0];
@@ -240,7 +272,23 @@ export async function receiveScan(tx: Tx, ctx: ActorContext, input: ReceiveScanI
     line: { expected_qty: updatedLine.expected_qty, received_qty: updatedLine.received_qty, status },
     movement_id: movementId,
     unexpected_sku: unexpectedSku,
+    pallets: [] as { code: string; qty: string; putaway_task: string | null }[],
   };
+}
+
+/**
+ * Admin: a completed or closed receipt is opened again so more product can be received on it (a pallet that was left
+ * out, a model captured on fewer pallets than it occupies). Its pallets and put-aways stay as they are; completing it
+ * again re-evaluates the differences. Audited with the reason.
+ */
+export async function reopenReceipt(tx: Tx, ctx: ActorContext, receiptId: string, reason: string) {
+  const rows = await tx.$queryRaw<{ id: string; status: string; receipt_number: string }[]>`SELECT id, status, receipt_number FROM receipts WHERE id = ${receiptId}::uuid FOR UPDATE`;
+  const r = rows[0];
+  if (!r) throw new NotFoundError('receipt', receiptId);
+  if (!['COMPLETED', 'WITH_INCIDENT', 'CLOSED'].includes(r.status)) throw new RuleError('RECEIPT_STATUS', `La recepción ${r.receipt_number} está ${r.status}; solo se reabren recepciones completadas o cerradas`);
+  const updated = await tx.receipts.update({ where: { id: r.id }, data: { status: 'IN_PROGRESS', completed_at: null, closed_at: null } });
+  await audit(tx, ctx, { action: 'receipt.reopen', entity_type: 'receipt', entity_id: r.id, before: { status: r.status }, after: { status: 'IN_PROGRESS' }, reason });
+  return updated;
 }
 
 /**
