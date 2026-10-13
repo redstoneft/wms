@@ -304,13 +304,15 @@ export async function splitReturnPallet(tx: Tx, ctx: ActorContext, input: { retu
   if (lpn.status !== 'STORED' || !lpn.current_location_id) throw new RuleError('LPN_STATUS', `La tarima ${lpn.code} está ${lpn.status}`);
   const bal = await tx.inventory_balances.findFirst({ where: { lpn_id: lpn.id, sku_id: line.sku_id, qty: { gt: 0n }, status: { in: ['AVAILABLE', 'QUARANTINE', 'DAMAGED'] } }, orderBy: { qty: 'desc' } });
   if (!bal || bal.status !== 'AVAILABLE') throw new RuleError('NOT_AVAILABLE', `La tarima ${lpn.code} no tiene ${line.sku.code} disponible para repartir (está ${bal?.status ?? 'vacía'})`);
-  const total = bal.qty;
+  // only what came back on this return is spread; pieces the pallet already held before stay on it
+  const total = line.received_qty;
+  if (bal.qty < total) throw new RuleError('NOT_AVAILABLE', `La tarima ${lpn.code} tiene ${bal.qty} de ${line.sku.code} disponibles y la devolución registró ${total}`);
   let parts: bigint[];
   if (input.parts && input.parts.length) {
     parts = input.parts.map((q) => BigInt(q));
     if (parts.some((q) => q <= 0n)) throw new RuleError('INVALID_QTY', 'Cada tarima debe llevar al menos una pieza');
     const sum = parts.reduce((a, b) => a + b, 0n);
-    if (sum !== total) throw new RuleError('PARTS_SUM', `Las tarimas suman ${sum} y la tarima tiene ${total} de ${line.sku.code}`, { total: total.toString(), sum: sum.toString() });
+    if (sum !== total) throw new RuleError('PARTS_SUM', `Las tarimas suman ${sum} y la devolución tiene ${total} de ${line.sku.code}`, { total: total.toString(), sum: sum.toString() });
   } else {
     const n = input.pallets ?? 2;
     if (total < BigInt(n)) throw new RuleError('QTY_LT_PALLETS', `${total} piezas no se pueden repartir en ${n} tarimas`);

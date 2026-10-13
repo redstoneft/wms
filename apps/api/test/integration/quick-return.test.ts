@@ -115,7 +115,7 @@ describe('receiving onto an open return from the handheld', () => {
 
 describe('splitting a pallet of an open return into several, each with its own put-away', () => {
   it('the pallet is split evenly, one line per pallet, every pallet gets a put-away task to choose its spot', async () => {
-    const p = await storedPallet(f, 0, f.reserve[6]!.id, 90n);
+    const p = await storedPallet(f, 0, f.reserve[6]!.id, 98n); // 8 were on the pallet before the return: they stay
     const c = await sup.post('/returns', { customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 90, uom_code: 'PIECE' }] });
     expect(c.status).toBe(201);
     // bind the pallet to the return line as if the pieces had been received onto it
@@ -130,6 +130,7 @@ describe('splitting a pallet of an open return into several, each with its own p
     expect(r.body.pallets.every((x: { putaway_task_id: string | null }) => !!x.putaway_task_id)).toBe(true);
     const lines = await sql<{ received_qty: bigint; lpn_id: string }>(`SELECT received_qty, lpn_id FROM return_lines WHERE return_id = '${c.body.id}'`);
     expect(lines.length).toBe(3);
+    expect((await sql<{ qty: bigint }>(`SELECT qty FROM inventory_balances WHERE lpn_id = '${p.id}' AND qty > 0`))[0]!.qty).toBe(48n); // 40 of the return + the 8 that were there
     expect(new Set(lines.map((l) => l.lpn_id)).size).toBe(3);
     const open = await recv.get('/returns/open');
     const mine = open.body.find((x: { id: string }) => x.id === c.body.id);
