@@ -112,3 +112,31 @@ describe('receiving onto an open return from the handheld', () => {
     await expectReconciled();
   });
 });
+
+describe('splitting a pallet of an open return into several, each with its own put-away', () => {
+  it('the pallet is split evenly, one line per pallet, every pallet gets a put-away task to choose its spot', async () => {
+    const p = await storedPallet(f, 0, f.reserve[6]!.id, 90n);
+    const c = await sup.post('/returns', { customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 90, uom_code: 'PIECE' }] });
+    expect(c.status).toBe(201);
+    // bind the pallet to the return line as if the pieces had been received onto it
+    await sql(`UPDATE return_lines SET lpn_id = '${p.id}', received_qty = 90, disposition = 'RESTOCK', disposition_qty = 90 WHERE return_id = '${c.body.id}'`);
+    await sql(`UPDATE returns SET status = 'INSPECTING' WHERE id = '${c.body.id}'`);
+    const r = await recv.post('/returns/split-pallet', { return_id: c.body.id, lpn_code: p.code, pallets: 3 }, idem());
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.pallets.map((x: { qty: string }) => x.qty)).toEqual(['30', '30', '30']);
+    expect(r.body.pallets.every((x: { putaway_task_id: string | null }) => !!x.putaway_task_id)).toBe(true);
+    const lines = await sql<{ received_qty: bigint; lpn_id: string }>(`SELECT received_qty, lpn_id FROM return_lines WHERE return_id = '${c.body.id}'`);
+    expect(lines.length).toBe(3);
+    expect(new Set(lines.map((l) => l.lpn_id)).size).toBe(3);
+    const open = await recv.get('/returns/open');
+    const mine = open.body.find((x: { id: string }) => x.id === c.body.id);
+    expect(mine.lines.filter((l: { lpn: { putaway_task_id: string | null } | null }) => l.lpn?.putaway_task_id).length).toBe(3);
+    // choose a spot for one of them through the put-away chooser
+    const t = r.body.pallets[1].putaway_task_id;
+    const opts = await recv.get(`/putaway/tasks/${t}/options`);
+    expect(opts.status).toBe(200);
+    const target = opts.body.options.find((o: { is_current: boolean }) => !o.is_current);
+    if (target) expect((await recv.post(`/putaway/tasks/${t}/choose`, { location_code: target.code })).status).toBe(200);
+    await expectReconciled();
+  });
+});

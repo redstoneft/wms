@@ -9,6 +9,9 @@ import { inventoryApi } from '../api/inventory';
 import { labelsApi } from '../api/labels';
 import { masterdataApi } from '../api/masterdata';
 import { returnsApi } from '../api/returns';
+import { putawayApi } from '../api/storage';
+import type { PutawayOption } from '../api/types';
+import { LocationPicker } from './LocationPicker';
 import type { QuickReturnResult } from '../api/types';
 import { ProductInput } from '../components/ProductInput';
 import { QtyPad } from '../components/QtyPad';
@@ -41,6 +44,49 @@ function Flow() {
   // receiving onto an open return (reopened by the admin, or a formal one) instead of creating a new closed one
   const [onReturn, setOnReturn] = useState<{ id: string; return_number: string; customer: string | null } | null>(null);
   const openRet = useQuery({ queryKey: ['returns-open'], queryFn: returnsApi.open, refetchInterval: 30_000 });
+  // split a pallet of the chosen return into N and choose where each one goes
+  const [splitN, setSplitN] = useState<Record<string, number>>({});
+  const [chooser, setChooser] = useState<{ taskId: string; lpn: string; list: PutawayOption[]; selected: string } | null>(null);
+  const splitReturnPallet = async (lpn: string) => {
+    if (!onReturn) return;
+    const n = splitN[lpn] ?? 2;
+    setBusy(true);
+    try {
+      const r = await returnsApi.splitPallet({ return_id: onReturn.id, lpn_code: lpn, pallets: n }, api.newKey());
+      wm.ok(`${r.data.sku}: ${fmtQty(r.data.total)} PZAS EN ${r.data.pallets.length} TARIMAS · ELIGE LA UBICACIÓN DE CADA UNA`);
+      await openRet.refetch();
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const openChooser = async (taskId: string, lpn: string) => {
+    setBusy(true);
+    try {
+      const r = await putawayApi.options(taskId);
+      if (!r.options.length) { wm.warn('NO HAY UBICACIONES LIBRES PARA ESTA TARIMA'); return; }
+      setChooser({ taskId, lpn, list: r.options, selected: r.options.find((o) => !o.is_current)?.code ?? r.options[0]!.code });
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const chooseFor = async (code: string) => {
+    if (!chooser) return;
+    setBusy(true);
+    try {
+      const r = await putawayApi.choose(chooser.taskId, { location_code: code });
+      wm.ok(`${chooser.lpn} → ${r.target.code} · LLÉVALA Y CONFIRMA EN UBICAR`);
+      setChooser(null);
+      await openRet.refetch();
+    } catch (e) {
+      wm.fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<QuickReturnResult | null>(null);
   const pieces = qty && sku ? Number(qty.qty) * Number(sku.uoms.find((u) => u.uom_code === qty.uom)?.base_qty ?? 1) : 0;
@@ -108,6 +154,53 @@ function Flow() {
         )}
         <ProductInput label="Escanea la pieza o la caja, o escribe clave o nombre" onPick={onProduct} disabled={busy} testId="return-product" />
         <div className="mt-2 text-xs text-slate-400">{onReturn ? 'Lo que registres se agrega a esa devolución (no se crea una nueva).' : 'Para una o dos piezas que regresan: van directo a la tarima que ya tiene ese producto. Queda registrada como devolución.'}</div>
+        {onReturn && (() => {
+          const cur = openRet.data?.find((r) => r.id === onReturn.id);
+          const withPallet = cur?.lines.filter((l) => l.lpn) ?? [];
+          if (!withPallet.length) return null;
+          return (
+            <div className="mt-4" data-testid="return-pallets">
+              <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Tarimas de {onReturn.return_number} · sepáralas o elige su ubicación</div>
+              <ul className="grid gap-2">
+                {withPallet.map((l) => (
+                  <li key={l.id} className="rounded-xl bg-slate-800 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="font-mono text-base font-black">{l.lpn!.code} <span className="text-sm font-normal text-slate-300">· {l.sku_code} · {fmtQty(l.received_qty)} pzas</span></div>
+                        <div className="text-xs text-slate-400">{l.lpn!.location ?? 'sin ubicación'}{l.lpn!.putaway_task_id ? ` · acomodo pendiente → ${l.lpn!.suggested ?? 'por elegir'}` : ''}</div>
+                      </div>
+                      {l.lpn!.putaway_task_id && (
+                        <button type="button" className="rounded-xl bg-emerald-600 px-3 py-2 text-sm font-black text-white disabled:opacity-50" disabled={busy} onClick={() => void openChooser(l.lpn!.putaway_task_id!, l.lpn!.code)} data-testid="return-choose-loc">Elegir ubicación</button>
+                      )}
+                    </div>
+                    {l.lpn!.status === 'STORED' && Number(l.received_qty) > 1 && (
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <div className="text-xs text-slate-300">Separar en</div>
+                        <div className="flex items-center gap-2">
+                          <button type="button" className="h-10 w-10 rounded-xl bg-slate-700 text-xl font-black" onClick={() => setSplitN({ ...splitN, [l.lpn!.code]: Math.max(2, (splitN[l.lpn!.code] ?? 2) - 1) })} aria-label="menos">−</button>
+                          <div className="w-8 text-center font-mono text-2xl font-black">{splitN[l.lpn!.code] ?? 2}</div>
+                          <button type="button" className="h-10 w-10 rounded-xl bg-slate-700 text-xl font-black" onClick={() => setSplitN({ ...splitN, [l.lpn!.code]: Math.min(50, (splitN[l.lpn!.code] ?? 2) + 1) })} aria-label="más">+</button>
+                          <button type="button" className="rounded-xl bg-violet-600 px-3 py-2 text-sm font-black text-white disabled:opacity-50" disabled={busy} onClick={() => void splitReturnPallet(l.lpn!.code)} data-testid="return-split">tarimas</button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {chooser && (
+                <div className="mt-3 rounded-2xl border-2 border-violet-500 bg-slate-900 p-3" data-testid="return-location-chooser">
+                  <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">Ubicación para {chooser.lpn}</div>
+                  <LocationPicker list={chooser.list} selected={chooser.selected} onSelect={(code) => setChooser({ ...chooser, selected: code })} testId="return-location-select" />
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <BigButton tone="neutral" onClick={() => setChooser(null)}>Cancelar</BigButton>
+                    <BigButton tone="success" onClick={() => void chooseFor(chooser.selected)} disabled={busy} testId="return-location-use">Usar esta ubicación</BigButton>
+                  </div>
+                </div>
+              )}
+              <div className="mt-2 text-xs text-slate-400">Después de elegir, lleva cada tarima y confírmala en Ubicar escaneando la posición (o Cerrar acomodo desde la oficina).</div>
+            </div>
+          );
+        })()}
         {!onReturn && (openRet.data?.length ?? 0) > 0 && (
           <div className="mt-4" data-testid="returns-open">
             <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Devoluciones abiertas · toca una para recibir sobre ella</div>

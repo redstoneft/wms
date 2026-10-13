@@ -7,6 +7,7 @@ import { getSkuByCode, resolveSkuBarcode, toBaseQty } from '../../lib/lookup.js'
 import { changeStatus, createInventory, createLpn, lockLocationByBarcode, lockLpn, lockLpnByCode, removeInventory, type LpnRow } from '../../inventory/ledger.js';
 import { createIncident } from '../incidents/service.js';
 import { createPutawayTask } from '../putaway/service.js';
+import { splitPallet } from '../picking/service.js';
 
 /**
  * Reverse logistics: customer → return receipt → inspection → classification.
@@ -269,5 +270,59 @@ export async function reopenReturn(tx: Tx, ctx: ActorContext, returnId: string, 
 /** Open returns for the handheld (reopened by the admin or formal ones still being received): number, customer, lines. */
 export async function openReturns(tx: Tx) {
   const rows = await tx.returns.findMany({ where: { status: { not: 'CLOSED' }, is_training: false }, include: { customer: { select: { code: true, name: true } }, lines: { include: { sku: { select: { code: true, description: true } } } } }, orderBy: { created_at: 'desc' }, take: 50 });
-  return rows.map((r) => ({ id: r.id, return_number: r.return_number, status: r.status, customer: r.customer?.name ?? null, reason: r.reason, created_at: r.created_at, lines: r.lines.map((l) => ({ sku_code: l.sku.code, description: l.sku.description, expected_qty: l.expected_qty.toString(), received_qty: l.received_qty.toString() })) }));
+  const lpnIds = rows.flatMap((r) => r.lines.map((l) => l.lpn_id).filter((x): x is string => !!x));
+  const lpns = await tx.lpns.findMany({ where: { id: { in: lpnIds } }, select: { id: true, code: true, status: true, current_location_id: true } });
+  const tasks = await tx.putaway_tasks.findMany({ where: { lpn_id: { in: lpnIds }, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, select: { id: true, lpn_id: true, suggested_location_id: true }, orderBy: { created_at: 'desc' } });
+  const locIds = [...new Set([...lpns.map((l) => l.current_location_id), ...tasks.map((t) => t.suggested_location_id)].filter((x): x is string => !!x))];
+  const locs = new Map((await tx.locations.findMany({ where: { id: { in: locIds } }, select: { id: true, code: true } })).map((l) => [l.id, l.code]));
+  const taskByLpn = new Map<string, { id: string; suggested_location_id: string | null }>();
+  for (const t of tasks) if (!taskByLpn.has(t.lpn_id)) taskByLpn.set(t.lpn_id, t);
+  const byId = new Map(lpns.map((l) => [l.id, l]));
+  return rows.map((r) => ({
+    id: r.id, return_number: r.return_number, status: r.status, customer: r.customer?.name ?? null, reason: r.reason, created_at: r.created_at,
+    lines: r.lines.map((l) => {
+      const p = l.lpn_id ? byId.get(l.lpn_id) : null;
+      const t = p ? taskByLpn.get(p.id) : undefined;
+      return { id: l.id, sku_code: l.sku.code, description: l.sku.description, expected_qty: l.expected_qty.toString(), received_qty: l.received_qty.toString(), lpn: p ? { code: p.code, status: p.status, location: p.current_location_id ? (locs.get(p.current_location_id) ?? null) : null, putaway_task_id: t?.id ?? null, suggested: t?.suggested_location_id ? (locs.get(t.suggested_location_id) ?? null) : null } : null };
+    }),
+  }));
 }
+
+/**
+ * What entered the return as ONE pallet is really several: the pallet (stored, holding the line's product) is split
+ * evenly into N pallets at the same spot, every pallet (the original included) gets a put-away task so the operator
+ * chooses where each one goes, and the return line becomes one line per pallet.
+ */
+export async function splitReturnPallet(tx: Tx, ctx: ActorContext, input: { return_id: string; lpn_code: string; pallets: number }) {
+  const rrows = await tx.$queryRaw<{ id: string; status: string; return_number: string }[]>`SELECT id, status, return_number FROM returns WHERE id = ${input.return_id}::uuid FOR UPDATE`;
+  const ret = rrows[0];
+  if (!ret) throw new NotFoundError('return', input.return_id);
+  if (ret.status === 'CLOSED') throw new RuleError('RETURN_CLOSED', `La devolución ${ret.return_number} está cerrada`);
+  const lpn = await lockLpnByCode(tx, input.lpn_code);
+  const line = await tx.return_lines.findFirst({ where: { return_id: ret.id, lpn_id: lpn.id }, include: { sku: true } });
+  if (!line) throw new RuleError('LPN_NOT_IN_RETURN', `La tarima ${lpn.code} no es de la devolución ${ret.return_number}`);
+  if (lpn.status !== 'STORED' || !lpn.current_location_id) throw new RuleError('LPN_STATUS', `La tarima ${lpn.code} está ${lpn.status}`);
+  const bal = await tx.inventory_balances.findFirst({ where: { lpn_id: lpn.id, sku_id: line.sku_id, qty: { gt: 0n }, status: { in: ['AVAILABLE', 'QUARANTINE', 'DAMAGED'] } }, orderBy: { qty: 'desc' } });
+  if (!bal || bal.status !== 'AVAILABLE') throw new RuleError('NOT_AVAILABLE', `La tarima ${lpn.code} no tiene ${line.sku.code} disponible para repartir (está ${bal?.status ?? 'vacía'})`);
+  const total = bal.qty;
+  if (total < BigInt(input.pallets)) throw new RuleError('QTY_LT_PALLETS', `${total} piezas no se pueden repartir en ${input.pallets} tarimas`);
+  const parts = splitQty(total, input.pallets);
+  const pallets: { code: string; qty: string; putaway_task_id: string | null; suggested: string | null; line_id: string }[] = [];
+  // the original keeps the first part; each other part goes to a new pallet (same spot) via the ledger split
+  for (let i = 1; i < input.pallets; i++) {
+    const r = await splitPallet(tx, ctx, { from_lpn_code: lpn.code, sku_code: line.sku.code, qty: parts[i]!, uom_code: 'PIECE' });
+    const newLpn = await lockLpnByCode(tx, r.to_lpn);
+    const task = await createPutawayTask(tx, ctx, newLpn, { allowStoredLocation: true });
+    const nl = await tx.return_lines.create({ data: { return_id: ret.id, sku_id: line.sku_id, expected_qty: parts[i]!, received_qty: parts[i]!, disposition: line.disposition, disposition_qty: line.disposition ? parts[i]! : 0n, lpn_id: newLpn.id, inspected_by: line.inspected_by, notes: line.notes } });
+    const sug = task.suggested_location_id ? (await tx.locations.findUnique({ where: { id: task.suggested_location_id }, select: { code: true } }))?.code ?? null : null;
+    pallets.push({ code: newLpn.code, qty: parts[i]!.toString(), putaway_task_id: task.id, suggested: sug, line_id: nl.id });
+  }
+  const fresh = await lockLpn(tx, lpn.id);
+  const task0 = await createPutawayTask(tx, ctx, fresh, { allowStoredLocation: true });
+  await tx.return_lines.update({ where: { id: line.id }, data: { expected_qty: parts[0]!, received_qty: parts[0]!, disposition_qty: line.disposition ? parts[0]! : 0n } });
+  const sug0 = task0.suggested_location_id ? (await tx.locations.findUnique({ where: { id: task0.suggested_location_id }, select: { code: true } }))?.code ?? null : null;
+  pallets.unshift({ code: lpn.code, qty: parts[0]!.toString(), putaway_task_id: task0.id, suggested: sug0, line_id: line.id });
+  await audit(tx, ctx, { action: 'return.split_pallet', entity_type: 'return', entity_id: ret.id, after: { lpn: lpn.code, sku: line.sku.code, total: total.toString(), pallets } });
+  return { return_number: ret.return_number, sku: line.sku.code, total: total.toString(), pallets };
+}
+
