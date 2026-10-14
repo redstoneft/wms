@@ -619,6 +619,11 @@ export const zSplitPallet = z.object({
   to_lpn_code: z.string().trim().max(30).optional(),
   destination: z.string().trim().max(120).optional(),
 });
+/** Unir tarimas: everything on a small storage pallet goes onto another storage pallet of the same model(s). */
+export const zMergePallet = z.object({
+  from_lpn_code: z.string().trim().min(1).max(30),
+  to_lpn_code: z.string().trim().min(1).max(30),
+});
 export const zStageLpn = z.object({
   lpn_code: z.string().trim().min(1).max(30),
   staging_location_barcode: zBarcode,

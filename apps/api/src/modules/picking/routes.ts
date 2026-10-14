@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zPickScan, zPickShort, zStageLpn, zUuid, zFreePickScan, zReason, zClosePallet, zPalletDestination, zSplitPallet } from '@wms/shared';
+import { zPickScan, zPickShort, zStageLpn, zUuid, zFreePickScan, zReason, zClosePallet, zPalletDestination, zSplitPallet, zMergePallet } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { includeTraining } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
@@ -69,6 +69,13 @@ export async function pickingRoutes(app: FastifyInstance) {
   app.post('/picking/split-pallet', { preHandler: app.requirePermission('picking.execute') }, async (req, reply) => {
     const body = zSplitPallet.parse(req.body);
     const r = await runIdempotent(req.actor!, fingerprint('POST', '/picking/split-pallet', body), async (tx) => ({ status: 200, body: await svc.splitPallet(tx, req.actor!, { ...body, qty: BigInt(body.qty) }) }));
+    if (r.replayed) reply.header('Idempotent-Replayed', 'true');
+    return r.body;
+  });
+  /** Unir tarimas: a small storage pallet onto another one of the same model (idempotent). */
+  app.post('/picking/merge-pallet', { preHandler: app.requirePermission('picking.execute') }, async (req, reply) => {
+    const body = zMergePallet.parse(req.body);
+    const r = await runIdempotent(req.actor!, fingerprint('POST', '/picking/merge-pallet', body), async (tx) => ({ status: 200, body: await svc.mergePallet(tx, req.actor!, body) }));
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
   });

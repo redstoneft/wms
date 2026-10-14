@@ -248,6 +248,46 @@ export async function splitPallet(tx: Tx, ctx: ActorContext, input: { from_lpn_c
 }
 
 /**
+ * Unir tarimas: a small storage pallet is emptied onto another storage pallet that already holds the same product(s).
+ * The pieces are carried to where the destination pallet is; the source pallet is consumed and its spot is freed.
+ * Refused when the source has picks planned (replan first), holds damaged/blocked pieces, or the models do not match.
+ */
+export async function mergePallet(tx: Tx, ctx: ActorContext, input: { from_lpn_code: string; to_lpn_code: string }) {
+  const from = await lockLpnByCode(tx, input.from_lpn_code);
+  const to = await lockLpnByCode(tx, input.to_lpn_code);
+  if (from.id === to.id) throw new RuleError('SAME_LPN', 'ES LA MISMA TARIMA');
+  const storage = (l: LpnRow) => !l.order_id && ['STORED', 'OPEN'].includes(l.status);
+  if (!storage(from)) throw new RuleError('LPN_STATUS', `LA TARIMA ${from.code} ESTÁ ${from.status}; solo se unen tarimas de almacén`);
+  if (!storage(to)) throw new RuleError('LPN_STATUS', `LA TARIMA ${to.code} ESTÁ ${to.status}; el destino debe ser una tarima de almacén`);
+  if (!to.current_location_id) throw new RuleError('LPN_STATUS', `LA TARIMA ${to.code} NO TIENE UBICACIÓN`);
+  const planned = await tx.allocations.count({ where: { lpn_id: from.id, status: 'ACTIVE' } });
+  if (planned) throw new RuleError('LPN_ALLOCATED', `LA TARIMA ${from.code} TIENE SURTIDO PLANEADO: no se puede unir hasta que se surta o se replanee`);
+  const fromBal = await tx.inventory_balances.findMany({ where: { lpn_id: from.id, qty: { gt: 0n } }, include: { sku: { select: { code: true } } } });
+  if (!fromBal.length) throw new RuleError('LPN_EMPTY', `LA TARIMA ${from.code} ESTÁ VACÍA`);
+  const notAvailable = fromBal.filter((b) => b.status !== 'AVAILABLE');
+  if (notAvailable.length) throw new RuleError('LPN_STATUS', `LA TARIMA ${from.code} TIENE PIEZAS ${notAvailable.map((b) => b.status).join('/')}: sepáralas antes de unir`);
+  const toBal = await tx.inventory_balances.findMany({ where: { lpn_id: to.id, qty: { gt: 0n } }, select: { sku_id: true } });
+  const toSkus = new Set(toBal.map((b) => b.sku_id));
+  const strangers = fromBal.filter((b) => !toSkus.has(b.sku_id));
+  if (!toBal.length) throw new RuleError('LPN_EMPTY', `LA TARIMA ${to.code} ESTÁ VACÍA: escanea una tarima que ya tenga el mismo modelo`);
+  if (strangers.length) throw new RuleError('WRONG_SKU', `LA TARIMA ${to.code} NO TIENE ${strangers.map((b) => b.sku.code).join(', ')}: solo se unen tarimas del mismo modelo`, { missing: strangers.map((b) => b.sku.code) });
+  const moved: { sku: string; qty: string }[] = [];
+  const movements: string[] = [];
+  for (const b of fromBal) {
+    const id = await transferBetweenLpns(tx, ctx, { movement_type: 'LPN_CONSOLIDATE', from_lpn: from, to_lpn: to, sku_id: b.sku_id, qty: b.qty, uom_code: 'PIECE', uom_qty: b.qty, from_status: 'AVAILABLE', to_status: 'AVAILABLE', to_location_id: to.current_location_id, reference_type: 'lpn_merge', reference_id: from.id, note: `Unir tarima ${from.code} → ${to.code}` });
+    moved.push({ sku: b.sku.code, qty: b.qty.toString() });
+    movements.push(id.toString());
+  }
+  await tx.lpns.update({ where: { id: from.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+  await tx.putaway_tasks.updateMany({ where: { lpn_id: from.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
+  const fromLoc = from.current_location_id ? await tx.locations.findUnique({ where: { id: from.current_location_id }, select: { code: true } }) : null;
+  const toLoc = await tx.locations.findUnique({ where: { id: to.current_location_id }, select: { code: true } });
+  const toQty = (await tx.inventory_balances.aggregate({ where: { lpn_id: to.id, qty: { gt: 0n } }, _sum: { qty: true } }))._sum.qty ?? 0n;
+  await audit(tx, ctx, { action: 'lpn.merge', entity_type: 'lpn', entity_id: from.id, after: { to: to.code, moved, from_location: fromLoc?.code ?? null, to_location: toLoc?.code ?? null, movements } });
+  return { from_lpn: from.code, from_location: fromLoc?.code ?? null, to_lpn: to.code, to_location: toLoc?.code ?? null, to_qty: toQty.toString(), moved };
+}
+
+/**
  * Pallets produced by an assembly straight for an order: they are outbound pallets (PICKING) at the station, booked on
  * the order like a whole-pallet pick (allocation + pick line already PICKED), so they go on to staging → verification →
  * loading. The order gets its staging lane; the pick task is created closed when no other pick is open.

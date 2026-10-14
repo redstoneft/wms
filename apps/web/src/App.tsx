@@ -60,6 +60,7 @@ const WmCountPage = lazy(() => import('./wm/WmCountPage'));
 const WmPickPage = lazy(() => import('./wm/WmPickPage'));
 const WmStagePage = lazy(() => import('./wm/WmStagePage'));
 const WmSplitPage = lazy(() => import('./wm/WmSplitPage'));
+const WmMergePage = lazy(() => import('./wm/WmMergePage'));
 const WmVerifyPage = lazy(() => import('./wm/WmVerifyPage'));
 const WmLoadPage = lazy(() => import('./wm/WmLoadPage'));
 
@@ -189,6 +190,7 @@ export default function App() {
         <Route path="/wm/recount" element={<Wm perms={['tasks.self_create']}><WmRecountPage /></Wm>} />
         <Route path="/wm/return" element={<Wm perms={['returns.manage']}><WmReturnPage /></Wm>} />
         <Route path="/wm/split" element={<Wm perms={['picking.execute']}><WmSplitPage /></Wm>} />
+        <Route path="/wm/merge" element={<Wm perms={['picking.execute']}><WmMergePage /></Wm>} />
         <Route path="/wm/deliveries" element={<Wm perms={['deliveries.manage']}><WmDeliveriesPage /></Wm>} />
         <Route path="/wm/training" element={<Wm perms={[]}><WmTrainingPage /></Wm>} />
         <Route path="/wm/replenish" element={<Wm perms={['replenishment.execute']}><WmReplenishPage /></Wm>} />

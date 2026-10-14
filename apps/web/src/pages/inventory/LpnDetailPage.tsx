@@ -7,7 +7,7 @@ import { Timeline } from '../../components/Timeline';
 import { Alert, Button, Card, KV, PageHeader, Skeleton, StatusChip, Table } from '../../components/ui';
 import { es, fmtDate, fmtDateTime, fmtNum, fmtQty, fmtUom, toBigInt } from '../../lib/format';
 import { AdjustModal, StatusModal } from './InventoryPage';
-import { SplitLpnModal } from './SplitLpnModal';
+import { MergeLpnModal, SplitLpnModal } from './SplitLpnModal';
 
 export default function LpnDetailPage() {
   const { code = '' } = useParams();
@@ -17,6 +17,7 @@ export default function LpnDetailPage() {
   const [adjust, setAdjust] = useState(false);
   const [status, setStatus] = useState(false);
   const [split, setSplit] = useState(false);
+  const [merge, setMerge] = useState(false);
   const l = q.data;
   if (q.isLoading) return <Skeleton className="h-64" />;
   if (!l) return <Alert tone="error">LPN {code} no encontrado</Alert>;
@@ -51,6 +52,11 @@ export default function LpnDetailPage() {
             {can('picking.execute') && balances.length > 0 && ['STORED', 'OPEN', 'PICKING', 'STAGED'].includes(l.status) && (
               <Button variant="secondary" onClick={() => setSplit(true)}>
                 Dividir tarima
+              </Button>
+            )}
+            {can('picking.execute') && balances.length > 0 && !l.order_id && ['STORED', 'OPEN'].includes(l.status) && (
+              <Button variant="secondary" onClick={() => setMerge(true)}>
+                Unir a otra tarima
               </Button>
             )}
           </>
@@ -107,6 +113,7 @@ export default function LpnDetailPage() {
       </Card>
       {adjust && <AdjustModal open onClose={() => setAdjust(false)} lpn={l.code} sku={balances[0]?.sku.code} />}
       {status && <StatusModal open onClose={() => setStatus(false)} lpn={l.code} />}
+      {merge && <MergeLpnModal open onClose={() => setMerge(false)} lpn={l.code} />}
       {split && <SplitLpnModal open onClose={() => setSplit(false)} lpn={l.code} contents={balances.map((b) => ({ sku_code: b.sku.code, description: b.sku.description, qty: String(b.qty) }))} />}
     </div>
   );

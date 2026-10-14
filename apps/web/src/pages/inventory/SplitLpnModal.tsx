@@ -8,6 +8,31 @@ import { useToast } from '../../components/Toast';
 import { Button, Field, Input, Modal, Select } from '../../components/ui';
 import { fmtQty } from '../../lib/format';
 
+/** Office "Unir tarimas": everything on this storage pallet goes onto another stored pallet of the same model. */
+export function MergeLpnModal({ open, onClose, lpn }: { open: boolean; onClose: () => void; lpn: string }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [to, setTo] = useState('');
+  const m = useMutation({
+    mutationFn: () => pickingApi.mergePallet({ from_lpn_code: lpn, to_lpn_code: to.trim().toUpperCase() }, api.newKey()),
+    onSuccess: (r) => {
+      toast.success(`${r.data.from_lpn} unida a ${r.data.to_lpn}`, `${r.data.moved.map((x) => `${fmtQty(x.qty)} ${x.sku}`).join(' · ')} → ${r.data.to_location ?? ''}. Ahora ${r.data.to_lpn} tiene ${fmtQty(r.data.to_qty)} pzas; ${r.data.from_lpn} queda vacía y su posición libre.`);
+      void qc.invalidateQueries({ queryKey: ['lpn', lpn] });
+      void qc.invalidateQueries({ queryKey: ['lpn-timeline', lpn] });
+      onClose();
+    },
+    onError: (e) => toast.error('No se pudo unir', e),
+  });
+  return (
+    <Modal open={open} onClose={onClose} title={`Unir ${lpn} a otra tarima`} footer={<div className="flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={() => m.mutate()} loading={m.isPending} disabled={!to.trim()}>Unir</Button></div>}>
+      <p className="mb-3 text-sm text-slate-600">Todo lo que hay en {lpn} pasa a la tarima destino, que debe ser de almacén y tener ya el mismo modelo. Las piezas se llevan físicamente a donde está la tarima destino; {lpn} desaparece y su posición queda libre. No se permite si {lpn} tiene surtido planeado.</p>
+      <Field label="Tarima destino (LPN)" required>
+        <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="PLT-2026-00000123" className="font-mono" />
+      </Field>
+    </Modal>
+  );
+}
+
 export function SplitLpnModal({ open, onClose, lpn, contents }: { open: boolean; onClose: () => void; lpn: string; contents: { sku_code: string; description: string; qty: string }[] }) {
   const toast = useToast();
   const qc = useQueryClient();

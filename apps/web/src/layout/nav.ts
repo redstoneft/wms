@@ -92,6 +92,7 @@ export const WM_NAV: NavItem[] = [
   { to: '/wm/pick', label: 'Surtir', icon: '☑', perms: ['picking.execute'], wm: true },
   { to: '/wm/stage', label: 'Staging', icon: '▥', perms: ['picking.execute'], wm: true },
   { to: '/wm/split', label: 'Dividir tarima', icon: '⑂', perms: ['picking.execute'], wm: true },
+  { to: '/wm/merge', label: 'Unir tarimas', icon: '⧉', perms: ['picking.execute'], wm: true },
   { to: '/wm/verify', label: 'Verificar', icon: '✓✓', perms: ['verification.execute'], wm: true },
   { to: '/wm/load', label: 'Cargar', icon: '⇧', perms: ['loading.execute'], wm: true },
 ];
