@@ -1,6 +1,6 @@
 // put-away, transfers, replenishment, cycle counts
 import { api } from './client';
-import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult, PutawayOption, ReceiptPutawayPallet } from './types';
+import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult, PutawayOption, ReceiptPutawayPallet, CountImportResult } from './types';
 
 export type PutawayBatchKind = 'RECEIPT' | 'ASSEMBLY';
 export interface PutawayBatch { kind: PutawayBatchKind; id: string; number: string; status: string; label: string | null; closed_at: string | null; pending: string; total: string }
@@ -53,6 +53,12 @@ export const countsApi = {
   submit: (body: { count_task_id: string; location_barcode: string; lpn_code?: string; barcode: string; qty: string; uom_code?: string }, key: string) =>
     api.postIdem<{ line_id: string; status: string; sku: string; qty: string }>('/counts/submit', body, key),
   finish: (id: string) => api.post<{ status: string; variances: number; lines?: number }>(`/counts/${id}/finish`),
+  /** physical count from a spreadsheet (ubicacion, sku, cantidad[, lpn]); VALIDATE previews, APPLY creates the task for approval */
+  importFile: (file: File, q: { mode: 'VALIDATE' | 'APPLY'; counted_at: string; full: boolean; notes?: string }) => {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return api.upload<CountImportResult>('/counts/import', fd, { mode: q.mode, counted_at: q.counted_at, full: String(q.full), ...(q.notes ? { notes: q.notes } : {}) });
+  },
   approve: (body: { count_task_id: string; decision: 'APPROVE' | 'REJECT'; reason: string }) =>
-    api.post<{ status: string; adjusted: number; skipped: { line_id: string; reason: string }[]; incident_id?: string }>('/counts/approve', body),
+    api.post<{ status: string; adjusted: number; skipped: { line_id: string; reason: string }[]; created_lpns?: { lpn: string; location: string; sku: string; qty: string }[]; incident_id?: string }>('/counts/approve', body),
 };

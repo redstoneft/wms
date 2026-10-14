@@ -1,11 +1,11 @@
 // /storage — office view of put-away tasks, transfers, replenishment (rules + tasks) and cycle counts (create / approve).
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { COUNT_TYPES } from '@wms/shared';
 import { adminApi } from '../api/admin';
 import { layoutApi } from '../api/layout';
 import { countsApi, putawayApi, replenApi, transfersApi } from '../api/storage';
-import type { CountTask } from '../api/types';
+import type { CountImportResult, CountTask } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/Toast';
 import { Alert, Button, Card, Checkbox, Drawer, Field, Input, Modal, PageHeader, Select, StatusChip, Table, Tabs, Textarea } from '../components/ui';
@@ -262,13 +262,14 @@ function Counts() {
   const [status, setStatus] = useState('');
   const q = useQuery({ queryKey: ['counts', status], queryFn: () => countsApi.list(status || undefined), refetchInterval: 15_000 });
   const [open, setOpen] = useState(false);
+  const [openImport, setOpenImport] = useState(false);
   const [sel, setSel] = useState<CountTask | null>(null);
   const view = useQuery({ queryKey: ['count', sel?.id], queryFn: () => countsApi.get(sel!.id), enabled: !!sel });
   const [reason, setReason] = useState('');
   const approve = useMutation({
     mutationFn: (decision: 'APPROVE' | 'REJECT') => countsApi.approve({ count_task_id: sel!.id, decision, reason }),
     onSuccess: (r) => {
-      toast.success(`Conteo ${es(r.status)}`, `${r.adjusted} ajuste(s) aplicados · ${r.skipped.length} omitidos`);
+      toast.success(`Conteo ${es(r.status)}`, `${r.adjusted} ajuste(s) aplicados · ${r.skipped.length} omitidos${r.created_lpns?.length ? ` · tarimas nuevas: ${r.created_lpns.map((c) => c.lpn).join(', ')} (imprime sus etiquetas)` : ''}`);
       void qc.invalidateQueries({ queryKey: ['counts'] });
       void qc.invalidateQueries({ queryKey: ['count', sel?.id] });
     },
@@ -286,9 +287,12 @@ function Counts() {
           ))}
         </Select>
         {can('counts.manage') && (
-          <Button onClick={() => setOpen(true)} className="ml-auto">
-            Nuevo conteo
-          </Button>
+          <div className="ml-auto flex gap-2">
+            <Button variant="secondary" onClick={() => setOpenImport(true)}>
+              Importar conteo (Excel)
+            </Button>
+            <Button onClick={() => setOpen(true)}>Nuevo conteo</Button>
+          </div>
         )}
       </div>
       <Table
@@ -310,6 +314,7 @@ function Counts() {
         ]}
       />
       <CreateCountDrawer open={open} onClose={() => setOpen(false)} />
+      <ImportCountDrawer open={openImport} onClose={() => setOpenImport(false)} />
       <Drawer open={!!sel} onClose={() => setSel(null)} title={`Conteo ${sel?.count_type ?? ''}`} width="max-w-3xl">
         {view.data && (
           <>
@@ -441,6 +446,106 @@ function CreateCountDrawer({ open, onClose }: { open: boolean; onClose: () => vo
           <Textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} />
         </Field>
         <Alert tone="info">Máximo 500 ubicaciones por tarea. Las diferencias generan reconteo por otra persona y luego aprobación de supervisor.</Alert>
+      </div>
+    </Drawer>
+  );
+}
+
+
+/** Physical count captured outside the handheld (Excel/CSV). Preview first; the task then waits for supervisor approval like any count. */
+function ImportCountDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const localNow = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+  const [countedAt, setCountedAt] = useState(localNow);
+  const [full, setFull] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [result, setResult] = useState<CountImportResult | null>(null);
+  const [onlyDiff, setOnlyDiff] = useState(true);
+  const run = useMutation({
+    mutationFn: (mode: 'VALIDATE' | 'APPLY') => countsApi.importFile(file!, { mode, counted_at: new Date(countedAt).toISOString(), full, notes: notes.trim() || undefined }),
+    onSuccess: (r, mode) => {
+      setResult(r);
+      if (mode === 'APPLY') {
+        toast.success(r.status === 'CLOSED' ? 'Conteo sin diferencias' : 'Conteo creado, pendiente de aprobación', `${r.summary.lines} líneas · ${r.summary.variances} diferencias · ${r.summary.moved_since_count} con movimientos después del conteo`);
+        void qc.invalidateQueries({ queryKey: ['counts'] });
+        onClose();
+        setResult(null);
+        setFile(null);
+        if (fileRef.current) fileRef.current.value = '';
+      }
+    },
+    onError: (e) => toast.error('No se pudo importar', e),
+  });
+  const rows = result ? result.lines.filter((l) => !onlyDiff || l.variance !== '0' || l.moved_since_count) : [];
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title="Importar conteo físico"
+      width="max-w-4xl"
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cerrar</Button>
+          <Button variant="secondary" onClick={() => run.mutate('VALIDATE')} disabled={!file} loading={run.isPending && run.variables === 'VALIDATE'}>Previsualizar</Button>
+          <Button onClick={() => run.mutate('APPLY')} disabled={!file || !result || result.errors.length > 0} loading={run.isPending && run.variables === 'APPLY'}>Crear conteo para aprobación</Button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <Alert tone="info">
+          Columnas: <b>ubicacion</b>, <b>sku</b> (clave WMS, clave SAE o GTIN), <b>cantidad</b> en piezas y opcionalmente <b>lpn</b>. Una fila por ubicación y producto. Lo que el sistema tiene en esas ubicaciones y no aparece en el archivo se toma como no encontrado.
+          Las tarimas que se movieron, surtieron o acomodaron <b>después de la fecha del conteo</b> no se ajustan: quedan marcadas para reconteo.
+        </Alert>
+        <Field label="Archivo (.xlsx / .csv)" required>
+          <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setResult(null); }} className="block w-full text-sm" />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Fecha y hora en que se contó" required hint="Momento en que el personal vio físicamente la mercancía, no cuando se capturó el archivo">
+            <Input type="datetime-local" value={countedAt} max={localNow()} onChange={(e) => { setCountedAt(e.target.value); setResult(null); }} />
+          </Field>
+          <Field label="Notas">
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="p. ej. conteo general de racks" />
+          </Field>
+        </div>
+        <Checkbox label="Conteo completo: toda ubicación de rack/picking de las zonas del archivo que no aparezca se toma como vacía" checked={full} onChange={(e) => { setFull(e.target.checked); setResult(null); }} />
+        {result && (
+          <>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <span className="rounded bg-slate-100 px-2 py-1">{result.summary.lines} líneas · {result.summary.locations} ubicaciones</span>
+              <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-800">{result.summary.matched} iguales</span>
+              <span className="rounded bg-rose-50 px-2 py-1 text-rose-800">{result.summary.variances} diferencias</span>
+              <span className="rounded bg-amber-50 px-2 py-1 text-amber-800">{result.summary.moved_since_count} con movimientos después del conteo</span>
+              <span className="rounded bg-sky-50 px-2 py-1 text-sky-800">{result.summary.new_pallets} tarimas nuevas · {result.summary.not_found} no encontradas</span>
+              <span className="rounded bg-slate-100 px-2 py-1">Contado {fmtQty(result.summary.total_counted)} · Sistema {fmtQty(result.summary.total_system)}</span>
+            </div>
+            {result.errors.length > 0 && (
+              <Alert tone="danger">
+                {result.errors.length} fila(s) con error (corrige el archivo antes de aplicar):
+                <ul className="mt-1 list-disc pl-5">{result.errors.slice(0, 30).map((e, i) => <li key={i}>Fila {e.row}{e.column ? ` (${e.column})` : ''}: {e.message}</li>)}</ul>
+              </Alert>
+            )}
+            {result.in_flight.length > 0 && <Alert tone="warning">Tarimas en tránsito en esas ubicaciones (no se cuentan): {result.in_flight.map((p) => `${p.lpn} ${es(p.status)} @ ${p.location}`).join(' · ')}</Alert>}
+            <Checkbox label="Mostrar solo diferencias" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
+            <Table
+              rows={rows}
+              rowKey={(l) => `${l.location}|${l.lpn ?? ''}|${l.sku}`}
+              dense
+              columns={[
+                { key: 'l', header: 'Ubicación', render: (l) => <span className="font-mono">{l.location}</span> },
+                { key: 'p', header: 'LPN', render: (l) => <span className="font-mono">{l.lpn ?? 'nueva'}</span> },
+                { key: 's', header: 'SKU', render: (l) => <span className="font-mono">{l.sku}</span> },
+                { key: 'sys', header: 'Sistema', render: (l) => fmtQty(l.system), align: 'right' },
+                { key: 'c', header: 'Contado', render: (l) => fmtQty(l.counted), align: 'right' },
+                { key: 'v', header: 'Diferencia', render: (l) => <b className={l.variance !== '0' ? 'text-rose-700' : 'text-emerald-700'}>{fmtQty(l.variance)}</b>, align: 'right' },
+                { key: 'm', header: 'Movió después', render: (l) => (l.moved_since_count ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900">sí · no se ajustará</span> : '') },
+                { key: 'n', header: 'Nota', render: (l) => l.note ?? '' },
+              ]}
+            />
+          </>
+        )}
       </div>
     </Drawer>
   );

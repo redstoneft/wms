@@ -217,7 +217,7 @@ export type IncidentSeverity = (typeof INCIDENT_SEVERITIES)[number];
 export const INCIDENT_STATUSES = ['OPEN', 'IN_REVIEW', 'RESOLVED', 'CLOSED', 'REJECTED'] as const;
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
-export const COUNT_TYPES = ['LOCATION', 'SKU', 'ZONE', 'ABC', 'RANDOM', 'INCIDENT', 'SCHEDULED'] as const;
+export const COUNT_TYPES = ['LOCATION', 'SKU', 'ZONE', 'ABC', 'RANDOM', 'INCIDENT', 'SCHEDULED', 'IMPORT'] as const;
 export type CountType = (typeof COUNT_TYPES)[number];
 
 export const LABEL_TYPES = ['LPN', 'LOCATION', 'CASE', 'ORDER', 'STAGING', 'SHIPMENT'] as const;

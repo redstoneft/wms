@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zApproveCount, zCreateCount, zSubmitCount, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
+import { RuleError } from '../../errors.js';
+import { parseFile } from '../imports/service.js';
 import { trainingWhere } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
@@ -42,6 +44,23 @@ export async function countRoutes(app: FastifyInstance) {
   app.post('/counts/:id/finish', { preHandler: app.requirePermission('counts.execute') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
     return withTx((tx) => svc.finishCounting(tx, req.actor!, id));
+  });
+
+  /** Physical count from a spreadsheet (multipart `file`: .xlsx/.csv with ubicacion, sku, cantidad[, lpn]). VALIDATE previews; APPLY creates the task for approval. */
+  app.post('/counts/import', { preHandler: app.requirePermission('counts.manage') }, async (req, reply) => {
+    const q = z.object({
+      mode: z.enum(['VALIDATE', 'APPLY']).default('VALIDATE'),
+      counted_at: z.coerce.date(),
+      full: z.string().optional().transform((v) => v === 'true' || v === '1'),
+      notes: z.string().trim().max(500).optional(),
+    }).parse(req.query);
+    const file = await req.file();
+    if (!file) throw new RuleError('NO_FILE', 'Multipart file field required');
+    const buf = await file.toBuffer();
+    const parsed = await parseFile(buf, file.filename ?? 'conteo.xlsx');
+    const r = await withTx((tx) => svc.importCount(tx, req.actor!, { rows: parsed.rows, parse_errors: parsed.errors, counted_at: q.counted_at, full: q.full, file_name: file.filename ?? 'conteo.xlsx', mode: q.mode, notes: q.notes }));
+    reply.status(r.task_id ? 201 : 200);
+    return r;
   });
 
   app.post('/counts/approve', { preHandler: app.requirePermission('counts.approve') }, async (req) => {

@@ -670,6 +670,15 @@ export interface CountTask {
   notes: string | null;
   lines?: number;
 }
+export interface CountImportLine { location: string; lpn: string | null; sku: string; system: Qty; counted: Qty; variance: Qty; moved_since_count: boolean; note: string | null }
+export interface CountImportResult {
+  status: 'VALIDATED' | 'PENDING_APPROVAL' | 'CLOSED';
+  task_id: Uuid | null;
+  summary: { rows: number; errors: number; locations: number; lines: number; matched: number; variances: number; moved_since_count: number; new_pallets: number; not_found: number; total_counted: Qty; total_system: Qty };
+  errors: { row: number; column: string; message: string }[];
+  lines: CountImportLine[];
+  in_flight: { lpn: string; status: string; location: string }[];
+}
 export interface CountTaskView {
   task: CountTask;
   locations: { id: Uuid; code: string; barcode: string }[];
