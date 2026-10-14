@@ -23,11 +23,20 @@ async function touch(printerId: string, host: string | null) {
   await getDb().printers.update({ where: { id: printerId }, data: { agent_last_seen_at: new Date(), ...(host ? { agent_host: host.slice(0, 120) } : {}) } });
 }
 
+const PYTHON_ACTIVE_MS = 90_000; // the Python station polls every few seconds: seen within this window = it is running
+
+/** A Python station (Windows printer driver) is serving this printer right now. The browser station then stays out of the way. */
+function pythonAgentActive(p: { agent_host: string | null; agent_last_seen_at: Date | null }): string | null {
+  if (!p.agent_host || p.agent_host.startsWith('WebUSB') || !p.agent_last_seen_at) return null;
+  return p.agent_last_seen_at.getTime() > Date.now() - PYTHON_ACTIVE_MS ? p.agent_host : null;
+}
+
 async function pingInfo(p: { id: string; code: string; name: string; dpi: number; label_width_mm: number; label_height_mm: number }) {
   // a station that died mid-print leaves PRINTING claims behind: they go back to the queue here as well as on claim
   await getDb().label_prints.updateMany({ where: { printer_id: p.id, status: 'PRINTING', claimed_at: { lt: new Date(Date.now() - STALE_CLAIM_MS) } }, data: { status: 'QUEUED', claimed_at: null } });
   const queued = await getDb().label_prints.count({ where: { printer_id: p.id, status: 'QUEUED' } });
-  return { printer: p.code, name: p.name, dpi: p.dpi, label_width_mm: p.label_width_mm, label_height_mm: p.label_height_mm, queued };
+  const fresh = await getDb().printers.findUniqueOrThrow({ where: { id: p.id }, select: { agent_host: true, agent_last_seen_at: true } });
+  return { printer: p.code, name: p.name, dpi: p.dpi, label_width_mm: p.label_width_mm, label_height_mm: p.label_height_mm, queued, python_agent: pythonAgentActive(fresh), agent_host: fresh.agent_host, agent_last_seen_at: fresh.agent_last_seen_at };
 }
 
 /** Claims up to `limit` queued labels (oldest first). Claimed = PRINTING; unreported claims expire back to QUEUED. */
@@ -85,11 +94,17 @@ export async function printAgentRoutes(app: FastifyInstance) {
     const p = await getDb().printers.findFirst({ where: { id, mode: 'AGENT', is_active: true } });
     if (!p) throw new NotFoundError('printer', id);
     const host = typeof req.headers['x-agent-host'] === 'string' ? req.headers['x-agent-host'] : `WebUSB · ${req.actor?.username ?? ''}`;
-    await touch(p.id, host);
+    // a Python station already serving this printer keeps its mark: the browser station must not overwrite it
+    if (!pythonAgentActive(p)) await touch(p.id, host);
     return p;
   };
   app.get('/printers/:id/station/ping', { preHandler: app.requirePermission('labels.print') }, async (req) => pingInfo(await stationPrinter(req)));
-  app.get('/printers/:id/station/jobs', { preHandler: app.requirePermission('labels.print') }, async (req) => claimJobsWait(await stationPrinter(req), zLimit.parse(req.query)));
+  app.get('/printers/:id/station/jobs', { preHandler: app.requirePermission('labels.print') }, async (req) => {
+    const p = await stationPrinter(req);
+    // while a Python station prints, the browser station gets nothing to claim (it would only bounce the labels back)
+    if (pythonAgentActive(p)) return { jobs: [], python_agent: pythonAgentActive(p) };
+    return claimJobsWait(p, zLimit.parse(req.query));
+  });
   app.post('/printers/:id/station/jobs/:jobId/result', { preHandler: app.requirePermission('labels.print') }, async (req) => {
     const p = await stationPrinter(req);
     return reportJob(p.id, z.string().uuid().parse((req.params as { jobId: string }).jobId), zResult.parse(req.body));

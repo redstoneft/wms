@@ -147,7 +147,9 @@ export default function PrintStationPage() {
     return ls.get(LS_TOKEN) ?? '';
   });
   const [tokenInput, setTokenInput] = useState('');
-  const [printer, setPrinter] = useState<{ printer: string; name: string; queued: number } | null>(null);
+  const [printer, setPrinter] = useState<{ printer: string; name: string; queued: number; python_agent?: string | null } | null>(null);
+  // a Python station (Windows driver) is already printing for this printer: this window only watches
+  const pythonAgent = printer?.python_agent ?? null;
   const [device, setDevice] = useState<UsbDevice | null>(null);
   const [local, setLocal] = useState<LocalStation | null>(null); // SAE EstacionZebra.exe on this PC, if running
   const localRef = useRef<LocalStation | null>(null);
@@ -160,15 +162,24 @@ export default function PrintStationPage() {
   const cycleStart = useRef(0); // watchdog: when the loop got stuck in a USB call
   const supported = !!usb();
   const secure = window.isSecureContext;
-  const running = !!token && (!!device || !!local) && !paused;
+  const running = !!token && (!!device || !!local) && !paused && !pythonAgent;
 
   const say = useCallback((msg: string, ok = true) => setLog((l) => [{ t: new Date().toLocaleTimeString(), msg, ok }, ...l].slice(0, 80)), []);
 
   // printer behind the token
   useEffect(() => {
     if (!token) { setPrinter(null); return; }
-    agent<{ printer: string; name: string; queued: number }>(token, '/ping').then((p) => { setPrinter(p); setError(null); }).catch((e) => setError(errText(e)));
+    agent<{ printer: string; name: string; queued: number; python_agent?: string | null }>(token, '/ping').then((p) => { setPrinter(p); setError(null); }).catch((e) => setError(errText(e)));
   }, [token]);
+
+  // while the Python station serves the printer, just keep the queue counter fresh and notice when it stops
+  useEffect(() => {
+    if (!token || !pythonAgent) return;
+    const id = window.setInterval(() => {
+      agent<{ printer: string; name: string; queued: number; python_agent?: string | null }>(token, '/ping').then((p) => { setPrinter(p); setError(null); }).catch(() => undefined);
+    }, 15_000);
+    return () => window.clearInterval(id);
+  }, [token, pythonAgent]);
 
   // the SAE station on this PC: checked on load and every 20 s (it may start or stop at any time)
   useEffect(() => {
@@ -232,7 +243,7 @@ export default function PrintStationPage() {
     } catch (e) {
       const raw = errText(e);
       const m = /Access denied/i.test(raw)
-        ? 'La Zebra usa el driver normal de Windows: el navegador no puede tomarla. Cierra esta ventana y ejecuta estacion_wms.bat (con Python instalado corre como programa e imprime por Windows, también para la app de etiquetas SAE).'
+        ? 'La Zebra usa el driver normal de Windows (ZDesigner): el navegador no puede tomarla. En esta PC debe correr la estación Python: tools/print-agent/run_agent.bat (ver README). Mientras corra, esta ventana solo muestra la cola.'
         : /claim interface|already open|in use/i.test(raw) ? `La Zebra está ocupada por otro programa (app de etiquetas SAE u otra ventana de esta estación). Ciérralo e intenta de nuevo. (${raw})` : raw;
       setError(m);
       say(`Prueba falló: ${m}`, false);
@@ -277,8 +288,8 @@ export default function PrintStationPage() {
                 if (/Access denied/i.test(raw)) {
                   // Windows owns the printer (normal printer driver): this browser cannot take it. Keep the label queued for the Python station.
                   await agent(token, `/jobs/${job.id}/result`, { method: 'POST', body: { ok: false, retry: true, error: raw } }).catch(() => undefined);
-                  setError('La Zebra usa el driver normal de Windows, así que el navegador no puede tomarla. Cierra esta ventana y ejecuta estacion_wms.bat: con Python instalado corre como programa e imprime por Windows (y atiende también a la app de etiquetas SAE). La etiqueta sigue en cola.');
-                  say(`SIN ACCESO USB ${job.label_type} ${job.entity}: usa estacion_wms.bat (Python)`, false);
+                  setError('La Zebra usa el driver normal de Windows (ZDesigner): el navegador no puede tomarla. En esta PC debe correr la estación Python: tools/print-agent/run_agent.bat (ver README). La etiqueta sigue en cola.');
+                  say(`SIN ACCESO USB ${job.label_type} ${job.entity}: debe correr run_agent.bat (estación Python)`, false);
                   await sleep(15000);
                   break;
                 }
@@ -297,8 +308,9 @@ export default function PrintStationPage() {
                 setError(raw);
               }
             }
-            const p = await agent<{ printer: string; name: string; queued: number }>(token, '/ping');
+            const p = await agent<{ printer: string; name: string; queued: number; python_agent?: string | null }>(token, '/ping');
             setPrinter(p);
+            if (p.python_agent) { say(`La estación Python en ${p.python_agent} está imprimiendo: esta ventana se queda en espera`); break; }
             if (r.jobs.length === 0) setError((prev) => (prev && /USB|interfaz|endpoint|claim|open|transfer/i.test(prev) ? prev : null));
           } catch (e) {
             setError(errText(e));
@@ -361,7 +373,7 @@ export default function PrintStationPage() {
       <div className="mx-auto max-w-3xl p-4">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Estación de impresión USB · WMS</h1>
-          <span className={`rounded-full px-3 py-1 text-xs font-bold ${running ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-700'}`} data-testid="station-state">{running ? 'ACTIVA' : paused ? 'EN PAUSA' : 'DETENIDA'}</span>
+          <span className={`rounded-full px-3 py-1 text-xs font-bold ${running ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-700'}`} data-testid="station-state">{pythonAgent ? 'EN ESPERA (estación Python activa)' : running ? 'ACTIVA' : paused ? 'EN PAUSA' : 'DETENIDA'}</span>
         </div>
         <p className="mt-1 text-sm text-slate-600">
           Esta ventana, en la PC que tiene la Zebra por USB, imprime todo lo que se manda desde el WMS. Se conecta sola cada vez que se abre: no hay que iniciar sesión ni presionar nada.
@@ -419,7 +431,8 @@ export default function PrintStationPage() {
           <div className="rounded-md bg-white p-3 shadow-sm"><div className="text-xs uppercase text-slate-500">En cola</div><div className="text-lg font-bold" data-testid="station-queued">{printer?.queued ?? '—'}</div></div>
           <div className="rounded-md bg-white p-3 shadow-sm"><div className="text-xs uppercase text-slate-500">Impresas aquí</div><div className="text-lg font-bold">{printed}</div></div>
         </div>
-        {error && <div className="mt-3 rounded-md bg-rose-50 p-3 text-sm text-rose-800" data-testid="station-error">{error}</div>}
+        {pythonAgent && <div className="mt-3 rounded-md bg-emerald-50 p-3 text-sm text-emerald-800" data-testid="station-python">La Zebra ya la está atendiendo la <b>estación Python</b> en <b>{pythonAgent}</b> (imprime por el driver de Windows). Esta ventana no hace falta: se queda en espera y solo muestra la cola. Si la estación Python se detiene, esta ventana retoma sola.</div>}
+        {error && !pythonAgent && <div className="mt-3 rounded-md bg-rose-50 p-3 text-sm text-rose-800" data-testid="station-error">{error}</div>}
 
         <div className="mt-3 rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase text-slate-500">Actividad</div>

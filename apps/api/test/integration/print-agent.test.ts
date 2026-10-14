@@ -81,8 +81,16 @@ describe('USB print station (print agent)', () => {
   it('WebUSB station: a logged-in browser tab claims the queued labels of the printer with its session and reports them', async () => {
     const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'estación webusb' });
     expect(p.status).toBe(200);
+    // the Python station (seen seconds ago as PC-ETIQUETAS) owns the printer: the browser station gets no jobs and keeps that mark
+    const busy = await sup.get(`/printers/${printerId}/station/ping`);
+    expect(busy.body.python_agent).toBe('PC-ETIQUETAS');
+    expect((await sup.get(`/printers/${printerId}/station/jobs?limit=5`)).body.jobs).toHaveLength(0);
+    expect((await sup.get('/printers')).body.find((x: { id: string }) => x.id === printerId).agent_host).toBe('PC-ETIQUETAS');
+    // once the Python station is gone (not seen for a while) the browser station takes over
+    await sql(`UPDATE printers SET agent_last_seen_at = now() - interval '10 minutes' WHERE id = '${printerId}'`);
     const ping = await sup.get(`/printers/${printerId}/station/ping`);
     expect(ping.status, JSON.stringify(ping.body)).toBe(200);
+    expect(ping.body.python_agent).toBeNull();
     expect(ping.body.queued).toBeGreaterThanOrEqual(1);
     const jobs = await sup.get(`/printers/${printerId}/station/jobs?limit=5`);
     expect(jobs.status).toBe(200);
