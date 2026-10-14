@@ -9,8 +9,8 @@ import { labelsApi } from '../api/labels';
 import { inventoryApi } from '../api/inventory';
 import { masterdataApi } from '../api/masterdata';
 import type { Receipt, ReceiveScanResult, Sku } from '../api/types';
+import { ProductInput } from '../components/ProductInput';
 import { QtyPad } from '../components/QtyPad';
-import { ScanInput } from '../components/ScanInput';
 import { fmtQty, fmtUom, toBigInt } from '../lib/format';
 import { LabelPrintPanel } from './LabelPrintPanel';
 import { BigButton, BigValue, useWm, WmList, WmShell } from './WmShell';
@@ -39,6 +39,8 @@ function Flow() {
   const [damaged, setDamaged] = useState(false);
   // the quantity arrives on this many pallets of the same product (new pallets only)
   const [pallets, setPallets] = useState(1);
+  // cases × pieces per case helper (products without a CASE unit): fills the quantity in pieces
+  const [cases, setCases] = useState({ n: '', per: '' });
   const [lot, setLot] = useState('');
   const [expiry, setExpiry] = useState('');
   const [last, setLast] = useState<ReceiveScanResult | null>(null);
@@ -93,7 +95,7 @@ function Flow() {
         if (!r.sku.is_active) throw new ApiError(404, { error: 'BARCODE_UNKNOWN', message: `Código ${code} corresponde al SKU inactivo ${r.sku.code}` });
         hit = { sku: await masterdataApi.sku(r.sku.id), uom: r.uom_code };
       } catch (e) {
-        wm.fail(e instanceof ApiError ? e : new ApiError(404, { error: 'BARCODE_UNKNOWN', message: `Código ${code} no corresponde a ningún SKU activo` }));
+        wm.fail(e instanceof ApiError && e.code !== 'NOT_FOUND' && e.code !== 'SKU_NOT_FOUND' ? e : new ApiError(404, { error: 'PRODUCTO_NO_ENCONTRADO', message: `${code} NO ESTÁ EN EL CATÁLOGO · escribe la clave o el nombre; si es nuevo, oficina debe darlo de alta` }));
         return;
       }
       setBarcode(code);
@@ -243,7 +245,8 @@ function Flow() {
       <div>
         <StepBar text="2 · ESCANEA EL PRODUCTO" />
         {header}
-        <ScanInput label="Código de barras del producto" onScan={onProductScan} testId="scan-product" />
+        <ProductInput label="Escanea el código de barras, o escribe la clave o el nombre" onPick={onProductScan} disabled={busy} testId="scan-product" />
+        <div className="mt-1 text-xs text-slate-400">Si el código no se encuentra: escribe la clave (p. ej. SIC28G) o parte del nombre y toca el producto. Si es un producto nuevo que no aparece, avisa a oficina para que lo dé de alta antes de recibirlo.</div>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <BigButton tone="neutral" onClick={closeLpn} disabled={!currentLpn || busy} testId="close-lpn">
             Cerrar LPN
@@ -393,7 +396,15 @@ function Flow() {
             </div>
           </div>
         )}
-        <QtyPad uoms={sku.uoms} defaultUom={scannedUom} hint={pallets > 1 ? `CANTIDAD TOTAL DE LAS ${pallets} TARIMAS` : undefined} onConfirm={submitQty} onCancel={() => setStep('SCAN')} busy={busy} confirmLabel={pallets > 1 ? `RECIBIR EN ${pallets} TARIMAS` : 'RECIBIR'} />
+        {!sku.uoms.some((u) => u.uom_code === 'CASE') && (
+          <div className="mb-3 flex items-center gap-2 rounded-2xl bg-slate-800 px-3 py-2" data-testid="cases-helper">
+            <div className="text-xs font-bold uppercase text-slate-400">Cajas ×</div>
+            <input inputMode="numeric" value={cases.n} onChange={(e) => setCases({ ...cases, n: e.target.value.replace(/\D/g, '') })} placeholder="cajas" className="h-12 w-20 rounded-lg bg-slate-900 px-2 text-center font-mono text-xl text-white" aria-label="cajas" />
+            <input inputMode="numeric" value={cases.per} onChange={(e) => setCases({ ...cases, per: e.target.value.replace(/\D/g, '') })} placeholder="pzas/caja" className="h-12 w-24 rounded-lg bg-slate-900 px-2 text-center font-mono text-xl text-white" aria-label="piezas por caja" />
+            <div className="flex-1 text-right font-mono text-xl font-black">{cases.n && cases.per ? `= ${(Number(cases.n) * Number(cases.per)).toLocaleString('es-MX')} pzas` : ''}</div>
+          </div>
+        )}
+        <QtyPad key={cases.n && cases.per ? `c${Number(cases.n) * Number(cases.per)}` : 'manual'} initial={cases.n && cases.per ? String(Number(cases.n) * Number(cases.per)) : ''} uoms={sku.uoms} defaultUom={scannedUom} hint={pallets > 1 ? `CANTIDAD TOTAL DE LAS ${pallets} TARIMAS` : undefined} onConfirm={(q, u) => { setCases({ n: '', per: '' }); return submitQty(q, u); }} onCancel={() => { setCases({ n: '', per: '' }); setStep('SCAN'); }} busy={busy} confirmLabel={pallets > 1 ? `RECIBIR EN ${pallets} TARIMAS` : 'RECIBIR'} />
       </div>
     );
   }

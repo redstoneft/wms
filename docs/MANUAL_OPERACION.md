@@ -167,6 +167,10 @@ Si escaneaste la tarima de almacén pero la pieza ya estaba surtida para un pedi
 
 Las cajas organizadoras (claves CAPM…) son el único producto que se acomoda en el piso (HID-PISO-…): el acomodo no ofrece ni acepta piso para otra mercancía (`COMPAT_GROUP_NOT_ALLOWED`). En el surtido, las cajas nunca comparten tarima de salida con otra mercancía: si la tarima abierta trae otra cosa, el sistema abre una tarima nueva solo y avisa **TARIMA NUEVA … LAS CAJAS VAN SOLAS**; etiquétala como cualquier otra. Las cajas sí pueden ir a rack.
 
+## RECIBIR: PRODUCTO POR CÓDIGO, CLAVE O NOMBRE; CAJAS × PIEZAS
+
+En Recibir, el producto se puede escanear o escribir (clave o parte del nombre) y tocarlo en la lista. Si un producto no aparece, oficina debe darlo de alta (o esperar la sincronización con SAE, cada 30 min) antes de recibirlo. Para productos sin unidad "caja" configurada, el paso de cantidad tiene **Cajas × piezas/caja**: se teclean las cajas y las piezas por caja y la cantidad total se llena sola.
+
 ## RECIBIR UN MODELO EN VARIAS TARIMAS
 
 En Recibir, al capturar la cantidad de un producto nuevo (no al agregar a una tarima abierta), elige **¿En cuántas tarimas viene?** con los botones − / +. La cantidad que tecleas es el TOTAL: el sistema la reparte en partes iguales (el residuo va a las primeras), crea cada tarima ya cerrada con su tarea de acomodo y muestra la lista para **imprimir las etiquetas**. Si una recepción ya se completó o cerró y faltó capturar algo, el administrador la reabre desde la oficina (Recepciones → ficha → **Reabrir recepción**, con motivo): vuelve a "en proceso", se escanea lo que faltó y se completa otra vez.
