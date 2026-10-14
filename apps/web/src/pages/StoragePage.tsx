@@ -522,12 +522,12 @@ function ImportCountDrawer({ open, onClose }: { open: boolean; onClose: () => vo
               <span className="rounded bg-slate-100 px-2 py-1">Contado {fmtQty(result.summary.total_counted)} · Sistema {fmtQty(result.summary.total_system)}</span>
             </div>
             {result.errors.length > 0 && (
-              <Alert tone="danger">
+              <Alert tone="error">
                 {result.errors.length} fila(s) con error (corrige el archivo antes de aplicar):
                 <ul className="mt-1 list-disc pl-5">{result.errors.slice(0, 30).map((e, i) => <li key={i}>Fila {e.row}{e.column ? ` (${e.column})` : ''}: {e.message}</li>)}</ul>
               </Alert>
             )}
-            {result.in_flight.length > 0 && <Alert tone="warning">Tarimas en tránsito en esas ubicaciones (no se cuentan): {result.in_flight.map((p) => `${p.lpn} ${es(p.status)} @ ${p.location}`).join(' · ')}</Alert>}
+            {result.in_flight.length > 0 && <Alert tone="warn">Tarimas en tránsito en esas ubicaciones (no se cuentan): {result.in_flight.map((p) => `${p.lpn} ${es(p.status)} @ ${p.location}`).join(' · ')}</Alert>}
             <Checkbox label="Mostrar solo diferencias" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
             <Table
               rows={rows}
