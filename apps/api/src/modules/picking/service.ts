@@ -8,6 +8,7 @@ import { resolveSkuBarcode, toBaseQty } from '../../lib/lookup.js';
 import { changeStatus, createLpn, getBalance, lockBalances, lockLocationByBarcode, lockLpn, lockLpnByCode, moveLpn, recordMovement, transferBetweenLpns, type LpnRow } from '../../inventory/ledger.js';
 import { createIncident } from '../incidents/service.js';
 import { createPutawayTask } from '../putaway/service.js';
+import { getSettings } from '../settings/routes.js';
 
 // ---------------------------------------------------------------------
 // Pick task generation (route = location pick_sequence) + staging assignment
@@ -755,6 +756,7 @@ export async function freePickScan(tx: Tx, ctx: ActorContext, input: { pick_task
   const task = trows[0];
   if (!task) throw new NotFoundError('pick task', input.pick_task_id);
   if (task.mode !== 'FREE') throw new RuleError('NOT_FREE_TASK', 'This is a directed pick task: follow its lines');
+  if (!(await getSettings(tx)).free_pick_enabled) throw new RuleError('FREE_PICK_DISABLED', 'El surtido libre está desactivado: cierra esta tarea y captura el pedido con sus modelos');
   if (task.status === 'PENDING') await startPickTask(tx, ctx, task.id);
   else if (task.status !== 'IN_PROGRESS') throw new RuleError('TASK_STATUS', `Task is ${task.status}`);
   // shared picking: any picker can add pallets to an open free pick

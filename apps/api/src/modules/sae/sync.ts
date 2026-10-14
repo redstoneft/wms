@@ -15,7 +15,7 @@ import type { Tx } from '../../db.js';
 import { getDb, withTx } from '../../db.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
-import { cancelOrder, createOrder } from '../orders/service.js';
+import { cancelOrder, createOrder, autoPickCustomers, autoStartPicking } from '../orders/service.js';
 import { getSettings } from '../settings/routes.js';
 import { createIncident } from '../incidents/service.js';
 import { fetchAll, key, num, requireSource, saeConfig } from './supabase.js';
@@ -753,8 +753,16 @@ export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED'
             let orderNumber = number || `PED-${p.id.slice(0, 8)}`;
             const clash = await tx.orders.findUnique({ where: { order_number: orderNumber } });
             if (clash && clash.external_ref !== ref) orderNumber = `${orderNumber}-${customer.code}`;
-            await createOrder(tx, ctx, { order_number: orderNumber, customer_code: customer.code, destination, order_date: p.fecha_pedido ? new Date(p.fecha_pedido) : undefined, priority, external_ref: ref, notes, source: 'SAE', lines: resolved.map((r) => ({ sku_code: r.sku_code, qty: r.qty, uom_code: 'PIECE' })) });
+            const made = await createOrder(tx, ctx, { order_number: orderNumber, customer_code: customer.code, destination, order_date: p.fecha_pedido ? new Date(p.fecha_pedido) : undefined, priority, external_ref: ref, notes, source: 'SAE', lines: resolved.map((r) => ({ sku_code: r.sku_code, qty: r.qty, uom_code: 'PIECE' })) });
             c.created++;
+            // customers with automatic picking (setting): the order is accepted, planned and handed to the pickers right away
+            if (autoPickCustomers((await getSettings(tx)).auto_pick_customer_codes).has(customer.code.toUpperCase())) {
+              try {
+                await autoStartPicking(tx, ctx, made.id);
+              } catch (e) {
+                c.err(orderNumber, `auto-surtido: ${(e as Error).message.slice(0, 150)}`);
+              }
+            }
           }
         });
       } catch (e) {

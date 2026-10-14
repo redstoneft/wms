@@ -15,7 +15,7 @@ export default function SettingsPage() {
     if (q.data) setF(q.data);
   }, [q.data]);
   const save = useMutation({
-    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin, training_required: f!.training_required ?? true, orders_import_since: f!.orders_import_since ?? '' }),
+    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin, training_required: f!.training_required ?? true, orders_import_since: f!.orders_import_since ?? '', free_pick_enabled: f!.free_pick_enabled ?? true, auto_pick_customer_codes: f!.auto_pick_customer_codes ?? '' }),
     onSuccess: () => { toast.success('Configuración guardada (auditada)'); void qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e) => toast.error('No se pudo guardar', e),
   });
@@ -38,6 +38,10 @@ export default function SettingsPage() {
             <Input type="date" value={f.orders_import_since ?? ''} onChange={(e) => setF({ ...f, orders_import_since: e.target.value })} />
           </Field>
           <Checkbox label="Capacitación guiada obligatoria en modo almacén (todos los usuarios excepto ADMIN). Desmarcada = opcional: cada usuario la encuentra en el inicio del modo almacén y la toma cuando quiera." checked={f.training_required ?? true} onChange={(e) => setF({ ...f, training_required: e.target.checked })} />
+          <Checkbox label="Surtido libre en la handheld (armar un pedido escaneando tarimas, sin capturar sus modelos). Desmarcado: todo pedido debe tener sus modelos antes de surtirse." checked={f.free_pick_enabled ?? true} onChange={(e) => setF({ ...f, free_pick_enabled: e.target.checked })} />
+          <Field label="Clientes con surtido automático" hint="Códigos de cliente separados por coma. Sus pedidos, al importarse de SAE o capturarse, se aceptan, se planean y aparecen de inmediato en Surtir (estado SURTIENDO).">
+            <Input value={f.auto_pick_customer_codes ?? ''} onChange={(e) => setF({ ...f, auto_pick_customer_codes: e.target.value })} placeholder="Ej. 3, 206, 207, 208, 209, WMT" className="font-mono" />
+          </Field>
           <Alert tone="info">La regla de liberación de embarques (cargado = requerido por pedido y SKU) no es configurable por diseño.</Alert>
           <div>
             <Button onClick={() => save.mutate()} loading={save.isPending}>Guardar</Button>

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { adminApi } from '../api/admin';
 import { masterdataApi } from '../api/masterdata';
 import { ordersApi } from '../api/orders';
 import { wmTasksApi, type SelfTaskKind } from '../api/wmTasks';
@@ -37,6 +38,8 @@ function Flow() {
   const [customerQ, setCustomerQ] = useState('');
   const [destination, setDestination] = useState('');
   const customers = useQuery({ queryKey: ['customers', 'all'], queryFn: () => masterdataApi.parties('customers', { limit: 500 }), enabled: kind === 'PICK' && orderExists === false });
+  const settings = useQuery({ queryKey: ['settings'], queryFn: adminApi.settings, staleTime: 60_000 });
+  const freePick = settings.data?.free_pick_enabled ?? true;
   const customerRows = useMemo(() => {
     const rows = (customers.data as unknown as { items?: { code: string; name: string }[] } | { code: string; name: string }[] | undefined);
     const list = Array.isArray(rows) ? rows : rows?.items ?? [];
@@ -109,15 +112,21 @@ function Flow() {
   if (kind === 'PICK' && orderExists === false && !customerCode)
     return (
       <div>
-        <StepBar text="3 · PEDIDO NUEVO · ¿DE QUÉ CLIENTE ES?" />
+        <StepBar text={freePick ? '3 · PEDIDO NUEVO · ¿DE QUÉ CLIENTE ES?' : '3 · PEDIDO NUEVO · CAPTÚRALO CON SUS MODELOS'} />
         <BigValue label="Pedido nuevo" value={reference} tone="accent" />
         <BigButton tone="primary" className="mt-3" onClick={() => nav('/wm/new-order')} testId="new-task-capture-order">
-          Mejor capturar el pedido (productos y cantidades)
+          {freePick ? 'Mejor capturar el pedido (productos y cantidades)' : 'Capturar el pedido (productos y cantidades)'}
         </BigButton>
-        <div className="mt-2 text-xs text-slate-400">Si eliges cliente aquí, el pedido se arma escaneando tarimas (surtido libre).</div>
-        <input value={customerQ} onChange={(e) => setCustomerQ(e.target.value)} placeholder="Buscar cliente…" className="mt-3 w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-xl text-white" data-testid="new-task-customer-q" />
+        {!freePick && (
+          <>
+            <div className="mt-2 text-sm text-amber-200">El surtido libre está desactivado: el pedido {reference} no existe en el WMS. Captúralo con sus modelos y cantidades, o pide a oficina que lo importe de SAE.</div>
+            <BigButton tone="neutral" className="mt-3" onClick={() => { setReference(''); setOrderExists(null); }}>Regresar</BigButton>
+          </>
+        )}
+        {freePick && <div className="mt-2 text-xs text-slate-400">Si eliges cliente aquí, el pedido se arma escaneando tarimas (surtido libre).</div>}
+        {freePick && <input value={customerQ} onChange={(e) => setCustomerQ(e.target.value)} placeholder="Buscar cliente…" className="mt-3 w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-xl text-white" data-testid="new-task-customer-q" />}
         <div className="mt-2 grid gap-2">
-          {customerRows.map((c) => (
+          {freePick && customerRows.map((c) => (
             <BigButton key={c.code} tone="neutral" onClick={() => { setCustomerCode(c.code); wm.ok(`CLIENTE ${c.name}`); }} testId={`new-task-customer-${c.code}`}>
               {c.name}
               <span className="block text-sm font-normal normal-case text-slate-300">{c.code}</span>

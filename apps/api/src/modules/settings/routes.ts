@@ -11,6 +11,8 @@ export const DEFAULT_SETTINGS = {
   auto_print_lpn_labels: false, // labels are printed only when someone presses Imprimir
   training_required: true,
   orders_import_since: '',
+  free_pick_enabled: true,
+  auto_pick_customer_codes: '',
 } as const;
 
 export type SettingsShape = { [K in keyof typeof DEFAULT_SETTINGS]: (typeof DEFAULT_SETTINGS)[K] extends string ? string : (typeof DEFAULT_SETTINGS)[K] extends boolean ? boolean : number };

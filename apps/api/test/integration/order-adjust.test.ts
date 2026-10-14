@@ -325,3 +325,27 @@ describe('merma (damaged pieces) from the handheld', () => {
     await expectReconciled();
   });
 });
+
+describe('free picking switch and automatic picking per customer', () => {
+  it('with free_pick_enabled off a new order cannot be built by scanning; auto_pick_customer_codes sends a captured order straight to PICKING', async () => {
+    const adminC = await userWithRoles('oaadm', ['ADMIN']);
+    const enroll = await adminC.post('/auth/mfa/enroll');
+    const { totp } = await import('../../src/lib/crypto.js');
+    expect((await adminC.post('/auth/mfa/enroll/confirm', { code: totp(enroll.body.secret) })).status).toBe(200);
+    expect((await adminC.put('/settings', { free_pick_enabled: false, auto_pick_customer_codes: `${f.customer.code}, WMT` })).status).toBe(200);
+    try {
+      const free = await picker.post('/wm/tasks', { kind: 'PICK', reference: `LIBRE-${f.tag}`, purpose: 'pedido armado en piso', new_order: { customer_code: f.customer.code } });
+      expect(free.status).toBe(422);
+      expect(free.body.error).toBe('FREE_PICK_DISABLED');
+      await storedPallet(f, 0, f.reserve[11]!.id, 40n);
+      const o = await sup.post('/orders', { order_number: `AUTO-${f.tag}`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 10, uom_code: 'PIECE' }] });
+      expect(o.status, JSON.stringify(o.body)).toBe(201);
+      const od = await sup.get(`/orders/${o.body.id}`);
+      expect(['ALLOCATED', 'PICKING']).toContain(od.body.status); // planned, with its pick task waiting in Surtir
+      const tasks = await sql<{ n: bigint }>(`SELECT count(*)::bigint AS n FROM pick_tasks WHERE order_id = '${o.body.id}' AND status IN ('PENDING','IN_PROGRESS')`);
+      expect(Number(tasks[0]!.n)).toBe(1);
+    } finally {
+      await adminC.put('/settings', { free_pick_enabled: true, auto_pick_customer_codes: '' });
+    }
+  });
+});

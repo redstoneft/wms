@@ -10,6 +10,7 @@ import { createLpn, lockBalances, lockLocationByBarcode, lockLpn, lockLpnByCode,
 import { toBaseQty } from '../../lib/lookup.js';
 import { createReceipt } from '../inbound/service.js';
 import { adjustInventory, changeInventoryStatus } from '../inventory/service.js';
+import { getSettings } from '../settings/routes.js';
 import { finishCounting, submitCount } from '../counts/service.js';
 import { createCountTask } from '../counts/service.js';
 import { resolveImportSku } from '../imports/service.js';
@@ -30,6 +31,7 @@ export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskI
       const order = await tx.orders.findFirst({ where: { order_number: { equals: number, mode: 'insensitive' } } });
       if (!order) {
         if (!input.new_order) throw new NotFoundError('order', number);
+        if (!(await getSettings(tx)).free_pick_enabled) throw new RuleError('FREE_PICK_DISABLED', 'El surtido libre está desactivado: captura el pedido con sus modelos en "Capturar pedido" o pide a oficina que lo importe de SAE');
         // a brand-new order built on the floor: free picking (scan pallets whenever, close when done)
         const customer = await tx.customers.findUnique({ where: { code: input.new_order.customer_code } });
         if (!customer) throw new NotFoundError('customer', input.new_order.customer_code);

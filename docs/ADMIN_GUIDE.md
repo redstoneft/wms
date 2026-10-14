@@ -56,3 +56,9 @@ Todo lo que se hace en el almacén escuela (`ESCUELA`: recepciones, pedidos, emb
 ## Nombres de SKU
 
 `Datos maestros → SKUs → clic en el SKU → Descripción`. Un nombre editado a mano queda **fijado**: la sincronización con SAE (cada 30 min) actualiza todo lo demás pero no lo sobrescribe. La casilla "Conservar este nombre aunque SAE mande otro" muestra el estado y permite liberar el nombre para que SAE vuelva a mandar.
+
+
+## Surtido libre y surtido automático por cliente (14-oct-2026)
+
+- **Surtido libre** (Configuración): permite armar un pedido en la handheld escaneando tarimas sin capturar sus modelos. Apagado (valor actual): todo pedido debe tener sus modelos antes de surtirse (Capturar pedido o importación de SAE); la handheld lo explica y el API responde `FREE_PICK_DISABLED`.
+- **Clientes con surtido automático** (Configuración, códigos separados por coma; hoy Walmart: 3, 206, 207, 208, 209, WMT): sus pedidos, al importarse de SAE o capturarse en oficina, se aceptan, se planean con lo que hay y se crea su tarea de surtido de inmediato; aparecen en Surtir sin pasar por oficina. Queda auditado como `order.auto_pick`.

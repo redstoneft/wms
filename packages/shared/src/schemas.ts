@@ -783,6 +783,10 @@ export const zSettings = z.object({
   training_required: z.boolean().optional(),
   /** platform orders (Walmart/HEB POs) dated before this day are never imported: the go-live cutoff */
   orders_import_since: z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]).optional(),
+  /** the handheld may build an order by scanning pallets (no lines in advance); off = every order needs its lines first */
+  free_pick_enabled: z.boolean().optional(),
+  /** customer codes (comma separated) whose orders go straight to picking when imported or captured: accepted, planned, task created */
+  auto_pick_customer_codes: z.string().trim().max(500).optional(),
 });
 
 export type LoginInput = z.infer<typeof zLogin>;

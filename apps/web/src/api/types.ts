@@ -1110,6 +1110,9 @@ export interface Settings {
   require_mfa_for_admin: boolean;
   training_required?: boolean;
   orders_import_since?: string;
+  auto_print_lpn_labels?: boolean;
+  free_pick_enabled?: boolean;
+  auto_pick_customer_codes?: string;
 }
 export interface Authorization {
   id: Uuid;

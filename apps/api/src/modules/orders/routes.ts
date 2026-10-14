@@ -1,3 +1,4 @@
+import { getSettings } from '../settings/routes.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zAdjustOrderLines, zAllocateOrder, zCancelOrder, zCreateOrder, zForceDeliver, zUuid, zReopenOrder } from '@wms/shared';
@@ -49,7 +50,11 @@ export async function orderRoutes(app: FastifyInstance) {
 
   app.post('/orders', { preHandler: app.requirePermission('orders.manage') }, async (req, reply) => {
     const body = zCreateOrder.parse(req.body);
-    const o = await withTx((tx) => svc.createOrder(tx, req.actor!, { ...body, source: 'MANUAL' }));
+    const o = await withTx(async (tx) => {
+      const made = await svc.createOrder(tx, req.actor!, { ...body, source: 'MANUAL' });
+      if (svc.autoPickCustomers((await getSettings(tx)).auto_pick_customer_codes).has(body.customer_code.toUpperCase())) await svc.autoStartPicking(tx, req.actor!, made.id);
+      return tx.orders.findUniqueOrThrow({ where: { id: made.id }, include: { lines: true } });
+    });
     reply.status(201);
     return o;
   });

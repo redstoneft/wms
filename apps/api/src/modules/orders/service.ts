@@ -584,3 +584,34 @@ export async function adjustOrderLines(tx: Tx, ctx: ActorContext, input: { order
   await audit(tx, ctx, { action: 'order.adjust_lines', entity_type: 'order', entity_id: o.id, before: { status: o.status }, after: { status, changes, picking, incident_id: inc.id }, reason: input.reason });
   return { order_id: o.id, order_number: o.order_number, status, changes, picking, incident_id: inc.id };
 }
+
+/** Customer codes whose orders start picking by themselves (setting auto_pick_customer_codes, comma separated). */
+export function autoPickCustomers(codes: string | null | undefined): Set<string> {
+  return new Set((codes ?? '').split(/[,;\s]+/).map((c) => c.trim().toUpperCase()).filter(Boolean));
+}
+
+/**
+ * An order of a customer with automatic picking (Walmart…) goes straight to the floor: accepted, planned with what
+ * there is, and its pick task created, so it shows up in Surtir without anyone touching it in the office.
+ */
+export async function autoStartPicking(tx: Tx, ctx: ActorContext, orderId: string): Promise<{ status: string; task_id: string | null; short: string[] }> {
+  let o = await tx.orders.findUniqueOrThrow({ where: { id: orderId }, select: { id: true, status: true, order_number: true } });
+  if (o.status === 'IMPORTED') {
+    await acceptOrder(tx, ctx, o.id);
+    o = await tx.orders.findUniqueOrThrow({ where: { id: orderId }, select: { id: true, status: true, order_number: true } });
+  }
+  let short: string[] = [];
+  if (['ACCEPTED', 'PARTIALLY_ALLOCATED'].includes(o.status)) {
+    const a = await allocateOrder(tx, ctx, { order_id: o.id, allow_partial: true });
+    short = a.lines.filter((l) => l.short > 0n).map((l) => `${l.sku}: faltan ${l.short}`);
+  }
+  const open = await tx.pick_tasks.findFirst({ where: { order_id: o.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, select: { id: true } });
+  let taskId = open?.id ?? null;
+  if (!taskId) {
+    const planned = await tx.allocations.count({ where: { order_line: { order_id: o.id }, status: 'ACTIVE' } });
+    if (planned > 0) taskId = (await createPickTask(tx, ctx, o.id)).task.id;
+  }
+  const fresh = await tx.orders.findUniqueOrThrow({ where: { id: orderId }, select: { status: true } });
+  await audit(tx, ctx, { action: 'order.auto_pick', entity_type: 'order', entity_id: o.id, after: { status: fresh.status, task_id: taskId, short } });
+  return { status: fresh.status, task_id: taskId, short };
+}
