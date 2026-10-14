@@ -34,6 +34,12 @@ export async function adjustInventory(
     movementId = await createInventory(tx, ctx, { movement_type: 'ADJUST_IN', to_lpn: lpn, sku_id: sku.id, qty: base, uom_code: input.uom_code, uom_qty: input.qty, status: 'AVAILABLE', location_id: lpn.current_location_id, reason: input.reason, incident_id: input.incident_id ?? null, reference_type: 'adjustment' });
   } else {
     movementId = await removeInventory(tx, ctx, { movement_type: 'ADJUST_OUT', from_lpn: lpn, sku_id: sku.id, qty: base, uom_code: input.uom_code, uom_qty: input.qty, status: 'AVAILABLE', reason: input.reason, incident_id: input.incident_id ?? null, reference_type: 'adjustment' });
+    // a pallet adjusted down to nothing stops existing: it leaves the map and frees its position
+    const left = await tx.inventory_balances.count({ where: { lpn_id: lpn.id, qty: { gt: 0n } } });
+    if (left === 0 && ['STORED', 'OPEN'].includes(lpn.status)) {
+      await tx.lpns.update({ where: { id: lpn.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+      await tx.putaway_tasks.updateMany({ where: { lpn_id: lpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
+    }
   }
   let incidentId = input.incident_id ?? null;
   if (!incidentId) {

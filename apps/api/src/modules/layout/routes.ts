@@ -308,6 +308,7 @@ export async function layoutRoutes(app: FastifyInstance) {
         LEFT JOIN LATERAL (SELECT s.code, s.description, s.color, b.qty FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = l.id AND b.qty > 0 ORDER BY b.qty DESC LIMIT 1) m ON true
         LEFT JOIN LATERAL (SELECT count(DISTINCT b.sku_id) AS n FROM inventory_balances b WHERE b.lpn_id = l.id AND b.qty > 0) c ON true
        WHERE l.warehouse_id = ${wh.id}::uuid AND l.current_location_id IS NOT NULL AND l.status NOT IN ('SHIPPED','CANCELLED','CONSUMED')
+         AND (l.status = 'OPEN' OR COALESCE(c.n, 0) > 0)
        ORDER BY l.current_location_id, l.created_at`;
     const lpns = lpnRows.map((r) => ({ location_id: r.location_id, lpn: r.lpn, status: r.status, sku: r.sku, description: r.description, qty: r.qty === null ? '0' : r.qty.toString(), skus: Number(r.skus), color: r.sku ? productColor(r.sku, r.description, r.color) : null }));
     const num = (v: unknown) => Number(v);
