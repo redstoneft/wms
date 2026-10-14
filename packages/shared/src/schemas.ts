@@ -551,6 +551,8 @@ export const zSubmitCount = z.object({
   barcode: zBarcode,
   qty: zQtyOrZero,
   uom_code: zUom.optional(),
+  /** moment the handheld scanned the location: the count's observation time (server time when absent or implausible) */
+  scanned_at: z.coerce.date().optional(),
 });
 export const zApproveCount = z.object({
   count_task_id: zUuid,

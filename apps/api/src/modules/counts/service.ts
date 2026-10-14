@@ -112,7 +112,7 @@ export async function taskForCounter(tx: Tx, taskId: string, actor: ActorContext
   const locations = await tx.locations.findMany({ where: { id: { in: scope.location_ids } }, select: { id: true, code: true, barcode: true }, orderBy: { code: 'asc' } });
   const lines = await tx.$queryRaw<Record<string, unknown>[]>`
     SELECT cl.id, cl.status, loc.code AS location_code, l.code AS lpn_code, s.code AS sku_code, s.description,
-           cl.counted_qty::text AS counted_qty, cl.recount_qty::text AS recount_qty,
+           cl.counted_qty::text AS counted_qty, cl.recount_qty::text AS recount_qty, cl.counted_at, cl.recounted_at,
            CASE WHEN ${task.is_blind && !actor.permissions.has('counts.approve')} THEN NULL ELSE cl.system_qty::text END AS system_qty,
            CASE WHEN ${task.is_blind && !actor.permissions.has('counts.approve')} THEN NULL ELSE cl.variance::text END AS variance
       FROM count_lines cl JOIN locations loc ON loc.id = cl.location_id LEFT JOIN lpns l ON l.id = cl.lpn_id JOIN skus s ON s.id = cl.sku_id
@@ -121,7 +121,10 @@ export async function taskForCounter(tx: Tx, taskId: string, actor: ActorContext
 }
 
 /** Counter submits what they physically see for (location, lpn?, sku). */
-export async function submitCount(tx: Tx, ctx: ActorContext, input: { count_task_id: string; location_barcode: string; lpn_code?: string; barcode: string; qty: bigint; uom_code?: UomCode }) {
+export async function submitCount(tx: Tx, ctx: ActorContext, input: { count_task_id: string; location_barcode: string; lpn_code?: string; barcode: string; qty: bigint; uom_code?: UomCode; scanned_at?: Date }) {
+  // the observation time is when the location was scanned, not when the quantity was keyed in (handheld clocks can drift: accept only a plausible window)
+  const now = Date.now();
+  const observedAt = input.scanned_at && input.scanned_at.getTime() <= now + 60_000 && input.scanned_at.getTime() >= now - 12 * 3600_000 ? input.scanned_at : new Date();
   const rows = await tx.$queryRaw<{ id: string; status: string; scope: { location_ids: string[] }; assigned_to: string | null }[]>`
     SELECT id, status, scope, assigned_to FROM count_tasks WHERE id = ${input.count_task_id}::uuid FOR UPDATE`;
   const task = rows[0];
@@ -149,14 +152,14 @@ export async function submitCount(tx: Tx, ctx: ActorContext, input: { count_task
     if (line.status !== 'RECOUNT') throw new RuleError('LINE_NOT_IN_RECOUNT', 'This line does not require a recount');
     if (line.counted_by === ctx.userId && !ctx.permissions.has('counts.approve')) throw new RuleError('SAME_COUNTER', 'The recount must be done by a different person');
     const variance = base - line.system_qty;
-    line = await tx.count_lines.update({ where: { id: line.id }, data: { recount_qty: base, final_qty: base, variance, recounted_by: ctx.userId, recounted_at: new Date(), status: variance === 0n ? 'MATCHED' : 'VARIANCE' } });
+    line = await tx.count_lines.update({ where: { id: line.id }, data: { recount_qty: base, final_qty: base, variance, recounted_by: ctx.userId, recounted_at: observedAt, status: variance === 0n ? 'MATCHED' : 'VARIANCE' } });
   } else {
     if (line.status !== 'PENDING' && line.status !== 'COUNTED') throw new RuleError('LINE_STATUS', `Line already ${line.status}`);
-    line = await tx.count_lines.update({ where: { id: line.id }, data: { counted_qty: base, counted_by: ctx.userId, counted_at: new Date(), status: 'COUNTED' } });
+    line = await tx.count_lines.update({ where: { id: line.id }, data: { counted_qty: base, counted_by: ctx.userId, counted_at: observedAt, status: 'COUNTED' } });
     if (task.status === 'PENDING') await tx.count_tasks.update({ where: { id: task.id }, data: { status: 'IN_PROGRESS', assigned_to: task.assigned_to ?? ctx.userId } });
   }
-  await audit(tx, ctx, { action: isRecount ? 'count.recount' : 'count.submit', entity_type: 'count_task', entity_id: task.id, after: { location: loc.code, lpn: input.lpn_code ?? null, sku: sku.code, qty: base.toString() } });
-  return { line_id: line.id, status: line.status, sku: sku.code, qty: base };
+  await audit(tx, ctx, { action: isRecount ? 'count.recount' : 'count.submit', entity_type: 'count_task', entity_id: task.id, after: { location: loc.code, lpn: input.lpn_code ?? null, sku: sku.code, qty: base.toString(), observed_at: observedAt.toISOString() } });
+  return { line_id: line.id, status: line.status, sku: sku.code, qty: base, observed_at: observedAt };
 }
 
 /**

@@ -332,6 +332,7 @@ function Counts() {
                 { key: 'sys', header: 'Sistema', render: (l) => (l.system_qty === null ? '••' : fmtQty(l.system_qty)), align: 'right' },
                 { key: 'c', header: 'Contado', render: (l) => (l.counted_qty === null ? '—' : fmtQty(l.counted_qty)), align: 'right' },
                 { key: 'r', header: 'Reconteo', render: (l) => (l.recount_qty === null ? '—' : fmtQty(l.recount_qty)), align: 'right' },
+                { key: 'when', header: 'Contado el', render: (l) => (l.recounted_at ? fmtDateTime(l.recounted_at) : l.counted_at ? fmtDateTime(l.counted_at) : '—') },
                 { key: 'v', header: 'Diferencia', render: (l) => (l.variance === null ? '—' : <b className={l.variance !== '0' ? 'text-rose-700' : 'text-emerald-700'}>{fmtQty(l.variance)}</b>), align: 'right' },
                 { key: 'st', header: 'Estado', render: (l) => <StatusChip status={l.status} /> },
               ]}

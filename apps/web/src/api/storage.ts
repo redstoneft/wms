@@ -50,8 +50,8 @@ export const countsApi = {
   get: (id: string) => api.get<CountTaskView>(`/counts/${id}`),
   create: (body: Record<string, unknown>) => api.post<CountTask & { lines: number; locations: number }>('/counts', body),
   /** idempotent */
-  submit: (body: { count_task_id: string; location_barcode: string; lpn_code?: string; barcode: string; qty: string; uom_code?: string }, key: string) =>
-    api.postIdem<{ line_id: string; status: string; sku: string; qty: string }>('/counts/submit', body, key),
+  submit: (body: { count_task_id: string; location_barcode: string; lpn_code?: string; barcode: string; qty: string; uom_code?: string; scanned_at?: string }, key: string) =>
+    api.postIdem<{ line_id: string; status: string; sku: string; qty: string; observed_at?: string }>('/counts/submit', body, key),
   finish: (id: string) => api.post<{ status: string; variances: number; lines?: number }>(`/counts/${id}/finish`),
   /** physical count from a spreadsheet (ubicacion, sku, cantidad[, lpn]); VALIDATE previews, APPLY creates the task for approval */
   importFile: (file: File, q: { mode: 'VALIDATE' | 'APPLY'; counted_at: string; full: boolean; notes?: string }) => {

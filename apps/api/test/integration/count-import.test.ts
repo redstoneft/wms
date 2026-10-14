@@ -95,4 +95,21 @@ describe('physical count imported from a spreadsheet', () => {
     const cols = await upload(`loc_x,producto_x,n\n${D.code},${f.skus[2]!.code},1\n`, { mode: 'VALIDATE', counted_at: countedAt });
     expect(cols.status).toBe(422);
   });
+
+  it('handheld: the moment the location was scanned is the observation time of the line', async () => {
+    const E = f.reserve[5]!;
+    await storedPallet(f, 0, E.id, 10n);
+    const created = await sup.post('/counts', { count_type: 'LOCATION', location_barcodes: [E.barcode], is_blind: false });
+    expect(created.status).toBe(201);
+    const scannedAt = new Date(Date.now() - 5 * 60_000);
+    const r = await sup.post('/counts/submit', { count_task_id: created.body.id, location_barcode: E.barcode, barcode: f.skus[0]!.piece_barcode, qty: '10', scanned_at: scannedAt.toISOString() }, { 'idempotency-key': `cnt-${Date.now()}-${Math.random()}` });
+    expect(r.status).toBe(200);
+    expect(new Date(r.body.observed_at).getTime()).toBe(scannedAt.getTime());
+    const line = (await sql<{ counted_at: Date }>(`SELECT counted_at FROM count_lines WHERE id = $1`, [r.body.line_id]))[0]!;
+    expect(new Date(line.counted_at).getTime()).toBe(scannedAt.getTime());
+    // an implausible clock (future) falls back to server time
+    const bad = await sup.post('/counts/submit', { count_task_id: created.body.id, location_barcode: E.barcode, barcode: f.skus[0]!.piece_barcode, qty: '10', scanned_at: new Date(Date.now() + 3_600_000).toISOString() }, { 'idempotency-key': `cnt-${Date.now()}-${Math.random()}` });
+    expect(bad.status).toBe(200);
+    expect(new Date(bad.body.observed_at).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+  });
 });

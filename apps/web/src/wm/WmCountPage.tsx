@@ -8,6 +8,7 @@ import type { CountTask } from '../api/types';
 import { QtyPad } from '../components/QtyPad';
 import { ScanInput } from '../components/ScanInput';
 import { BigButton, BigValue, StepBar, useWm, WmList, WmShell } from './WmShell';
+import { fmtTime } from '../lib/format';
 
 type Step = 'TASK' | 'LOCATION' | 'LPN' | 'PRODUCT' | 'QTY' | 'DONE';
 
@@ -27,6 +28,7 @@ function Flow() {
   const view = useQuery({ queryKey: ['count', task?.id], queryFn: () => countsApi.get(task!.id), enabled: !!task });
   const [step, setStep] = useState<Step>('TASK');
   const [location, setLocation] = useState('');
+  const [scannedAt, setScannedAt] = useState<Date | null>(null); // when the location was scanned: the count's observation time
   const [lpn, setLpn] = useState<string | null>(null);
   const [product, setProduct] = useState('');
   const [busy, setBusy] = useState(false);
@@ -36,7 +38,7 @@ function Flow() {
     if (!task) return;
     setBusy(true);
     try {
-      const r = await countsApi.submit({ count_task_id: task.id, location_barcode: location, lpn_code: lpn ?? undefined, barcode: product, qty, uom_code: uom }, api.newKey());
+      const r = await countsApi.submit({ count_task_id: task.id, location_barcode: location, lpn_code: lpn ?? undefined, barcode: product, qty, uom_code: uom, scanned_at: scannedAt?.toISOString() }, api.newKey());
       wm.ok(r.replayed ? 'YA REGISTRADO' : `${r.data.sku} · ${r.data.qty} pzas · ${r.data.status}`);
       void qc.invalidateQueries({ queryKey: ['count', task.id] });
       setStep('LPN');
@@ -128,6 +130,7 @@ function Flow() {
               return;
             }
             setLocation(v);
+            setScannedAt(new Date());
             wm.ok();
             setStep('LPN');
           }}
@@ -140,7 +143,7 @@ function Flow() {
               const lines = view.data?.lines.filter((x) => x.location_code === l.code) ?? [];
               const done = lines.length > 0 && lines.every((x) => x.status !== 'PENDING' && x.status !== 'RECOUNT');
               return (
-                <button key={l.id} type="button" onClick={() => { setLocation(l.barcode); setStep('LPN'); }} className={`rounded-lg px-2 py-1 font-mono text-sm ${done ? 'bg-emerald-700' : 'bg-slate-700'}`}>
+                <button key={l.id} type="button" onClick={() => { setLocation(l.barcode); setScannedAt(new Date()); setStep('LPN'); }} className={`rounded-lg px-2 py-1 font-mono text-sm ${done ? 'bg-emerald-700' : 'bg-slate-700'}`}>
                   {l.code}
                 </button>
               );
@@ -159,6 +162,7 @@ function Flow() {
         <StepBar text="2 · ESCANEA EL LPN (O SIN LPN)" />
         {head}
         <BigValue label="Ubicación" value={location} tone="accent" />
+        {scannedAt && <div className="mt-1 text-xs text-slate-400">Ubicación escaneada a las {fmtTime(scannedAt)} · esa es la hora del conteo</div>}
         <div className="mt-3">
           <ScanInput
             label="LPN del pallet"
@@ -227,7 +231,7 @@ function Flow() {
         <StepBar text="4 · ¿CUÁNTAS PIEZAS HAY? (CONTEO CIEGO)" />
         <div className="mb-3 grid grid-cols-3 gap-2 text-center text-sm">
           <div className="rounded-xl bg-slate-800 p-2">
-            <div className="text-xs text-slate-400">Ubicación</div>
+            <div className="text-xs text-slate-400">Ubicación{scannedAt ? ` · ${fmtTime(scannedAt)}` : ''}</div>
             <div className="font-mono font-bold">{location}</div>
           </div>
           <div className="rounded-xl bg-slate-800 p-2">

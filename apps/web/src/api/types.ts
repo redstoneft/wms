@@ -682,7 +682,7 @@ export interface CountImportResult {
 export interface CountTaskView {
   task: CountTask;
   locations: { id: Uuid; code: string; barcode: string }[];
-  lines: { id: Uuid; status: string; location_code: string; lpn_code: string | null; sku_code: string; description: string; counted_qty: Qty | null; recount_qty: Qty | null; system_qty: Qty | null; variance: Qty | null }[];
+  lines: { id: Uuid; status: string; location_code: string; lpn_code: string | null; sku_code: string; description: string; counted_qty: Qty | null; recount_qty: Qty | null; system_qty: Qty | null; variance: Qty | null; counted_at: Iso | null; recounted_at: Iso | null }[];
 }
 
 // ---- orders ----
