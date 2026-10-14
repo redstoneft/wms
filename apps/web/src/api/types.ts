@@ -1113,6 +1113,7 @@ export interface Settings {
   auto_print_lpn_labels?: boolean;
   free_pick_enabled?: boolean;
   auto_pick_customer_codes?: string;
+  auto_pick_imported_orders?: boolean;
 }
 export interface Authorization {
   id: Uuid;

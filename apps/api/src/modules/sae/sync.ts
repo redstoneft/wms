@@ -657,7 +657,7 @@ export async function syncPurchaseOrders(ctx: ActorContext, trigger: 'SCHEDULED'
 // ---------------------------------------------------------------------------
 // Customer orders (retail POs from the PEDIDOS platform) → WMS orders
 // ---------------------------------------------------------------------------
-interface Pedido { id: string; cliente_id: string; num_orden_compra: string; fecha_pedido: string | null; fecha_envio: string | null; fecha_cancelacion: string | null; cedis_codigo: string | null; estatus: string; instrucciones?: string | null }
+interface Pedido { id: string; cliente_id: string; num_orden_compra: string; fecha_pedido: string | null; fecha_envio: string | null; fecha_cancelacion: string | null; cedis_codigo: string | null; estatus: string; instrucciones?: string | null; creado_en?: string | null }
 interface PedidoLineaFull { pedido_id: string; num_linea: string; sku_cliente: string | null; sku_interno: string | null; gtin: string | null; cantidad: number | null; cantidad_surtir: number | null; uom: string | null; piezas_por_caja: number | null }
 interface Cedis { codigo: string; nombre: string | null; ciudad: string | null; estado: string | null }
 
@@ -675,9 +675,11 @@ export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED'
     const windowSince = new Date(Date.now() - cfg.poSinceDays * 86400_000).toISOString().slice(0, 10);
     const cutoff = String((await getSettings()).orders_import_since ?? '');
     const since = cutoff && cutoff > windowSince ? cutoff : windowSince; // never before the go-live cutoff
-    const pedidos = await fetchAll<Pedido>(erp, 'pedidos', { select: 'id,cliente_id,num_orden_compra,fecha_pedido,fecha_envio,fecha_cancelacion,cedis_codigo,estatus,instrucciones', fecha_pedido: `gte.${since}`, order: 'fecha_pedido.desc' });
+    // an order counts from the day it reached the platform (creado_en) or its PO date, whichever is later: a PO dated
+    // last week that arrives today is today's work
+    const pedidos = await fetchAll<Pedido>(erp, 'pedidos', { select: 'id,cliente_id,num_orden_compra,fecha_pedido,fecha_envio,fecha_cancelacion,cedis_codigo,estatus,instrucciones,creado_en', or: `(fecha_pedido.gte.${since},creado_en.gte.${since})`, order: 'fecha_pedido.desc' });
     // the cutoff is enforced here too (a source that ignores the filter must not leak history into the warehouse)
-    const kept = pedidos.filter((p) => !p.fecha_pedido || String(p.fecha_pedido).slice(0, 10) >= since);
+    const kept = pedidos.filter((p) => (!p.fecha_pedido || String(p.fecha_pedido).slice(0, 10) >= since) || (p.creado_en && String(p.creado_en).slice(0, 10) >= since));
     c.skipped += pedidos.length - kept.length;
     pedidos.splice(0, pedidos.length, ...kept);
     c.source_rows = pedidos.length;
@@ -691,6 +693,7 @@ export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED'
       const ref = p.id;
       const number = key(p.num_orden_compra);
       const st = key(p.estatus).toLowerCase();
+      const autoPick: { id: string; number: string } = { id: '', number: '' };
       try {
         await withTx(async (tx) => {
           const existing = await tx.orders.findFirst({ where: { source: 'SAE', external_ref: ref } });
@@ -755,16 +758,19 @@ export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED'
             if (clash && clash.external_ref !== ref) orderNumber = `${orderNumber}-${customer.code}`;
             const made = await createOrder(tx, ctx, { order_number: orderNumber, customer_code: customer.code, destination, order_date: p.fecha_pedido ? new Date(p.fecha_pedido) : undefined, priority, external_ref: ref, notes, source: 'SAE', lines: resolved.map((r) => ({ sku_code: r.sku_code, qty: r.qty, uom_code: 'PIECE' })) });
             c.created++;
-            // customers with automatic picking (setting): the order is accepted, planned and handed to the pickers right away
-            if (autoPickCustomers((await getSettings(tx)).auto_pick_customer_codes).has(customer.code.toUpperCase())) {
-              try {
-                await autoStartPicking(tx, ctx, made.id);
-              } catch (e) {
-                c.err(orderNumber, `auto-surtido: ${(e as Error).message.slice(0, 150)}`);
-              }
-            }
+            // automatic picking (setting): the order is accepted, planned and handed to the pickers right away. It runs in
+            // its own transaction once the order is saved, so a planning problem never undoes the import itself.
+            const st2 = await getSettings(tx);
+            if (st2.auto_pick_imported_orders || autoPickCustomers(st2.auto_pick_customer_codes).has(customer.code.toUpperCase())) Object.assign(autoPick, { id: made.id, number: orderNumber });
           }
         });
+        if (autoPick.id) {
+          try {
+            await withTx((tx) => autoStartPicking(tx, ctx, autoPick.id));
+          } catch (e) {
+            c.err(autoPick.number, `auto-surtido: ${(e as Error).message.slice(0, 150)}`);
+          }
+        }
       } catch (e) {
         c.err(number || ref, (e as Error).message.slice(0, 200));
       }

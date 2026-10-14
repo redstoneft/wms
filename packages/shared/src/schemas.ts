@@ -787,6 +787,8 @@ export const zSettings = z.object({
   free_pick_enabled: z.boolean().optional(),
   /** customer codes (comma separated) whose orders go straight to picking when imported or captured: accepted, planned, task created */
   auto_pick_customer_codes: z.string().trim().max(500).optional(),
+  /** every order imported from the orders platform (SAE) goes straight to picking, whatever the customer */
+  auto_pick_imported_orders: z.boolean().optional(),
 });
 
 export type LoginInput = z.infer<typeof zLogin>;

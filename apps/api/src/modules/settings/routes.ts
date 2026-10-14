@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS = {
   orders_import_since: '',
   free_pick_enabled: true,
   auto_pick_customer_codes: '',
+  auto_pick_imported_orders: false,
 } as const;
 
 export type SettingsShape = { [K in keyof typeof DEFAULT_SETTINGS]: (typeof DEFAULT_SETTINGS)[K] extends string ? string : (typeof DEFAULT_SETTINGS)[K] extends boolean ? boolean : number };

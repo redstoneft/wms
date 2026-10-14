@@ -85,29 +85,37 @@ const tables: Record<string, Row[]> = {
   ],
 };
 
+function matches(r: Row, k: string, v: string): boolean {
+  const m = /^(eq|neq|gte|lte|gt|lt|in)\.(.*)$/s.exec(v);
+  if (!m) return true;
+  const [, op, val] = m;
+  const x = r[k];
+  switch (op) {
+    case 'eq': return String(x) === val;
+    case 'neq': return String(x) !== val;
+    case 'gte': return x != null && String(x) >= val!;
+    case 'lte': return x != null && String(x) <= val!;
+    case 'gt': return x != null && String(x) > val!;
+    case 'lt': return x != null && String(x) < val!;
+    case 'in': {
+      const list = val!.replace(/^\(|\)$/g, '').split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
+      return list.includes(String(x));
+    }
+  }
+  return true;
+}
+
 function applyFilters(rows: Row[], params: URLSearchParams): Row[] {
   let out = rows;
   for (const [k, v] of params) {
     if (['select', 'order', 'limit', 'offset'].includes(k)) continue;
-    const m = /^(eq|neq|gte|lte|gt|lt|in)\.(.*)$/s.exec(v);
-    if (!m) continue;
-    const [, op, val] = m;
-    out = out.filter((r) => {
-      const x = r[k];
-      switch (op) {
-        case 'eq': return String(x) === val;
-        case 'neq': return String(x) !== val;
-        case 'gte': return String(x) >= val!;
-        case 'lte': return String(x) <= val!;
-        case 'gt': return String(x) > val!;
-        case 'lt': return String(x) < val!;
-        case 'in': {
-          const list = val!.replace(/^\(|\)$/g, '').split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
-          return list.includes(String(x));
-        }
-      }
-      return true;
-    });
+    if (k === 'or') {
+      // PostgREST or=(col.op.val,col.op.val)
+      const parts = v.replace(/^\(|\)$/g, '').split(',').map((p) => { const i = p.indexOf('.'); return [p.slice(0, i), p.slice(i + 1)] as const; });
+      out = out.filter((r) => parts.some(([col, cond]) => matches(r, col, cond)));
+      continue;
+    }
+    out = out.filter((r) => matches(r, k, v));
   }
   const order = params.get('order');
   if (order) {
@@ -154,6 +162,7 @@ beforeAll(async () => {
   process.env.SAE_PO_SINCE_DAYS = '60';
   sup = await userWithRoles('saesup', ['SUPERVISOR']);
   // the shared test database persists between runs: remove what a previous run imported so counts are deterministic
+  await sql(`DELETE FROM settings WHERE key IN ('orders_import_since', 'auto_pick_imported_orders')`);
   await sql(`DELETE FROM orders WHERE source = 'SAE' AND external_ref LIKE 'p-%'`);
   await sql(`DELETE FROM purchase_orders WHERE external_source = 'SAE'`);
   await sql(`DELETE FROM skus WHERE external_source = 'SAE' AND id NOT IN (SELECT sku_id FROM inventory_balances)`);
@@ -295,7 +304,17 @@ describe('SAE → WMS synchronisation', () => {
     expect(rCut.body.results[0].created).toBe(0);
     expect(rCut.body.results[0].notes).toContain('2100-01-01');
     expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM orders WHERE external_ref = 'p-6'`))[0]!.n).toBe(0n);
-    await sql(`DELETE FROM settings WHERE key = 'orders_import_since'`);
+    // ...but an order that REACHED the platform after the cutoff is imported even if its PO date is older
+    tables.pedidos!.push({ id: 'p-7', cliente_id: 'c-walmart', num_orden_compra: '5555555555', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'validado', instrucciones: null, creado_en: '2100-02-01T10:00:00' });
+    tables.pedido_lineas!.push({ pedido_id: 'p-7', num_linea: '1', sku_cliente: null, sku_interno: 'SIC20G', gtin: null, cantidad: 6, cantidad_surtir: 6, uom: 'EA', piezas_por_caja: 6 });
+    // and with the imported-orders switch on it goes straight to picking (accepted + planned + pick task), whatever the customer
+    await sql(`INSERT INTO settings (key, value) VALUES ('auto_pick_imported_orders', 'true') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+    const rNew = await sup.post('/sae/sync', { entities: ['customer_orders'] });
+    expect(rNew.body.results[0].created).toBe(1);
+    const p7 = (await sql<{ id: string; status: string }>(`SELECT id, status FROM orders WHERE external_ref = 'p-7'`))[0]!;
+    expect(['PICKING', 'ALLOCATED', 'PARTIALLY_ALLOCATED', 'ACCEPTED']).toContain(p7.status);
+    expect((await sql<{ n: bigint }>(`SELECT count(*) AS n FROM audit_logs WHERE action = 'order.auto_pick' AND entity_id = $1`, [p7.id]))[0]!.n).toBe(1n);
+    await sql(`DELETE FROM settings WHERE key IN ('orders_import_since', 'auto_pick_imported_orders')`);
     await expectReconciled();
   });
 
