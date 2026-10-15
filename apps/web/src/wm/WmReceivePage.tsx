@@ -11,6 +11,7 @@ import { masterdataApi } from '../api/masterdata';
 import type { Receipt, ReceiveScanResult, Sku } from '../api/types';
 import { ProductInput } from '../components/ProductInput';
 import { QtyPad } from '../components/QtyPad';
+import { ScanInput } from '../components/ScanInput';
 import { fmtQty, fmtUom, toBigInt } from '../lib/format';
 import { LabelPrintPanel } from './LabelPrintPanel';
 import { BigButton, BigValue, useWm, WmList, WmShell } from './WmShell';
@@ -305,6 +306,24 @@ function Flow() {
               })}
             </ul>
           )}
+          <div className="mt-3">
+            <ScanInput
+              label="Corregir otra tarima de esta recepción: escanea su etiqueta"
+              autoUpper
+              active={false}
+              disabled={busy}
+              testId="scan-fix-lpn"
+              onScan={(v) => {
+                const code = v.trim().toUpperCase();
+                const hit = (detail.data?.lpns ?? []).find((l) => l.code === code);
+                if (!hit) { wm.warn(`${code} NO ES UNA TARIMA DE ESTA RECEPCIÓN`); return; }
+                if (!['OPEN', 'STORED'].includes(hit.status)) { wm.warn(`${code} ESTÁ ${hit.status}: ya no se corrige aquí`); return; }
+                setCurrentLpn(code);
+                setUseCurrent(false);
+                wm.ok(`${code} · toca ✕ Quitar en el producto que sobra`);
+              }}
+            />
+          </div>
           {openLpns.length > 0 && (
             <div className="mt-2 text-xs text-slate-400">
               LPN abiertos: {openLpns.map((l) => l.code).join(', ')}

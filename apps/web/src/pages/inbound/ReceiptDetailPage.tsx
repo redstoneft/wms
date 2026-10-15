@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { inboundApi } from '../../api/inbound';
 import { PutawayPlanCard } from '../../components/PutawayPlanCard';
 import { incidentsApi } from '../../api/incidents';
-import { ApiError } from '../../api/client';
+import { api, ApiError } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { useToast } from '../../components/Toast';
 import { Alert, Button, Card, ConfirmDialog, Field, Input, KV, Modal, PageHeader, Skeleton, StatusChip, Table } from '../../components/ui';
@@ -61,6 +61,16 @@ export default function ReceiptDetailPage() {
       void qc.invalidateQueries({ queryKey: ['receipts'] });
     },
     onError: (e) => toast.error('No se pudo cancelar', e),
+  });
+  const [fix, setFix] = useState<{ open: boolean; lpn: string; options: { sku: string; qty: string }[]; sku: string; qty: string; reason: string }>({ open: false, lpn: '', options: [], sku: '', qty: '', reason: '' });
+  const undo = useMutation({
+    mutationFn: () => inboundApi.undo({ receipt_id: id, lpn_code: fix.lpn, sku_code: fix.sku, qty: fix.qty.trim(), uom_code: 'PIECE', reason: fix.reason.trim() || undefined }, api.newKey()),
+    onSuccess: (res) => {
+      toast.success(`Quitadas ${fmtQty(res.data.qty_base)} pzas de ${res.data.sku.code} de ${fix.lpn}`, res.data.lpn.empty ? 'La tarima quedó vacía y se canceló.' : 'La recepción y la tarima ya reflejan la cantidad correcta.');
+      setFix({ open: false, lpn: '', options: [], sku: '', qty: '', reason: '' });
+      void qc.invalidateQueries({ queryKey: ['receipt', id] });
+    },
+    onError: (e) => toast.error('No se pudo quitar', e),
   });
   const close = useMutation({
     mutationFn: () => inboundApi.close(id),
@@ -205,9 +215,33 @@ export default function ReceiptDetailPage() {
             { key: 'b', header: 'Contenido', render: (l) => (l.balances ?? []).filter((b) => toBigInt(b.qty) > 0n).map((b) => `${b.sku.code} × ${fmtQty(b.qty)} (${es(b.status)})`).join(', ') || '—' },
             { key: 'cs', header: 'Cajas', render: (l) => l.cases_count, align: 'right' },
             { key: 'cr', header: 'Creado', render: (l) => fmtDateTime(l.created_at) },
+            {
+              key: 'fx',
+              header: '',
+              render: (l) =>
+                open && can('receiving.scan') && ['OPEN', 'STORED'].includes(l.status) && l.current_location_id === r.receiving_location_id && (l.balances ?? []).some((b) => toBigInt(b.qty) > 0n) ? (
+                  <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); const options = (l.balances ?? []).filter((b) => toBigInt(b.qty) > 0n).map((b) => ({ sku: b.sku.code, qty: String(b.qty) })); setFix({ open: true, lpn: l.code, options, sku: options[0]?.sku ?? '', qty: '', reason: '' }); }}>
+                    Quitar
+                  </Button>
+                ) : null,
+            },
           ]}
         />
       </Card>
+      <Modal open={fix.open} onClose={() => setFix({ ...fix, open: false })} title={`Quitar producto de ${fix.lpn}`} footer={<><Button variant="secondary" onClick={() => setFix({ ...fix, open: false })}>Cancelar</Button><Button variant="danger" onClick={() => undo.mutate()} loading={undo.isPending} disabled={!fix.sku || !/^\d+$/.test(fix.qty.trim()) || Number(fix.qty) <= 0}>Quitar</Button></>}>
+        <p className="mb-3 text-sm text-slate-600">Para corregir una captura de más (cajas o piezas registradas que no llegaron). Solo mientras la tarima sigue en el andén; la recepción y la tarima se corrigen juntas y queda auditado.</p>
+        <Field label="Producto" required>
+          <select value={fix.sku} onChange={(e) => setFix({ ...fix, sku: e.target.value })} className="w-full rounded-lg border border-slate-300 px-3 py-2">
+            {fix.options.map((o) => <option key={o.sku} value={o.sku}>{o.sku} · tiene {fmtQty(o.qty)} pzas</option>)}
+          </select>
+        </Field>
+        <Field label="Piezas a quitar" required hint={fix.options.find((o) => o.sku === fix.sku) ? `máximo ${fmtQty(fix.options.find((o) => o.sku === fix.sku)!.qty)}` : undefined}>
+          <Input value={fix.qty} onChange={(e) => setFix({ ...fix, qty: e.target.value })} inputMode="numeric" placeholder="p. ej. 120" />
+        </Field>
+        <Field label="Motivo">
+          <Input value={fix.reason} onChange={(e) => setFix({ ...fix, reason: e.target.value })} placeholder="se capturaron cajas de más" />
+        </Field>
+      </Modal>
 
       {(r.lpns?.length ?? 0) > 0 && can('putaway.execute') && <PutawayPlanCard kind="RECEIPT" id={r.id} />}
 
