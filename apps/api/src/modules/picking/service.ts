@@ -29,7 +29,15 @@ export async function createPickTask(tx: Tx, ctx: ActorContext, orderId: string,
       FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id JOIN lpns l ON l.id = a.lpn_id JOIN locations loc ON loc.id = l.current_location_id
      WHERE ol.order_id = ${orderId}::uuid AND a.status = 'ACTIVE' AND a.qty > a.picked_qty
      ORDER BY loc.pick_sequence NULLS LAST, loc.code, l.code`;
-  if (!allocs.length) throw new RuleError('NOTHING_TO_PICK', 'Order has no active allocations');
+  if (!allocs.length) {
+    // say exactly what is pending and whether there is stock for it: the office then knows to allocate, wait for a receipt, or adjust the line
+    const pending = await tx.$queryRaw<{ sku: string; pending: bigint; available: bigint }[]>`
+      SELECT s.code AS sku, (ol.required_qty - ol.picked_qty - ol.allocated_qty)::bigint AS pending,
+             COALESCE((SELECT sum(b.qty) FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE b.sku_id = ol.sku_id AND b.status = 'AVAILABLE' AND b.qty > 0 AND l.status = 'STORED' AND l.order_id IS NULL), 0)::bigint AS available
+        FROM order_lines ol JOIN skus s ON s.id = ol.sku_id WHERE ol.order_id = ${orderId}::uuid AND ol.required_qty > ol.picked_qty + ol.allocated_qty ORDER BY ol.line_no`;
+    const detail = pending.map((p) => `${p.sku} ${p.pending} (${p.available > 0n ? `hay ${p.available} disponibles: usa Asignar inventario` : 'sin existencia disponible'})`).join('; ');
+    throw new RuleError('NOTHING_TO_PICK', pending.length ? `No hay inventario asignado por surtir. Pendiente: ${detail}` : 'No hay inventario asignado por surtir: todo lo requerido ya está surtido', { pending: pending.map((p) => ({ sku: p.sku, pending: p.pending.toString(), available: p.available.toString() })) });
+  }
 
   const task = await tx.pick_tasks.create({ data: { order_id: orderId, assigned_to: assignTo ?? null } });
   let seq = 1;

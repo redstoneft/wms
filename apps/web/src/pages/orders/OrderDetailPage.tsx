@@ -158,7 +158,11 @@ export default function OrderDetailPage() {
               </Button>
             )}
             {can('orders.allocate') && (['IMPORTED', 'ACCEPTED', 'PARTIALLY_ALLOCATED'].includes(o.status) || (o.status === 'PICKING' && o.lines.some((l) => toBigInt(l.required_qty) > toBigInt(l.allocated_qty) + toBigInt(l.picked_qty)))) && <Button onClick={() => setAlloc({ ...alloc, open: true })}>Asignar inventario</Button>}
-            {can('picking.assign') && ['ALLOCATED', 'PARTIALLY_ALLOCATED'].includes(o.status) && !activePick && <Button variant="success" onClick={() => setPick({ open: true, user: '' })}>Crear tarea de surtido</Button>}
+            {can('picking.assign') && ['ALLOCATED', 'PARTIALLY_ALLOCATED'].includes(o.status) && !activePick && (
+              o.lines.some((l) => toBigInt(l.allocated_qty) > 0n)
+                ? <Button variant="success" onClick={() => setPick({ open: true, user: '' })}>Crear tarea de surtido</Button>
+                : <span className="text-sm text-slate-500" title="Nada asignado: primero Asignar inventario (o no hay existencia de lo pendiente)">Sin inventario asignado por surtir</span>
+            )}
             {can('orders.manage') && !['SHIPPED', 'LOADED', 'LOADING', 'CANCELLED'].includes(o.status) && (
               <Button variant="danger" onClick={() => setCancel({ open: true, reason: '', auth: '' })}>
                 Cancelar pedido
