@@ -7,6 +7,8 @@ export const ordersApi = {
   get: (id: string) => api.get<OrderDetail>(`/orders/${id}`),
   create: (body: Record<string, unknown>) => api.post<Order>('/orders', body),
   accept: (id: string) => api.post<Order>(`/orders/${id}/accept`),
+  /** reabrir surtido: pending quantities back to the pickers without touching the order */
+  reopenPicking: (id: string) => api.post<{ order_id: string; order_number: string; status: string; task_id: string | null; added: number; short: string[]; pending: { sku: string; qty: string }[] }>(`/orders/${id}/reopen-picking`),
   allocate: (body: { order_id: string; strategy?: string; allow_partial: boolean }) => api.post<AllocateResult>('/orders/allocate', body),
   cancel: (body: { order_id: string; reason: string; authorization_id?: string }) => api.post<{ order_id: string; status: string; deallocated: string }>('/orders/cancel', body),
   /** admin: new quantities for a picked order (excess back to stock, shortfall picked again) */

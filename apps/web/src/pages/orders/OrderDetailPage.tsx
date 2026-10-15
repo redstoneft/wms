@@ -102,6 +102,17 @@ export default function OrderDetailPage() {
     },
     onError: (e) => toast.error('No se pudo ajustar', e),
   });
+  const reopenPicking = useMutation({
+    mutationFn: () => ordersApi.reopenPicking(id),
+    onSuccess: (r) => {
+      toast.success(
+        r.task_id ? `Surtido reabierto · ${r.added} línea(s) en Surtir` : 'Nada se pudo planear todavía',
+        `${r.short.length ? `Sin existencia: ${r.short.join(', ')}. ` : ''}${r.task_id ? 'El surtidor ya la ve en el handheld.' : 'Cuando entre mercancía vuelve a presionar Reabrir surtido.'}`,
+      );
+      refresh();
+    },
+    onError: (e) => toast.error('No se pudo reabrir el surtido', e),
+  });
   const [reopen, setReopen] = useState<{ open: boolean; reason: string }>({ open: false, reason: '' });
   const doReopen = useMutation({
     mutationFn: () => ordersApi.reopen({ order_id: id, reason: reopen.reason }),
@@ -158,6 +169,11 @@ export default function OrderDetailPage() {
               </Button>
             )}
             {can('orders.allocate') && (['IMPORTED', 'ACCEPTED', 'PARTIALLY_ALLOCATED'].includes(o.status) || (o.status === 'PICKING' && o.lines.some((l) => toBigInt(l.required_qty) > toBigInt(l.allocated_qty) + toBigInt(l.picked_qty)))) && <Button onClick={() => setAlloc({ ...alloc, open: true })}>Asignar inventario</Button>}
+            {can('picking.assign') && !activePick && ['ALLOCATED', 'PARTIALLY_ALLOCATED', 'PICKED', 'STAGED', 'VERIFIED'].includes(o.status) && o.lines.some((l) => toBigInt(l.required_qty) > toBigInt(l.allocated_qty) + toBigInt(l.picked_qty)) && (
+              <Button variant="success" onClick={() => reopenPicking.mutate()} loading={reopenPicking.isPending} title="Lo pendiente del pedido se planea y regresa al surtidor, sin cambiar cantidades">
+                Reabrir surtido
+              </Button>
+            )}
             {can('picking.assign') && ['ALLOCATED', 'PARTIALLY_ALLOCATED'].includes(o.status) && !activePick && (
               o.lines.some((l) => toBigInt(l.allocated_qty) > 0n)
                 ? <Button variant="success" onClick={() => setPick({ open: true, user: '' })}>Crear tarea de surtido</Button>

@@ -5,6 +5,7 @@ import { zAdjustOrderLines, zAllocateOrder, zCancelOrder, zCreateOrder, zForceDe
 import { getDb, withTx } from '../../db.js';
 import { trainingWhere } from '../../lib/training-scope.js';
 import * as svc from './service.js';
+import { reopenPicking } from '../wm-tasks/service.js';
 
 export async function orderRoutes(app: FastifyInstance) {
   const db = getDb();
@@ -62,6 +63,12 @@ export async function orderRoutes(app: FastifyInstance) {
   app.post('/orders/:id/accept', { preHandler: app.requirePermission('orders.manage') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
     return withTx((tx) => svc.acceptOrder(tx, req.actor!, id));
+  });
+
+  /** Reabrir surtido: pending quantities of a closed pick go back to the pickers, without changing the order. */
+  app.post('/orders/:id/reopen-picking', { preHandler: app.requirePermission('picking.assign') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    return withTx((tx) => reopenPicking(tx, req.actor!, id));
   });
 
   app.post('/orders/allocate', { preHandler: app.requirePermission('orders.allocate') }, async (req) => {

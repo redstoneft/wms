@@ -260,6 +260,30 @@ async function replanOrderShortfall(tx: Tx, ctx: ActorContext, order: OrderRef):
 }
 
 /**
+ * Reabrir surtido: the pick task was closed (finished short, closed by mistake, or the order waited for stock) and the
+ * pending quantities must go back to the pickers — without touching the order's quantities. What can be planned now is
+ * planned and handed over as a pick task; what still has no stock is reported, not hidden.
+ */
+export async function reopenPicking(tx: Tx, ctx: ActorContext, orderId: string) {
+  const rows = await tx.$queryRaw<OrderRef[]>`SELECT id, order_number, status FROM orders WHERE id = ${orderId}::uuid FOR UPDATE`;
+  const order = rows[0];
+  if (!order) throw new NotFoundError('order', orderId);
+  if (!['ALLOCATED', 'PARTIALLY_ALLOCATED', 'PICKING', 'PICKED', 'STAGED', 'VERIFIED'].includes(order.status)) throw new RuleError('ORDER_STATUS', `El pedido está ${order.status}; solo se reabre el surtido de pedidos asignados, surtidos, en staging o verificados`);
+  const active = await tx.pick_tasks.findFirst({ where: { order_id: order.id, status: { in: ['PENDING', 'IN_PROGRESS'] } }, select: { id: true } });
+  if (active) throw new RuleError('PICK_TASK_EXISTS', 'El pedido ya tiene una tarea de surtido activa: el surtidor la ve en Surtir');
+  const pending = await tx.$queryRaw<{ sku: string; pending: bigint }[]>`SELECT s.code AS sku, (ol.required_qty - ol.picked_qty - ol.allocated_qty)::bigint AS pending
+      FROM order_lines ol JOIN skus s ON s.id = ol.sku_id WHERE ol.order_id = ${order.id}::uuid AND ol.required_qty > ol.picked_qty + ol.allocated_qty ORDER BY ol.line_no`;
+  const planned = Number((await tx.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM allocations a JOIN order_lines ol ON ol.id = a.order_line_id WHERE ol.order_id = ${order.id}::uuid AND a.status = 'ACTIVE' AND a.qty > a.picked_qty`)[0]?.n ?? 0n);
+  if (!pending.length && !planned) throw new RuleError('NOTHING_PENDING', 'No hay nada pendiente de surtir en este pedido: todo lo requerido ya está surtido');
+  // ALLOCATED cannot be planned again as is; the replan brings any closed state back to "partially allocated" first
+  const back = order.status === 'ALLOCATED' ? 'PARTIALLY_ALLOCATED' : order.status;
+  const r = await replanOrderShortfall(tx, ctx, { ...order, status: back });
+  const fresh = await tx.orders.findUniqueOrThrow({ where: { id: order.id }, select: { status: true } });
+  await audit(tx, ctx, { action: 'order.reopen_picking', entity_type: 'order', entity_id: order.id, before: { status: order.status }, after: { status: fresh.status, task_id: r.task_id, added: r.added, short: r.short, pending: pending.map((p) => `${p.sku} ${p.pending}`) } });
+  return { order_id: order.id, order_number: order.order_number, status: fresh.status, task_id: r.task_id, added: r.added, short: r.short, pending: pending.map((p) => ({ sku: p.sku, qty: p.pending.toString() })) };
+}
+
+/**
  * Damaged pieces (merma) reported from the handheld. On a stored pallet the pieces stay there as DAMAGED (blocked for
  * picking) with an incident. On an outbound pallet being picked or staged, the damaged pieces move to a new DAMAGED
  * pallet at the same spot, the order's picked quantity drops and the difference is planned again for the picker.
