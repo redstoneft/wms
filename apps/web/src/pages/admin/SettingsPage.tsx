@@ -25,7 +25,7 @@ export default function SettingsPage() {
       <PageHeader title="Configuración del sistema" />
       <Card>
         <div className="grid gap-4">
-          <Field label="Estrategia de asignación predeterminada" hint="FIFO por defecto. FEFO usa caducidad; FULL_PALLET prefiere pallets completos; CASE_PIECE prefiere ubicaciones de picking.">
+          <Field label="Estrategia de asignación predeterminada" hint="FINISH_PALLET (regla de piso): 1) acabar tarimas, las que se vacían completas van primero, de menor a mayor; 2) cajas completas, solo se abre una tarima y de preferencia la que queda en cajas cerradas. FULL_PALLET prefiere pallets completos; FEFO usa caducidad; CASE_PIECE prefiere ubicaciones de picking.">
             <Select value={f.allocation_strategy} onChange={(e) => setF({ ...f, allocation_strategy: e.target.value })}>
               {ALLOCATION_STRATEGIES.map((s) => <option key={s}>{s}</option>)}
             </Select>

@@ -99,6 +99,7 @@ interface CandidateBalance {
   lpn_id: string;
   lpn_code: string;
   qty: bigint;
+  planned_others: bigint;
   lpn_total_sku_qty: bigint;
   single_sku: boolean;
   location_type: string;
@@ -124,6 +125,43 @@ function fewestBrokenPallets<T extends { qty: bigint }>(cands: T[], remaining: b
     out.push(pick);
     left.splice(left.indexOf(pick), 1);
     remaining -= pick.qty < remaining ? pick.qty : remaining;
+  }
+  return [...out, ...left];
+}
+
+/**
+ * FINISH_PALLET (the floor's rule, in this order): 1) finish pallets — every pallet that can be emptied by this line is
+ * taken whole, smallest first, so partial pallets disappear and their spots free up; 2) full cases — only ONE pallet is
+ * ever broken (the last one), chosen as the smallest that covers the rest, preferring the one whose leftover is still
+ * whole cases. Returns the candidates in the order they must be consumed.
+ */
+export function finishPalletsFirst<T extends { qty: bigint; planned_others: bigint }>(cands: T[], remaining: bigint, caseQty: bigint): T[] {
+  const free = (c: T) => c.qty - c.planned_others;
+  const left = cands.filter((c) => free(c) > 0n).sort((a, b) => (free(a) < free(b) ? -1 : free(a) > free(b) ? 1 : 0));
+  const out: T[] = [];
+  let rem = remaining;
+  // 1) pallets that this line empties completely, smallest first
+  for (const c of [...left]) {
+    if (rem <= 0n) break;
+    if (free(c) <= rem) {
+      out.push(c);
+      left.splice(left.indexOf(c), 1);
+      rem -= free(c);
+    }
+  }
+  // 2) one pallet to break for the rest: the smallest that covers it; among equals the one left with whole cases
+  if (rem > 0n && left.length) {
+    const covering = left.filter((c) => free(c) >= rem);
+    const pool = covering.length ? covering : left;
+    const cases = caseQty > 1n ? caseQty : 1n;
+    const pick = pool.reduce((m, c) => {
+      const lm = (free(m) - rem) % cases === 0n ? 0 : 1;
+      const lc = (free(c) - rem) % cases === 0n ? 0 : 1;
+      if (lc !== lm) return lc < lm ? c : m;
+      return free(c) < free(m) ? c : m;
+    });
+    out.push(pick);
+    left.splice(left.indexOf(pick), 1);
   }
   return [...out, ...left];
 }
@@ -172,7 +210,12 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
          l.created_at ASC, l.code ASC`;
     // Lock order everywhere is LPN → balance. Candidates are read unlocked and re-checked under the LPN lock,
     // so a concurrent allocation of the same pallet is seen (smaller AVAILABLE) instead of double-allocated.
-    const ordered = strategy === 'FULL_PALLET' ? fewestBrokenPallets(candidates, remaining) : candidates;
+    let ordered = candidates;
+    if (strategy === 'FULL_PALLET') ordered = fewestBrokenPallets(candidates, remaining);
+    else if (strategy === 'FINISH_PALLET') {
+      const cu = await tx.sku_uoms.findUnique({ where: { sku_id_uom_code: { sku_id: line.sku_id, uom_code: 'CASE' } }, select: { base_qty: true } });
+      ordered = finishPalletsFirst(candidates, remaining, cu?.base_qty ?? 1n);
+    }
     for (const c of ordered) {
       if (remaining <= 0n) break;
       const lpn = await lockLpn(tx, c.lpn_id);

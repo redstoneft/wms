@@ -9,7 +9,7 @@
 Obligatorio para `ADMIN`: al primer acceso el sistema exige inscribir una app TOTP (QR + secreto). Los códigos toleran ±30 s. Si un administrador pierde el dispositivo, otro administrador le resetea MFA.
 
 ## Configuración (`Admin → Configuración`, `settings.manage`)
-* `allocation_strategy` por defecto (`FIFO`, `FEFO`, `LPN`, `LOCATION`, `FULL_PALLET`, `CASE_PIECE`).
+* `allocation_strategy` por defecto (`FIFO`, `FEFO`, `LPN`, `LOCATION`, `FULL_PALLET`, `CASE_PIECE`, `FINISH_PALLET`). **`FINISH_PALLET` es la regla acordada (19-oct-2026):** al sugerir surtido, 1) acabar tarimas: toda tarima que la línea pueda vaciar se toma completa, de la más chica a la más grande, para que desaparezcan tarimas parciales y se liberen posiciones; 2) cajas completas: solo se abre UNA tarima (la última), la más chica que cubra el resto, y entre iguales la que queda en cajas cerradas.
 * Impresión de etiquetas: nunca automática; siempre con el botón Imprimir (el setting `auto_print_lpn_labels` ya no tiene efecto).
 * `require_mfa_for_admin`.
 * `mfa_trusted_device_days` (30): días que un navegador puede saltarse el segundo factor tras marcar *Recordar este dispositivo*; 0 desactiva la opción. Un reset de MFA o un cambio de contraseña revocan todos los dispositivos recordados del usuario.

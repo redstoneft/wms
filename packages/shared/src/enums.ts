@@ -182,7 +182,7 @@ export const ORDER_STATUSES = [
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
-export const ALLOCATION_STRATEGIES = ['FIFO', 'FEFO', 'LPN', 'LOCATION', 'FULL_PALLET', 'CASE_PIECE'] as const;
+export const ALLOCATION_STRATEGIES = ['FIFO', 'FEFO', 'LPN', 'LOCATION', 'FULL_PALLET', 'CASE_PIECE', 'FINISH_PALLET'] as const;
 export type AllocationStrategy = (typeof ALLOCATION_STRATEGIES)[number];
 
 export const SHIPMENT_STATUSES = [
