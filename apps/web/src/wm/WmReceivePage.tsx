@@ -40,6 +40,8 @@ function Flow() {
   const [damaged, setDamaged] = useState(false);
   // the quantity arrives on this many pallets of the same product (new pallets only)
   const [pallets, setPallets] = useState(1);
+  // pieces on each pallet when they are not all the same ('' = even split)
+  const [perPallet, setPerPallet] = useState<string[]>([]);
   // cases × pieces per case helper (products without a CASE unit): fills the quantity in pieces
   const [cases, setCases] = useState({ n: '', per: '' });
   const [lot, setLot] = useState('');
@@ -86,6 +88,8 @@ function Flow() {
   }, [sp, receipts.data, receipt]);
 
   const openLpns = (detail.data?.lpns ?? []).filter((l) => l.status === 'OPEN');
+  // pallets that can still take product: open ones, and closed ones that have not left the dock
+  const dockLpns = (detail.data?.lpns ?? []).filter((l) => l.status === 'OPEN' || (l.status === 'STORED' && l.current_location_id === detail.data?.receiving_location_id));
 
   const onProductScan = useCallback(
     async (code: string) => {
@@ -106,16 +110,16 @@ function Flow() {
       setLot('');
       setExpiry('');
       wm.ok();
-      if (currentLpn && openLpns.some((l) => l.code === currentLpn)) setStep('LPN_CHOICE');
+      if (currentLpn && dockLpns.some((l) => l.code === currentLpn)) setStep('LPN_CHOICE');
       else {
         setUseCurrent(false);
         setStep('QTY');
       }
     },
-    [currentLpn, openLpns, wm],
+    [currentLpn, dockLpns, wm],
   );
 
-  const submitQty = async (qty: string, uom: UomCode) => {
+  const submitQty = async (qty: string, uom: UomCode, palletQtys?: string[]) => {
     if (!receipt || !sku) return;
     if (sku.requires_lot && !lot.trim()) {
       wm.fail(new ApiError(422, { error: 'LOT_REQUIRED', message: `El SKU ${sku.code} requiere lote` }));
@@ -135,6 +139,7 @@ function Flow() {
           uom_code: uom,
           lpn_code: useCurrent && currentLpn ? currentLpn : undefined,
           pallets: useCurrent && currentLpn ? 1 : pallets,
+          pallet_qtys: !(useCurrent && currentLpn) && palletQtys && palletQtys.length > 1 ? palletQtys : undefined,
           damaged,
           lot: lot.trim() || undefined,
           expiry_date: expiry || undefined,
@@ -144,6 +149,7 @@ function Flow() {
       setLast(r.data);
       setCurrentLpn(r.data.pallets.length > 1 ? null : r.data.lpn.code);
       setPallets(1);
+      setPerPallet([]);
       wm.ok(r.replayed ? 'YA REGISTRADO (reintento)' : r.data.pallets.length > 1 ? `${r.data.pallets.length} TARIMAS CREADAS Y CERRADAS` : `${r.data.lpn.is_new ? 'NUEVO PALLET' : 'AGREGADO'} ${r.data.lpn.code}`);
       if (r.data.unexpected_sku) wm.warn('SKU NO ESPERADO en esta recepción — se creó incidencia');
       void qc.invalidateQueries({ queryKey: ['receipt', receipt.id] });
@@ -320,7 +326,7 @@ function Flow() {
                 if (!['OPEN', 'STORED'].includes(hit.status)) { wm.warn(`${code} ESTÁ ${hit.status}: ya no se corrige aquí`); return; }
                 setCurrentLpn(code);
                 setUseCurrent(false);
-                wm.ok(`${code} · toca ✕ Quitar en el producto que sobra`);
+                wm.ok(`${code} · toca ✕ Quitar en lo que sobra, o escanea un producto para agregarle`);
               }}
             />
           </div>
@@ -409,10 +415,38 @@ function Flow() {
               <div className="text-xs text-slate-400">{pallets > 1 ? `La cantidad total se reparte en ${pallets} tarimas; cada una nace cerrada con su acomodo` : 'Una tarima (queda abierta para seguir cargándola)'}</div>
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setPallets((p) => Math.max(1, p - 1))} aria-label="menos tarimas">−</button>
+              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => { setPallets((p) => Math.max(1, p - 1)); setPerPallet([]); }} aria-label="menos tarimas">−</button>
               <div className="w-10 text-center font-mono text-3xl font-black">{pallets}</div>
-              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => setPallets((p) => Math.min(200, p + 1))} aria-label="más tarimas">+</button>
+              <button type="button" className="h-12 w-12 rounded-xl bg-slate-700 text-2xl font-black" onClick={() => { setPallets((p) => Math.min(200, p + 1)); setPerPallet([]); }} aria-label="más tarimas">+</button>
             </div>
+          </div>
+        )}
+        {!(useCurrent && currentLpn) && pallets > 1 && (
+          <div className="mb-3 rounded-2xl bg-slate-800 px-3 py-2" data-testid="per-pallet">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-bold uppercase text-slate-400">¿Cuántas piezas lleva cada tarima?</div>
+              {perPallet.length === 0 ? (
+                <button type="button" className="rounded-lg bg-slate-700 px-3 py-1 text-sm font-bold" onClick={() => setPerPallet(Array.from({ length: pallets }, () => ''))}>Distinta por tarima</button>
+              ) : (
+                <button type="button" className="rounded-lg bg-slate-700 px-3 py-1 text-sm font-bold" onClick={() => setPerPallet([])}>Todas iguales</button>
+              )}
+            </div>
+            {perPallet.length > 0 && (
+              <>
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {perPallet.map((v, i) => (
+                    <label key={i} className="flex items-center gap-2 rounded-lg bg-slate-900 px-2 py-1">
+                      <span className="text-xs text-slate-400">T{i + 1}</span>
+                      <input inputMode="numeric" value={v} onChange={(e) => setPerPallet(perPallet.map((x, j) => (j === i ? e.target.value.replace(/\D/g, '') : x)))} placeholder="pzas" className="h-11 w-full rounded bg-slate-800 px-2 text-center font-mono text-lg text-white" aria-label={`piezas tarima ${i + 1}`} />
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="font-mono text-lg font-black">= {perPallet.reduce((a, v) => a + (Number(v) || 0), 0).toLocaleString('es-MX')} pzas en {pallets} tarimas</div>
+                  <BigButton tone="success" className="!min-h-12 !py-2" disabled={busy || perPallet.some((v) => !v || Number(v) <= 0)} onClick={() => submitQty(String(perPallet.reduce((a, v) => a + Number(v), 0)), 'PIECE', perPallet)} testId="receive-per-pallet">RECIBIR ASÍ</BigButton>
+                </div>
+              </>
+            )}
           </div>
         )}
         {!sku.uoms.some((u) => u.uom_code === 'CASE') && (
@@ -423,7 +457,7 @@ function Flow() {
             <div className="flex-1 text-right font-mono text-xl font-black">{cases.n && cases.per ? `= ${(Number(cases.n) * Number(cases.per)).toLocaleString('es-MX')} pzas` : ''}</div>
           </div>
         )}
-        <QtyPad key={cases.n && cases.per ? `c${Number(cases.n) * Number(cases.per)}` : 'manual'} initial={cases.n && cases.per ? String(Number(cases.n) * Number(cases.per)) : ''} uoms={sku.uoms} defaultUom={scannedUom} hint={pallets > 1 ? `CANTIDAD TOTAL DE LAS ${pallets} TARIMAS` : undefined} onConfirm={(q, u) => { setCases({ n: '', per: '' }); return submitQty(q, u); }} onCancel={() => { setCases({ n: '', per: '' }); setStep('SCAN'); }} busy={busy} confirmLabel={pallets > 1 ? `RECIBIR EN ${pallets} TARIMAS` : 'RECIBIR'} />
+        {perPallet.length === 0 && <QtyPad key={cases.n && cases.per ? `c${Number(cases.n) * Number(cases.per)}` : 'manual'} initial={cases.n && cases.per ? String(Number(cases.n) * Number(cases.per)) : ''} uoms={sku.uoms} defaultUom={scannedUom} hint={pallets > 1 ? `CANTIDAD TOTAL DE LAS ${pallets} TARIMAS` : undefined} onConfirm={(q, u) => { setCases({ n: '', per: '' }); return submitQty(q, u); }} onCancel={() => { setCases({ n: '', per: '' }); setStep('SCAN'); }} busy={busy} confirmLabel={pallets > 1 ? `RECIBIR EN ${pallets} TARIMAS` : 'RECIBIR'} />}
       </div>
     );
   }

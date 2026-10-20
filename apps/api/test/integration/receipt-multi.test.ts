@@ -50,4 +50,32 @@ describe('receiving on several pallets', () => {
     expect(done2.body.receipt.status).toBe('WITH_INCIDENT'); // 1,050 received vs 1,000 expected
     await expectReconciled();
   });
+
+  it('pallet_qtys: each pallet gets the pieces the floor says; closed pallets at the dock can still take product', async () => {
+    const r = await recv.post('/receipts', { receiving_location_id: f.dock.id, expected: [{ sku_code: f.skus[0]!.code, qty: 1000, uom_code: 'PIECE' }, { sku_code: f.skus[1]!.code, qty: 50, uom_code: 'PIECE' }] });
+    expect(r.status).toBe(201);
+    const s = await recv.post('/receipts/scan', { receipt_id: r.body.id, barcode: f.skus[0]!.code, qty: 1000, uom_code: 'PIECE', pallet_qtys: [500, 300, 200], cases_count: 100 }, idem());
+    expect(s.status, JSON.stringify(s.body)).toBe(201);
+    expect(s.body.pallets.map((p: { qty: string }) => p.qty)).toEqual(['500', '300', '200']);
+    const lpns = await sql<{ code: string; status: string; cases_count: number }>(`SELECT code, status, cases_count FROM lpns WHERE receipt_id = '${r.body.id}' ORDER BY code`);
+    expect(lpns.map((l) => l.cases_count)).toEqual([50, 30, 20]);
+    expect(lpns.every((l) => l.status === 'STORED')).toBe(true);
+    // the sum must match the declared total
+    const bad = await recv.post('/receipts/scan', { receipt_id: r.body.id, barcode: f.skus[0]!.code, qty: 100, uom_code: 'PIECE', pallet_qtys: [60, 50] }, idem());
+    expect(bad.status).toBe(422);
+    expect(bad.body.error).toBe('PALLET_QTYS_SUM');
+    // a closed pallet still at the dock takes more product (a short capture is corrected by adding)
+    const more = await recv.post('/receipts/scan', { receipt_id: r.body.id, barcode: f.skus[1]!.code, qty: 50, uom_code: 'PIECE', lpn_code: lpns[0]!.code }, idem());
+    expect(more.status, JSON.stringify(more.body)).toBe(201);
+    expect(more.body.lpn.code).toBe(lpns[0]!.code);
+    expect(more.body.line).toMatchObject({ expected_qty: '50', received_qty: '50' });
+    // once the pallet is put away it no longer takes product from the receipt
+    const task = (await sql<{ id: string }>(`SELECT p.id FROM putaway_tasks p JOIN lpns l ON l.id = p.lpn_id WHERE l.code = $1 AND p.status IN ('PENDING','ASSIGNED')`, [lpns[0]!.code]))[0]!;
+    const put = await sup.post('/putaway/confirm', { task_id: task.id, lpn_code: lpns[0]!.code, location_barcode: f.reserve[5]!.barcode, override_reason: 'prueba: otra posicion' }, idem());
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    const late = await recv.post('/receipts/scan', { receipt_id: r.body.id, barcode: f.skus[1]!.code, qty: 1, uom_code: 'PIECE', lpn_code: lpns[0]!.code }, idem());
+    expect(late.status).toBe(422);
+    expect(late.body.error).toBe('LPN_NOT_OPEN');
+    await expectReconciled();
+  });
 });

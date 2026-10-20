@@ -173,6 +173,9 @@ En Recibir, el producto se puede escanear o escribir (clave o parte del nombre) 
 
 ## RECIBIR UN MODELO EN VARIAS TARIMAS
 
+Con el contador **¿En cuántas tarimas viene?** en más de 1, aparece **Distinta por tarima**: se teclean las piezas de cada tarima (T1, T2, …) y **RECIBIR ASÍ** crea cada tarima con su cantidad exacta; sin esa opción, la cantidad total se reparte en partes iguales. Para corregir una captura de menos en una recepción abierta: en la handheld escanea la tarima en *Corregir otra tarima* y luego el producto (ofrece *Agregar a esa tarima*); en la oficina, ficha de la recepción, botón **Agregar** de la tarima (producto, piezas, cajas). Solo mientras la tarima siga en el andén; si ya está acomodada en el rack, el cambio se hace con un ajuste de inventario.
+
+
 En Recibir, al capturar la cantidad de un producto nuevo (no al agregar a una tarima abierta), elige **¿En cuántas tarimas viene?** con los botones − / +. La cantidad que tecleas es el TOTAL: el sistema la reparte en partes iguales (el residuo va a las primeras), crea cada tarima ya cerrada con su tarea de acomodo y muestra la lista para **imprimir las etiquetas**. Si una recepción ya se completó o cerró y faltó capturar algo, el administrador la reabre desde la oficina (Recepciones → ficha → **Reabrir recepción**, con motivo): vuelve a "en proceso", se escanea lo que faltó y se completa otra vez.
 
 ## DEVOLUCIONES EN VARIAS TARIMAS Y REABRIR DEVOLUCIONES

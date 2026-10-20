@@ -72,6 +72,16 @@ export default function ReceiptDetailPage() {
     },
     onError: (e) => toast.error('No se pudo quitar', e),
   });
+  const [add, setAdd] = useState<{ open: boolean; lpn: string; sku: string; qty: string; cases: string }>({ open: false, lpn: '', sku: '', qty: '', cases: '' });
+  const addMore = useMutation({
+    mutationFn: () => inboundApi.scan({ receipt_id: id, barcode: add.sku.trim(), qty: add.qty.trim(), uom_code: 'PIECE', lpn_code: add.lpn, cases_count: add.cases.trim() ? Number(add.cases) : undefined }, api.newKey()),
+    onSuccess: (res) => {
+      toast.success(`Agregadas ${fmtQty(res.data.qty_base)} pzas de ${res.data.sku.code} a ${res.data.lpn.code}`, `Recibido de ${res.data.sku.code}: ${fmtQty(res.data.line.received_qty)} de ${fmtQty(res.data.line.expected_qty)}`);
+      setAdd({ open: false, lpn: '', sku: '', qty: '', cases: '' });
+      void qc.invalidateQueries({ queryKey: ['receipt', id] });
+    },
+    onError: (e) => toast.error('No se pudo agregar', e),
+  });
   const close = useMutation({
     mutationFn: () => inboundApi.close(id),
     onSuccess: () => {
@@ -219,15 +229,36 @@ export default function ReceiptDetailPage() {
               key: 'fx',
               header: '',
               render: (l) =>
-                open && can('receiving.scan') && ['OPEN', 'STORED'].includes(l.status) && l.current_location_id === r.receiving_location_id && (l.balances ?? []).some((b) => toBigInt(b.qty) > 0n) ? (
-                  <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); const options = (l.balances ?? []).filter((b) => toBigInt(b.qty) > 0n).map((b) => ({ sku: b.sku.code, qty: String(b.qty) })); setFix({ open: true, lpn: l.code, options, sku: options[0]?.sku ?? '', qty: '', reason: '' }); }}>
-                    Quitar
-                  </Button>
+                open && can('receiving.scan') && ['OPEN', 'STORED'].includes(l.status) && l.current_location_id === r.receiving_location_id ? (
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); const first = (l.balances ?? []).find((b) => toBigInt(b.qty) > 0n); setAdd({ open: true, lpn: l.code, sku: first?.sku.code ?? '', qty: '', cases: '' }); }}>
+                      Agregar
+                    </Button>
+                    {(l.balances ?? []).some((b) => toBigInt(b.qty) > 0n) && (
+                      <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); const options = (l.balances ?? []).filter((b) => toBigInt(b.qty) > 0n).map((b) => ({ sku: b.sku.code, qty: String(b.qty) })); setFix({ open: true, lpn: l.code, options, sku: options[0]?.sku ?? '', qty: '', reason: '' }); }}>
+                        Quitar
+                      </Button>
+                    )}
+                  </div>
                 ) : null,
             },
           ]}
         />
       </Card>
+      <Modal open={add.open} onClose={() => setAdd({ ...add, open: false })} title={`Agregar producto a ${add.lpn}`} footer={<><Button variant="secondary" onClick={() => setAdd({ ...add, open: false })}>Cancelar</Button><Button onClick={() => addMore.mutate()} loading={addMore.isPending} disabled={!add.sku.trim() || !/^\d+$/.test(add.qty.trim()) || Number(add.qty) <= 0}>Agregar</Button></>}>
+        <p className="mb-3 text-sm text-slate-600">Para corregir una captura de menos. Solo mientras la tarima sigue en el andén; la recepción y la tarima se actualizan juntas.</p>
+        <Field label="Producto (clave WMS, clave SAE o código de barras)" required>
+          <Input value={add.sku} onChange={(e) => setAdd({ ...add, sku: e.target.value })} className="font-mono" placeholder="p. ej. SIC24G" />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Piezas a agregar" required>
+            <Input value={add.qty} onChange={(e) => setAdd({ ...add, qty: e.target.value })} inputMode="numeric" placeholder="p. ej. 120" />
+          </Field>
+          <Field label="Cajas (opcional)">
+            <Input value={add.cases} onChange={(e) => setAdd({ ...add, cases: e.target.value })} inputMode="numeric" placeholder="p. ej. 10" />
+          </Field>
+        </div>
+      </Modal>
       <Modal open={fix.open} onClose={() => setFix({ ...fix, open: false })} title={`Quitar producto de ${fix.lpn}`} footer={<><Button variant="secondary" onClick={() => setFix({ ...fix, open: false })}>Cancelar</Button><Button variant="danger" onClick={() => undo.mutate()} loading={undo.isPending} disabled={!fix.sku || !/^\d+$/.test(fix.qty.trim()) || Number(fix.qty) <= 0}>Quitar</Button></>}>
         <p className="mb-3 text-sm text-slate-600">Para corregir una captura de más (cajas o piezas registradas que no llegaron). Solo mientras la tarima sigue en el andén; la recepción y la tarima se corrigen juntas y queda auditado.</p>
         <Field label="Producto" required>

@@ -125,6 +125,8 @@ export interface ReceiveScanInput {
   note?: string;
   /** receive the quantity on this many pallets at once (new pallets only) */
   pallets?: number;
+  /** pieces on each pallet (same UoM as qty, must add up to qty): one pallet per entry */
+  pallet_qtys?: bigint[];
 }
 
 /**
@@ -139,9 +141,16 @@ export interface ReceiveScanInput {
  * last scan's shape plus the list of pallets so the handheld can print their labels.
  */
 export async function receiveScan(tx: Tx, ctx: ActorContext, input: ReceiveScanInput) {
-  const n = input.pallets ?? 1;
+  const explicit = !input.lpn_code && input.pallet_qtys && input.pallet_qtys.length > 1 ? input.pallet_qtys.map((q) => BigInt(q)) : null;
+  const n = explicit ? explicit.length : (input.pallets ?? 1);
   if (n <= 1 || input.lpn_code) return receiveScanOne(tx, ctx, input);
   const total = BigInt(input.qty);
+  if (explicit) {
+    // the floor says how much goes on each pallet; the total must match what was declared
+    if (explicit.some((q) => q <= 0n)) throw new RuleError('PALLET_QTY_ZERO', 'Cada tarima debe llevar al menos una pieza');
+    const sum = explicit.reduce((a, q) => a + q, 0n);
+    if (sum !== total) throw new RuleError('PALLET_QTYS_SUM', `Las tarimas suman ${sum} y la cantidad declarada es ${total}`, { sum: sum.toString(), total: total.toString() });
+  }
   if (total < BigInt(n)) throw new RuleError('QTY_LT_PALLETS', `${total} piezas no se pueden repartir en ${n} tarimas`);
   const each = total / BigInt(n);
   let rest = total - each * BigInt(n);
@@ -150,12 +159,22 @@ export async function receiveScan(tx: Tx, ctx: ActorContext, input: ReceiveScanI
   let casesRest = cases - casesEach * n;
   const pallets: { code: string; qty: string; putaway_task: string | null }[] = [];
   let last: Awaited<ReturnType<typeof receiveScanOne>> | null = null;
+  let casesLeft = cases;
   for (let i = 0; i < n; i++) {
-    const q = each + (rest > 0n ? 1n : 0n);
-    if (rest > 0n) rest -= 1n;
-    const c = casesEach + (casesRest > 0 ? 1 : 0);
-    if (casesRest > 0) casesRest -= 1;
-    last = await receiveScanOne(tx, ctx, { ...input, qty: q, pallets: 1, lpn_code: undefined, cases_count: cases ? c : undefined });
+    let q: bigint;
+    let c: number;
+    if (explicit) {
+      q = explicit[i]!;
+      // cases follow the pieces proportionally; the last pallet takes whatever is left so the total of cases holds
+      c = i === n - 1 ? casesLeft : Math.min(casesLeft, Math.round((cases * Number(q)) / Number(total)));
+      casesLeft -= c;
+    } else {
+      q = each + (rest > 0n ? 1n : 0n);
+      if (rest > 0n) rest -= 1n;
+      c = casesEach + (casesRest > 0 ? 1 : 0);
+      if (casesRest > 0) casesRest -= 1;
+    }
+    last = await receiveScanOne(tx, ctx, { ...input, qty: q, pallets: 1, pallet_qtys: undefined, lpn_code: undefined, cases_count: cases ? c : undefined });
     const closed = await closeReceivingLpn(tx, ctx, last.lpn.code);
     pallets.push({ code: last.lpn.code, qty: last.qty_base.toString(), putaway_task: closed.putaway_task?.id ?? null });
   }
@@ -189,7 +208,9 @@ async function receiveScanOne(tx: Tx, ctx: ActorContext, input: ReceiveScanInput
   if (input.lpn_code) {
     lpn = await lockLpnByCode(tx, input.lpn_code);
     if (lpn.receipt_id !== r.id) throw new RuleError('LPN_OTHER_RECEIPT', `LPN ${lpn.code} belongs to another receipt`);
-    if (lpn.status !== 'OPEN') throw new RuleError('LPN_NOT_OPEN', `LPN ${lpn.code} is ${lpn.status}; it cannot receive more product`);
+    // more product can go on an open pallet, or on a closed one that is still at the dock (its put-away has not happened)
+    const atDock = lpn.status === 'STORED' && lpn.current_location_id === r.receiving_location_id;
+    if (lpn.status !== 'OPEN' && !atDock) throw new RuleError('LPN_NOT_OPEN', `LA TARIMA ${lpn.code} ESTÁ ${lpn.status === 'STORED' ? 'YA ACOMODADA EN EL RACK' : lpn.status}; ya no se le puede agregar producto desde la recepción`);
     if (input.cases_count) await tx.lpns.update({ where: { id: lpn.id }, data: { cases_count: { increment: input.cases_count } } });
   } else {
     lpn = await createLpn(tx, ctx, {

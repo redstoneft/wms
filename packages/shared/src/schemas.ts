@@ -331,6 +331,8 @@ export const zReceiveScan = z.object({
   note: zNote,
   /** the quantity arrives on this many pallets of the same product: each one is born, closed and gets its put-away (not with lpn_code) */
   pallets: z.number().int().min(1).max(200).default(1),
+  /** pieces on each pallet (same UoM as qty; must add up to qty): one pallet per entry, instead of an even split */
+  pallet_qtys: z.array(zQty).min(1).max(200).optional(),
 });
 
 export const zReopenReceipt = z.object({ reason: zReason });
