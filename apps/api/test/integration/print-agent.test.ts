@@ -64,7 +64,7 @@ describe('USB print station (print agent)', () => {
   });
 
   it('a claimed job the station never confirmed goes back to the queue; a failure is recorded with its error', async () => {
-    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'prueba de estación' });
+    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'prueba de estación', force: true });
     expect(p.status).toBe(200);
     const jobs = await agent('GET', '/print-agent/jobs', token);
     expect(jobs.body.jobs).toHaveLength(1);
@@ -79,7 +79,7 @@ describe('USB print station (print agent)', () => {
   });
 
   it('WebUSB station: a logged-in browser tab claims the queued labels of the printer with its session and reports them', async () => {
-    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'estación webusb' });
+    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'estación webusb', force: true });
     expect(p.status).toBe(200);
     // the Python station (seen seconds ago as PC-ETIQUETAS) owns the printer: the browser station gets no jobs and keeps that mark
     const busy = await sup.get(`/printers/${printerId}/station/ping`);
@@ -116,7 +116,7 @@ describe('USB print station (print agent)', () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1900);
     const pending = agent('GET', '/print-agent/jobs?wait=10', token);
     await new Promise((r) => setTimeout(r, 1200));
-    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'long poll' });
+    const p = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn, printer_id: printerId, reprint_reason: 'long poll', force: true });
     expect(p.status).toBe(200);
     const t1 = Date.now();
     const got = await pending;

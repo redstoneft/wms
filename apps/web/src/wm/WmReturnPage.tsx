@@ -224,7 +224,7 @@ function Flow() {
                 <li key={p.code} className="flex items-center justify-between rounded-xl bg-slate-800 px-3 py-2"><span className="font-mono text-lg font-black">{p.code}</span><span className="text-slate-300">{fmtQty(p.qty)} pzas{p.putaway_task ? ' · con acomodo' : ''}</span></li>
               ))}
             </ul>
-            <BigButton tone="primary" className="mt-3" disabled={busy} onClick={async () => { setBusy(true); try { for (const p of result.pallets) await labelsApi.print({ label_type: 'LPN', entity_id: p.code }); wm.ok(`${result.pallets.length} ETIQUETAS ENVIADAS`); } catch (e) { wm.fail(e); } finally { setBusy(false); } }} testId="return-print-labels">
+            <BigButton tone="primary" className="mt-3" disabled={busy} onClick={async () => { setBusy(true); try { let dups = 0; for (const p of result.pallets) { const r = await labelsApi.print({ label_type: 'LPN', entity_id: p.code }); if (r.duplicate) dups++; } if (dups) wm.warn(`${dups} YA ESTABAN ENVIADAS · se mandaron ${result.pallets.length - dups}`); else wm.ok(`${result.pallets.length} ETIQUETAS ENVIADAS`); } catch (e) { wm.fail(e); } finally { setBusy(false); } }} testId="return-print-labels">
               Imprimir las {result.pallets.length} etiquetas
             </BigButton>
           </>

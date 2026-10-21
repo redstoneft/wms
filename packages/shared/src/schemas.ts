@@ -745,6 +745,8 @@ export const zPrintLabel = z.object({
   printer_id: zUuid.optional(),
   copies: z.number().int().min(1).max(10).default(1),
   reprint_reason: zReason.optional(),
+  /** print again even when the same label was sent or queued moments ago (the duplicate guard is skipped) */
+  force: z.boolean().default(false),
 });
 
 // ---- authorizations ----

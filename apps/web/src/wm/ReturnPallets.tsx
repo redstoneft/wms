@@ -27,8 +27,9 @@ export function ReturnPallets({ ret, onChanged }: { ret: OpenReturn | null; onCh
   const print = async (codes: string[]) => {
     setBusy(true);
     try {
-      for (const c of codes) await labelsApi.print({ label_type: 'LPN', entity_id: c });
-      wm.ok(`${codes.length} ETIQUETA(S) ENVIADA(S)`);
+      let dups = 0;
+      for (const c of codes) { const r = await labelsApi.print({ label_type: 'LPN', entity_id: c }); if (r.duplicate) dups++; }
+      if (dups) wm.warn(`${dups} YA ESTABAN ENVIADAS · se mandaron ${codes.length - dups}`); else wm.ok(`${codes.length} ETIQUETA(S) ENVIADA(S)`);
     } catch (e) {
       wm.fail(e);
     } finally {

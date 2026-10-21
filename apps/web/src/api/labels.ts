@@ -7,6 +7,8 @@ export interface PrintLabelInput {
   printer_id?: string;
   copies?: number;
   reprint_reason?: string;
+  /** print again although the same label went out moments ago */
+  force?: boolean;
 }
 
 export const labelsApi = {

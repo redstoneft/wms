@@ -13,6 +13,8 @@ export function LabelPrintPanel({ labelType, entityId, onDone }: { labelType: st
   const [busy, setBusy] = useState(false);
   const printers = useQuery({ queryKey: ['printers'], queryFn: masterdataApi.printers });
   const [printerId, setPrinterId] = useState('');
+  // the label went out moments ago: a second tap is needed to insist
+  const [dup, setDup] = useState<number | null>(null);
 
   useEffect(() => {
     labelsApi
@@ -24,7 +26,9 @@ export function LabelPrintPanel({ labelType, entityId, onDone }: { labelType: st
   const print = async () => {
     setBusy(true);
     try {
-      const r = await labelsApi.print({ label_type: labelType, entity_id: entityId, copies: 1, printer_id: printerId || undefined });
+      const r = await labelsApi.print({ label_type: labelType, entity_id: entityId, copies: 1, printer_id: printerId || undefined, force: dup !== null });
+      if (r.duplicate) { setDup(r.seconds_ago ?? 0); wm.warn(`${r.model.title} YA ${r.pending ? 'ESTÁ EN LA COLA' : `SE MANDÓ HACE ${r.seconds_ago} s`} · toca de nuevo si de verdad quieres otra`); return; }
+      setDup(null);
       wm.ok(`ETIQUETA ${r.status === 'SENT' ? 'ENVIADA' : r.status === 'QUEUED' ? 'EN COLA (ESTACIÓN USB)' : r.status} · ${r.model.title}`);
       onDone();
     } catch (e) {

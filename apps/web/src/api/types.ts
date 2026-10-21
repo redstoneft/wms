@@ -1002,6 +1002,10 @@ export interface LabelPrintResult {
   model: LabelModel;
   zpl: string;
   is_reprint: boolean;
+  /** the same label was already queued or sent moments ago: nothing new was queued (send force to insist) */
+  duplicate?: boolean;
+  seconds_ago?: number;
+  pending?: boolean;
 }
 export interface LabelHistoryRow {
   id: Uuid;

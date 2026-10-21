@@ -50,6 +50,7 @@ function Flow() {
   const [busy, setBusy] = useState(false);
   const [differences, setDifferences] = useState<{ sku: string; expected: string; received: string }[] | null>(null);
   // correcting a mistake: remove product registered on the current pallet (scanned twice, wrong quantity)
+  const [labelsSent, setLabelsSent] = useState(false); // multi-pallet labels already sent once: a second tap insists
   const [undoTarget, setUndoTarget] = useState<{ lpn: string; sku: string; description: string; qty: string } | null>(null);
   const palletContents = useQuery({ queryKey: ['lpn', currentLpn], queryFn: () => inventoryApi.lpn(currentLpn!), enabled: !!currentLpn && step === 'SCAN', refetchInterval: 8_000 });
   const undo = async (lpn: string, skuCode: string, qty: string) => {
@@ -147,6 +148,7 @@ function Flow() {
         api.newKey(),
       );
       setLast(r.data);
+      setLabelsSent(false);
       setCurrentLpn(r.data.pallets.length > 1 ? null : r.data.lpn.code);
       setPallets(1);
       setPerPallet([]);
@@ -477,8 +479,8 @@ function Flow() {
           ))}
         </ul>
         <div className="mt-4 grid gap-2">
-          <BigButton tone="primary" onClick={async () => { setBusy(true); try { for (const p of last.pallets) await labelsApi.print({ label_type: 'LPN', entity_id: p.code }); wm.ok(`${last.pallets.length} ETIQUETAS ENVIADAS`); } catch (e) { wm.fail(e); } finally { setBusy(false); } }} disabled={busy} testId="print-labels-multi">
-            Imprimir las {last.pallets.length} etiquetas
+          <BigButton tone={labelsSent ? 'neutral' : 'primary'} onClick={async () => { setBusy(true); try { let dups = 0; for (const p of last.pallets) { const r = await labelsApi.print({ label_type: 'LPN', entity_id: p.code, force: labelsSent }); if (r.duplicate) dups++; } setLabelsSent(true); if (dups && !labelsSent) wm.warn(`${dups} YA ESTABAN ENVIADAS · se mandaron ${last.pallets.length - dups}`); else wm.ok(`${last.pallets.length} ETIQUETAS ENVIADAS`); } catch (e) { wm.fail(e); } finally { setBusy(false); } }} disabled={busy} testId="print-labels-multi">
+            {labelsSent ? `Ya se enviaron · toca para repetir las ${last.pallets.length}` : `Imprimir las ${last.pallets.length} etiquetas`}
           </BigButton>
           <BigButton tone="success" onClick={() => setStep('SCAN')} testId="continue-scan">
             Seguir recibiendo

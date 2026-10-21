@@ -185,6 +185,7 @@ export interface PrintRequest {
   printer_id?: string;
   copies: number;
   reprint_reason?: string;
+  force?: boolean;
 }
 
 /**
@@ -192,6 +193,9 @@ export interface PrintRequest {
  * (a previous successful print of the same entity exists), require the
  * `labels.reprint` permission and a reason, and are audited.
  */
+/** a label sent within this window is not printed again unless the caller insists (force) */
+const DUPLICATE_WINDOW_MS = 90_000;
+
 export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PRINT' | 'PREVIEW', opts: { allowReprint?: boolean } = {}) {
   const db = getDb();
   const result = await withTx(async (tx) => {
@@ -207,6 +211,15 @@ export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PR
     // reprints need the permission but NO reason (user decision 2026-10-06: a torn label is reprinted on the spot);
     // the reprint is still flagged and audited, with the reason when one is given
     if (mode === 'PRINT' && isReprint && !opts.allowReprint && !ctx.permissions.has('labels.reprint')) throw new ForbiddenError('Reprinting labels requires the labels.reprint permission');
+    // duplicate guard: the same label already waiting at the station, or sent moments ago, is not queued again
+    // (a button pressed many times while the printer catches up must not print the warehouse 17 times over)
+    if (mode === 'PRINT' && !req.force) {
+      const dup = await tx.label_prints.findFirst({
+        where: { label_type: req.label_type, entity_id: model.title, OR: [{ status: { in: ['QUEUED', 'PRINTING'] } }, { status: 'SENT', sent_at: { gt: new Date(Date.now() - DUPLICATE_WINDOW_MS) } }] },
+        orderBy: { created_at: 'desc' },
+      });
+      if (dup) return { duplicate: dup, model, zpl, row: dup, printer: null };
+    }
     let printer = null as null | { id: string; host: string; port: number; code: string; mode: string };
     if (mode === 'PRINT') {
       printer = req.printer_id
@@ -239,6 +252,11 @@ export async function printLabel(ctx: ActorContext, req: PrintRequest, mode: 'PR
     return { row, model, zpl, printer };
   });
 
+  if ('duplicate' in result && result.duplicate) {
+    const d = result.duplicate;
+    const secondsAgo = Math.max(0, Math.round((Date.now() - new Date(d.sent_at ?? d.created_at).getTime()) / 1000));
+    return { print_id: d.id, status: 'DUPLICATE', model: result.model, zpl: result.zpl, is_reprint: true, duplicate: true, seconds_ago: secondsAgo, pending: d.status !== 'SENT' };
+  }
   if (mode === 'PREVIEW') {
     const preview = await renderPreview(result.model);
     return { print_id: result.row.id, model: result.model, ...preview, is_reprint: false };
