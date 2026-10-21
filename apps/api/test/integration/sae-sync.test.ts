@@ -76,6 +76,7 @@ const tables: Record<string, Row[]> = {
     // already invoiced by the platform (goods delivered before the WMS): never warehouse work
     { id: 'p-4', cliente_id: 'c-walmart', num_orden_compra: '2222222222', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'timbrada', instrucciones: null },
     { id: 'p-5', cliente_id: 'c-walmart', num_orden_compra: '3333333333', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'nuevo', instrucciones: null },
+    { id: 'p-8', cliente_id: 'c-walmart', num_orden_compra: '7777777777', fecha_pedido: '2099-01-01', fecha_envio: null, fecha_cancelacion: null, cedis_codigo: null, estatus: 'nuevo', instrucciones: null },
   ],
   pedido_lineas: [
     { pedido_id: 'p-1', num_linea: '001', sku_cliente: '101581797', sku_interno: 'SIC20G', gtin: '7500462718695', cantidad: 198, cantidad_surtir: 198, uom: 'EA', piezas_por_caja: 6 },
@@ -357,5 +358,28 @@ describe('SAE → WMS synchronisation', () => {
     expect(unlock.status).toBe(200);
     await sup.post('/sae/sync', { entities: ['skus'] });
     expect((await sql<{ d: string }>(`SELECT description AS d FROM skus WHERE id = '${before[0]!.id}'`))[0]!.d).toBe(before[0]!.description);
+  });
+
+  it('a Walmart order captured by hand before the platform validated it is linked, not imported twice', async () => {
+    const wmt = (await sql<{ code: string }>(`SELECT code FROM customers WHERE external_source = 'PEDIDOS' AND external_ref = 'c-walmart'`))[0]!;
+    await sql(`DELETE FROM orders WHERE order_number LIKE '7777777777%'`);
+    const manual = await sup.post('/orders', { order_number: '7777777777-2', customer_code: wmt.code, lines: [{ sku_code: 'SIC20G', qty: 6, uom_code: 'PIECE' }] });
+    expect(manual.status, JSON.stringify(manual.body)).toBe(201);
+    // the platform validates the same PO later
+    tables.pedidos!.find((x) => x.id === 'p-8')!.estatus = 'validado';
+    tables.pedido_lineas!.push({ pedido_id: 'p-8', num_linea: '1', sku_cliente: null, sku_interno: 'SIC20G', gtin: null, cantidad: 6, cantidad_surtir: 6, uom: 'EA', piezas_por_caja: 6 });
+    const r = await sup.post('/sae/sync', { entities: ['customer_orders'] });
+    expect(r.body.results[0].created).toBe(0);
+    const rows = await sql<{ order_number: string; source: string; external_ref: string | null; status: string }>(`SELECT order_number, source, external_ref, status FROM orders WHERE order_number LIKE '7777777777%' ORDER BY order_number`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ order_number: '7777777777-2', source: 'SAE', external_ref: 'p-8' });
+    // a second sync sees it as the platform order and leaves it alone; a platform cancellation reaches it
+    const again = await sup.post('/sae/sync', { entities: ['customer_orders'] });
+    expect(again.body.results[0].created).toBe(0);
+    tables.pedidos!.find((x) => x.id === 'p-8')!.estatus = 'cancelado';
+    await sup.post('/sae/sync', { entities: ['customer_orders'] });
+    expect((await sql<{ status: string }>(`SELECT status FROM orders WHERE external_ref = 'p-8'`))[0]!.status).toBe('CANCELLED');
+    tables.pedidos!.find((x) => x.id === 'p-8')!.estatus = 'nuevo';
+    await expectReconciled();
   });
 });

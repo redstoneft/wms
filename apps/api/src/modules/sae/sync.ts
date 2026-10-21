@@ -754,6 +754,22 @@ export async function syncCustomerOrders(ctx: ActorContext, trigger: 'SCHEDULED'
             c.updated++;
           } else {
             let orderNumber = number || `PED-${p.id.slice(0, 8)}`;
+            // the floor often captures a Walmart order by hand before the platform validates it: that manual order (same PO,
+            // with or without a "-N" suffix, same customer or any customer of the automatic-picking family) IS this order,
+            // so it is linked to the platform instead of being imported twice
+            const st0 = await getSettings(tx);
+            const family = autoPickCustomers(st0.auto_pick_customer_codes);
+            const twin = await tx.orders.findFirst({
+              where: { source: 'MANUAL', external_ref: null, status: { not: 'CANCELLED' }, OR: [{ order_number: orderNumber }, { order_number: { startsWith: `${orderNumber}-` } }] },
+              include: { customer: { select: { code: true } } },
+              orderBy: { created_at: 'desc' },
+            });
+            if (twin && (twin.customer.code === customer.code || (family.has(twin.customer.code.toUpperCase()) && family.has(customer.code.toUpperCase())))) {
+              await tx.orders.update({ where: { id: twin.id }, data: { source: 'SAE', external_ref: ref, notes: [twin.notes ?? '', `Pedido plataforma ${p.id} (ligado al capturado manual)`].filter(Boolean).join(' · ').slice(0, 2000), version: { increment: 1 } } });
+              await audit(tx, ctx, { action: 'order.linked_platform', entity_type: 'order', entity_id: twin.id, after: { order_number: twin.order_number, platform_ref: ref, platform_number: number }, reason: 'Capturado manual antes de que la plataforma lo validara' });
+              c.updated++;
+              return;
+            }
             const clash = await tx.orders.findUnique({ where: { order_number: orderNumber } });
             if (clash && clash.external_ref !== ref) orderNumber = `${orderNumber}-${customer.code}`;
             const made = await createOrder(tx, ctx, { order_number: orderNumber, customer_code: customer.code, destination, order_date: p.fecha_pedido ? new Date(p.fecha_pedido) : undefined, priority, external_ref: ref, notes, source: 'SAE', lines: resolved.map((r) => ({ sku_code: r.sku_code, qty: r.qty, uom_code: 'PIECE' })) });
