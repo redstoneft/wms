@@ -1,3 +1,5 @@
+> **Descargar la estación (26-oct-2026):** en Datos maestros → Impresoras (botón *Descargar estación*) o desde el handheld en Cola de impresión, cualquier usuario que imprime puede bajar `estacion_wms.bat` con el token vigente y darle doble clic en la PC de la Zebra. Descargarlo otra vez NO cambia el token (no apaga una estación que ya corre); solo *Generar token* lo rota.
+
 > **Etiquetas repetidas (21-oct-2026):** el WMS ya no encola la misma etiqueta dos veces si está en cola o se mandó hace menos de 90 s (el botón repetido avisa y pide un segundo toque para insistir). Si la impresora sigue sacando etiquetas con la cola del WMS vacía, el atasco está en Windows: en Maquina02 cierra la ventana del agente (run_agent.bat), abre *Impresoras y escáneres → ZDesigner GK420t → Abrir cola de impresión → Impresora → Cancelar todos los documentos*, apaga y enciende la Zebra (borra su memoria) y vuelve a abrir run_agent.bat.
 
 # Impresoras Zebra (ZPL)

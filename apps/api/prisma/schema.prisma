@@ -1136,6 +1136,7 @@ model printers {
   is_default Boolean @default(false)
   mode               String    @default("NETWORK") @db.VarChar(10) // NETWORK (raw TCP 9100) | AGENT (USB printer on a PC running the print agent)
   agent_token_hash   String?   @db.VarChar(64)
+  agent_token_enc    String?   @db.Text // the same token, encrypted with the app key, so the station launcher can be downloaded again without rotating it
   agent_last_seen_at DateTime? @db.Timestamptz(6)
   agent_host         String?   @db.VarChar(120)
 }

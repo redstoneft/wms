@@ -4,7 +4,8 @@ import { validateUomHierarchy, zCreateParty, zCreateSku, zUpdateSku, zUuid } fro
 import { getDb, withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
-import { generateToken, sha256 } from '../../lib/crypto.js';
+import { decryptSecret, encryptSecret, generateToken, sha256 } from '../../lib/crypto.js';
+import { loadConfig } from '../../config.js';
 
 const zList = z.object({
   q: z.string().trim().max(100).optional(),
@@ -210,10 +211,38 @@ export async function masterDataRoutes(app: FastifyInstance) {
     return withTx(async (tx) => {
       const p = await tx.printers.findUnique({ where: { id } });
       if (!p) throw new NotFoundError('printer', id);
-      await tx.printers.update({ where: { id }, data: { agent_token_hash: sha256(token), mode: 'AGENT' } });
+      await tx.printers.update({ where: { id }, data: { agent_token_hash: sha256(token), agent_token_enc: encryptSecret(token, loadConfig().APP_ENCRYPTION_KEY), mode: 'AGENT' } });
       await audit(tx, req.actor!, { action: 'printer.agent_token', entity_type: 'printer', entity_id: id, after: { code: p.code } });
       return { token, printer: p.code };
     });
+  });
+  /**
+   * The station launcher (estacion_wms.bat) as a download: the PC with the Zebra double-clicks it and the station runs.
+   * Anyone who prints may fetch it; the token is reused (a new one is made only when the printer has none yet), so a
+   * second download never kills the station that is already running.
+   */
+  app.get('/printers/:id/station.bat', { preHandler: app.requirePermission('labels.print') }, async (req, reply) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const cfg = loadConfig();
+    const { token, code } = await withTx(async (tx) => {
+      const p = await tx.printers.findUnique({ where: { id } });
+      if (!p) throw new NotFoundError('printer', id);
+      if (p.mode !== 'AGENT') throw new RuleError('NOT_AGENT_PRINTER', 'Esta impresora es de red: no usa estación');
+      let token: string | null = null;
+      if (p.agent_token_enc) {
+        try { token = decryptSecret(p.agent_token_enc, cfg.APP_ENCRYPTION_KEY); } catch { token = null; }
+      }
+      if (!token) {
+        token = `wmsp_${generateToken(24)}`;
+        await tx.printers.update({ where: { id }, data: { agent_token_hash: sha256(token), agent_token_enc: encryptSecret(token, cfg.APP_ENCRYPTION_KEY) } });
+        await audit(tx, req.actor!, { action: 'printer.agent_token', entity_type: 'printer', entity_id: id, after: { code: p.code, via: 'station_download' } });
+      }
+      await audit(tx, req.actor!, { action: 'printer.station_download', entity_type: 'printer', entity_id: id, after: { code: p.code } });
+      return { token, code: p.code };
+    });
+    const origin = `${req.headers['x-forwarded-proto'] ?? 'https'}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
+    reply.header('Content-Type', 'application/octet-stream').header('Content-Disposition', 'attachment; filename="estacion_wms.bat"');
+    return stationLauncher(origin, token, code);
   });
   app.patch('/printers/:id', { preHandler: app.requirePermission('printers.manage') }, async (req) => {
     const id = zUuid.parse((req.params as { id: string }).id);
@@ -243,4 +272,65 @@ function normalizeUoms(uoms: { uom_code: 'PALLET' | 'CASE' | 'INNER' | 'PIECE'; 
   const errors = validateUomHierarchy(list);
   if (errors.length) throw new RuleError('INVALID_UOM_HIERARCHY', errors.join('; '));
   return list;
+}
+
+
+/** estacion_wms.bat: same launcher the office generates, built server-side. Runs hidden with pythonw, self-restarts, auto-starts with Windows. */
+function stationLauncher(origin: string, token: string, printerCode: string): string {
+  const L = [
+    '@echo off',
+    `rem Estacion de impresion WMS - ${printerCode}. Doble clic una vez: queda corriendo en segundo plano (sin ventana) y arranca sola al prender la PC.`,
+    'rem Con Python instalado imprime por el driver de Windows y atiende tambien a la app de etiquetas SAE (127.0.0.1:9101). Sin Python abre la estacion del navegador.',
+    `title Estacion de impresion WMS - ${printerCode}`,
+    `set "WMS_URL=${origin}"`,
+    `set "WMS_PRINT_TOKEN=${token}"`,
+    `set "URL=${origin}/print-station#token=${token}"`,
+    'set "INICIO=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\"',
+    'set "DIR=%LOCALAPPDATA%\\wms-print\\"',
+    'if not exist "%DIR%" mkdir "%DIR%"',
+    'taskkill /f /im pythonw.exe >nul 2>nul',
+    'taskkill /f /im python.exe >nul 2>nul',
+    'python --version >nul 2>nul',
+    'if errorlevel 1 goto navegador',
+    'echo Descargando la estacion...',
+    `powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing '%WMS_URL%/print-agent/wms_print_agent.py' -OutFile '%DIR%wms_print_agent.py' } catch {}"`,
+    'if not exist "%DIR%wms_print_agent.py" goto navegador',
+    'python -m pip install --quiet pywin32 requests >nul 2>nul',
+    'rem --- bucle que corre sin ventana (pythonw) y se reinicia solo ---',
+    '> "%DIR%estacion_loop.bat" (',
+    '  echo @echo off',
+    '  echo set "WMS_URL=%WMS_URL%"',
+    '  echo set "WMS_PRINT_TOKEN=%WMS_PRINT_TOKEN%"',
+    '  echo cd /d "%DIR%"',
+    '  echo :loop',
+    '  echo pythonw wms_print_agent.py',
+    '  echo if errorlevel 3 exit',
+    '  echo timeout /t 5 ^>nul',
+    '  echo goto loop',
+    ')',
+    '> "%DIR%estacion_oculta.vbs" echo CreateObject("WScript.Shell").Run "cmd /c """"%DIR%estacion_loop.bat""""", 0, False',
+    '> "%DIR%detener_estacion.bat" (',
+    '  echo @echo off',
+    '  echo taskkill /f /im pythonw.exe ^>nul 2^>nul',
+    '  echo echo Estacion de impresion WMS detenida. Para volver a iniciarla: doble clic en estacion_wms.bat',
+    '  echo timeout /t 5',
+    ')',
+    '> "%INICIO%estacion_wms.bat" (',
+    '  echo @echo off',
+    '  echo timeout /t 20 ^>nul',
+    '  echo wscript "%DIR%estacion_oculta.vbs"',
+    ')',
+    'wscript "%DIR%estacion_oculta.vbs"',
+    'echo.',
+    'echo La estacion quedo corriendo en segundo plano, sin ventana, y arrancara sola al prender la PC.',
+    'echo Comprueba en el WMS: Datos maestros - Impresoras - "conectada".',
+    'echo Registro: %DIR%estacion.log   Para detenerla: %DIR%detener_estacion.bat',
+    'timeout /t 12',
+    'exit /b 0',
+    ':navegador',
+    'if /i not "%~dp0"=="%INICIO%" copy /y "%~f0" "%INICIO%estacion_wms.bat" >nul 2>nul',
+    'if /i "%~dp0"=="%INICIO%" timeout /t 20 >nul',
+    'start "" msedge --app="%URL%" 2>nul || start "" chrome --app="%URL%" 2>nul || start "" "%URL%"',
+  ];
+  return L.join('\r\n') + '\r\n';
 }

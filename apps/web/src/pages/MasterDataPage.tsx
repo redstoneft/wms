@@ -321,6 +321,7 @@ function Printers() {
           { key: 'ls', header: 'Estación', render: (p) => (p.mode !== 'AGENT' ? '—' : p.agent_last_seen_at ? (Date.now() - new Date(p.agent_last_seen_at).getTime() < 60_000 ? <span className="text-emerald-700">conectada</span> : <span className="text-amber-700">última vez {fmtDateTime(p.agent_last_seen_at)}</span>) : <span className="text-rose-700">nunca conectada</span>) },
           { key: 'd', header: 'DPI', render: (p) => p.dpi },
           { key: 'l', header: 'Etiqueta', render: (p) => `${p.label_width_mm} × ${p.label_height_mm} mm` },
+          { key: 'dl', header: 'Estación', render: (p) => (p.mode === 'AGENT' ? <a className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-semibold text-white" href={`/api/printers/${p.id}/station.bat`} download="estacion_wms.bat" onClick={(e) => e.stopPropagation()} title="Descárgalo en la PC de la Zebra y dale doble clic. Usa el token vigente: no apaga una estación que ya esté corriendo.">Descargar estación</a> : '') },
           { key: 'df', header: 'Predeterminada', render: (p) => (p.is_default ? <StatusChip status="ACTIVE" /> : '') },
           { key: 'a', header: 'Activa', render: (p) => (p.is_active ? 'Sí' : 'No') },
         ]}
