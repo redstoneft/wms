@@ -87,6 +87,14 @@ export async function printAgentRoutes(app: FastifyInstance) {
     const p = await printerFor(req);
     return reportJob(p.id, z.string().uuid().parse((req.params as { id: string }).id), zResult.parse(req.body));
   });
+  // A station configured with an http address has its POST turned into a GET by the https redirect (the body is lost).
+  // Such a report still means "the agent got past printing": taking it as success keeps the job from being re-queued
+  // and printed again every couple of minutes.
+  app.get('/print-agent/jobs/:id/result', async (req) => {
+    const p = await printerFor(req);
+    req.log.warn({ printer: p.code }, 'print-agent result arrived as GET (station launcher with http address): taken as printed');
+    return reportJob(p.id, z.string().uuid().parse((req.params as { id: string }).id), { ok: true, error: 'reportado por GET (estación con dirección http); verificar que la estación use https' });
+  });
 
   // ---- session-authenticated (WebUSB station: a browser tab on the printer PC talks to the Zebra directly)
   const stationPrinter = async (req: FastifyRequest) => {

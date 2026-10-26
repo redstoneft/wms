@@ -8,6 +8,7 @@ import { ForbiddenError, NotFoundError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import { generateToken, sha256 } from '../../lib/crypto.js';
 import { buildRokuZip } from './roku.js';
+import { publicOrigin } from '../../lib/public-origin.js';
 
 const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -105,7 +106,7 @@ export async function deliveryRoutes(app: FastifyInstance) {
     const token = `wmsb_${generateToken(24)}`;
     const b = await db.delivery_boards.create({ data: { name: 'Roku TV', token_hash: sha256(token), created_by: req.actor!.userId } });
     await audit(db, req.actor!, { action: 'delivery.board_roku', entity_type: 'delivery_board', entity_id: b.id, after: { name: b.name } });
-    const origin = `${req.headers['x-forwarded-proto'] ?? 'https'}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
+    const origin = publicOrigin(req);
     const zip = await buildRokuZip(`${origin}/api/board/deliveries?k=${token}&days=21`);
     reply.header('Content-Type', 'application/zip').header('Content-Disposition', 'attachment; filename="tablero_roku.zip"');
     return reply.send(zip);

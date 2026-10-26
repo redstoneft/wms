@@ -6,6 +6,7 @@ import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import { decryptSecret, encryptSecret, generateToken, sha256 } from '../../lib/crypto.js';
 import { loadConfig } from '../../config.js';
+import { publicOrigin } from '../../lib/public-origin.js';
 
 const zList = z.object({
   q: z.string().trim().max(100).optional(),
@@ -240,7 +241,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
       await audit(tx, req.actor!, { action: 'printer.station_download', entity_type: 'printer', entity_id: id, after: { code: p.code } });
       return { token, code: p.code };
     });
-    const origin = `${req.headers['x-forwarded-proto'] ?? 'https'}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
+    const origin = publicOrigin(req);
     reply.header('Content-Type', 'application/octet-stream').header('Content-Disposition', 'attachment; filename="estacion_wms.bat"');
     return stationLauncher(origin, token, code);
   });

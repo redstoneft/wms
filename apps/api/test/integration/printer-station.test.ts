@@ -1,6 +1,6 @@
 // The station launcher is downloadable from the WMS with the current token; downloading again does not rotate it.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { closeApp, getApp, makeFixture, userWithRoles, type Client, type Fixture } from '../helpers.js';
+import { closeApp, getApp, makeFixture, sql, storedPallet, userWithRoles, type Client, type Fixture } from '../helpers.js';
 
 let sup: Client;
 let picker: Client;
@@ -38,5 +38,23 @@ describe('print station launcher download', () => {
     expect(/WMS_PRINT_TOKEN=(wmsp_[A-Za-z0-9_-]+)/.exec(third.body)?.[1]).toBe(rot.body.token);
     const old = await a.inject({ method: 'GET', url: '/api/print-agent/ping', headers: { 'x-agent-token': token!, 'x-agent-host': 'pc-test', 'x-requested-with': 'wms-agent' } });
     expect(old.statusCode).toBe(401);
+  });
+
+  it('the launcher always points at https (the inner proxy reports http), and a result that arrives as GET still closes the job', async () => {
+    const pr = await sup.post('/printers', { code: `H${f.tag}`.slice(0, 20), name: `Https ${f.tag}`, host: 'pc-zebra-2', mode: 'AGENT' });
+    const a = await getApp();
+    const dl = await a.inject({ method: 'GET', url: `/api/printers/${pr.body.id}/station.bat`, headers: { cookie: sup.cookie, 'x-requested-with': 'wms-client', 'x-forwarded-proto': 'http', 'x-forwarded-host': 'wms.example.com' } });
+    expect(dl.statusCode).toBe(200);
+    expect(dl.body).toContain('set "WMS_URL=https://wms.example.com"');
+    expect(dl.body).not.toContain('http://wms.example.com');
+    const token = /WMS_PRINT_TOKEN=(wmsp_[A-Za-z0-9_-]+)/.exec(dl.body)![1]!;
+    const lpn = await storedPallet(f, 0, f.reserve[2]!.id, 3n);
+    const job = await sup.post('/labels/print', { label_type: 'LPN', entity_id: lpn.code, printer_id: pr.body.id, force: true });
+    expect(job.status).toBe(200);
+    const claimed = await a.inject({ method: 'GET', url: '/api/print-agent/jobs?limit=5', headers: { 'x-agent-token': token, 'x-agent-host': 'pc-zebra-2', 'x-requested-with': 'wms-agent' } });
+    expect(claimed.json().jobs.map((j: { id: string }) => j.id)).toContain(job.body.print_id);
+    const viaGet = await a.inject({ method: 'GET', url: `/api/print-agent/jobs/${job.body.print_id}/result`, headers: { 'x-agent-token': token, 'x-agent-host': 'pc-zebra-2', 'x-requested-with': 'wms-agent' } });
+    expect(viaGet.statusCode).toBe(200);
+    expect((await sql<{ status: string }>(`SELECT status FROM label_prints WHERE id = $1`, [job.body.print_id]))[0]!.status).toBe('SENT');
   });
 });
