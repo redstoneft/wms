@@ -188,7 +188,7 @@ Si una recepción o un armado se capturó como una sola tarima pero físicamente
 
 ## UNIR TARIMAS (tarimas chicas del mismo modelo)
 
-Cuando quedan tarimas con pocas piezas del mismo modelo, en la handheld `Unir tarimas`: escanea la tarima chica (la que se vacía) y luego la tarima destino (de almacén, que ya tenga ese modelo). Todo lo que tenía la chica pasa a la destino; la chica desaparece y su posición queda libre. Físicamente las piezas se llevan a donde está la tarima destino y se retira la etiqueta de la chica. El sistema no deja unir si la tarima chica tiene surtido planeado (primero se surte o se replanea), si tiene piezas dañadas o bloqueadas, o si la destino no tiene el mismo modelo. Desde la oficina: Inventario → ficha de la tarima → **Unir a otra tarima**. Lo contrario es `Dividir tarima`.
+Cuando quedan tarimas con pocas piezas del mismo modelo, en la handheld `Unir tarimas`: escanea la tarima chica (la que se vacía) y luego la tarima destino (de almacén; puede tener otros modelos: queda una tarima mixta y el surtido la encuentra por producto). Todo lo que tenía la chica pasa a la destino; la chica desaparece y su posición queda libre. Físicamente las piezas se llevan a donde está la tarima destino y se retira la etiqueta de la chica. El sistema no deja unir si la tarima chica tiene surtido planeado (primero se surte o se replanea), si tiene piezas dañadas o bloqueadas, o si la destino está vacía. Desde la oficina: Inventario → ficha de la tarima → **Unir a otra tarima**. Lo contrario es `Dividir tarima`.
 
 ## RE-RECIBIR UNA TARIMA (tarima revuelta o mal capturada)
 

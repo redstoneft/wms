@@ -49,8 +49,8 @@ function Flow() {
     try {
       const p = await fetchPallet(code);
       if (!p) return;
-      const missing = src.contents.filter((c) => !p.contents.some((d) => d.sku_code === c.sku_code)).map((c) => c.sku_code);
-      if (missing.length) { wm.warn(`${p.code} NO TIENE ${missing.join(', ')}: solo se unen tarimas del mismo modelo`); return; }
+      const mixing = src.contents.filter((c) => !p.contents.some((d) => d.sku_code === c.sku_code)).map((c) => c.sku_code);
+      if (mixing.length) wm.warn(`OJO: ${p.code} quedará mixta (se le agrega ${mixing.join(', ')})`);
       setDst(p);
       wm.ok(`${p.code} · ${p.contents.map((c) => `${fmtQty(c.qty)} ${c.sku_code}`).join(' · ')} · en ${p.location ?? '?'}`);
     } catch (e) { wm.fail(e); } finally { setBusy(false); }
@@ -86,7 +86,7 @@ function Flow() {
       <div>
         <StepBar text="1 · ESCANEA LA TARIMA CHICA (LA QUE SE VACÍA)" />
         <ScanInput label="LPN de la tarima de almacén" autoUpper onScan={loadSrc} disabled={busy} testId="merge-scan-from" />
-        <div className="mt-3 text-sm text-slate-300">Todo lo que tenga pasa a otra tarima del mismo modelo. La tarima chica desaparece y su posición queda libre. Si tiene surtido planeado, el sistema no la deja unir.</div>
+        <div className="mt-3 text-sm text-slate-300">Todo lo que tenga pasa a la otra tarima, aunque sea de otro modelo (la tarima queda mixta y el surtido la encuentra por producto). La tarima chica desaparece y su posición queda libre. Si tiene surtido planeado, el sistema no la deja unir.</div>
       </div>
     );
   const card = (p: Pallet, label: string) => (
@@ -99,7 +99,7 @@ function Flow() {
   if (!dst)
     return (
       <div>
-        <StepBar text="2 · ESCANEA LA TARIMA DESTINO (MISMO MODELO)" />
+        <StepBar text="2 · ESCANEA LA TARIMA DESTINO (puede ser de otro modelo: queda mixta)" />
         {card(src, 'Se vacía')}
         <ScanInput label="LPN de la tarima que recibe" autoUpper onScan={loadDst} disabled={busy} testId="merge-scan-to" />
         <BigButton tone="neutral" className="mt-3" onClick={reset}>Otra tarima</BigButton>

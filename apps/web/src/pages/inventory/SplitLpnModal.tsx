@@ -25,7 +25,7 @@ export function MergeLpnModal({ open, onClose, lpn }: { open: boolean; onClose: 
   });
   return (
     <Modal open={open} onClose={onClose} title={`Unir ${lpn} a otra tarima`} footer={<div className="flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={() => m.mutate()} loading={m.isPending} disabled={!to.trim()}>Unir</Button></div>}>
-      <p className="mb-3 text-sm text-slate-600">Todo lo que hay en {lpn} pasa a la tarima destino, que debe ser de almacén y tener ya el mismo modelo. Las piezas se llevan físicamente a donde está la tarima destino; {lpn} desaparece y su posición queda libre. No se permite si {lpn} tiene surtido planeado.</p>
+      <p className="mb-3 text-sm text-slate-600">Todo lo que hay en {lpn} pasa a la tarima destino, que debe ser de almacén; puede tener otros modelos (queda mixta). Las piezas se llevan físicamente a donde está la tarima destino; {lpn} desaparece y su posición queda libre. No se permite si {lpn} tiene surtido planeado.</p>
       <Field label="Tarima destino (LPN)" required>
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="PLT-2026-00000123" className="font-mono" />
       </Field>

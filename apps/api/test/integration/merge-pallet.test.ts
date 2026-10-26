@@ -35,12 +35,9 @@ describe('merge pallets', () => {
     await expectReconciled();
   });
 
-  it('refuses other models, empty or non-storage destinations, and pallets with picks planned', async () => {
+  it('mixes models when asked, and refuses same-pallet or pallets with picks planned', async () => {
     const a = await storedPallet(f, 0, f.reserve[2]!.id, 5n);
     const other = await storedPallet(f, 1, f.reserve[3]!.id, 50n);
-    const wrong = await picker.post('/picking/merge-pallet', { from_lpn_code: a.code, to_lpn_code: other.code }, idem());
-    expect(wrong.status).toBe(422);
-    expect(JSON.stringify(wrong.body)).toMatch(/WRONG_SKU/);
     const same = await picker.post('/picking/merge-pallet', { from_lpn_code: a.code, to_lpn_code: a.code }, idem());
     expect(same.status).toBe(422);
     // picks planned on the source: refused
@@ -56,6 +53,14 @@ describe('merge pallets', () => {
     const busy = await picker.post('/picking/merge-pallet', { from_lpn_code: srcCode, to_lpn_code: dstCode }, idem());
     expect(busy.status).toBe(422);
     expect(JSON.stringify(busy.body)).toMatch(/LPN_ALLOCATED/);
+    // a different model goes onto the destination: the pallet becomes mixed
+    const small2 = await storedPallet(f, 0, f.reserve[5]!.id, 7n);
+    const mixed = await picker.post('/picking/merge-pallet', { from_lpn_code: small2.code, to_lpn_code: other.code }, idem());
+    expect(mixed.status, JSON.stringify(mixed.body)).toBe(200);
+    expect(mixed.body.mixed_in).toEqual([f.skus[0]!.code]);
+    expect(mixed.body.to_qty).toBe('57');
+    const skus = await sql<{ n: bigint }>(`SELECT count(DISTINCT sku_id) AS n FROM inventory_balances WHERE lpn_id = $1 AND qty > 0`, [other.id]);
+    expect(skus[0]!.n).toBe(2n);
     await expectReconciled();
   });
 });
