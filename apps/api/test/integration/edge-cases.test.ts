@@ -155,10 +155,12 @@ describe('transfers, quarantine, adjustments', () => {
     const lpn = await storedPallet(f, 2, f.reserve[8]!.id, 30n);
     const q = await inv.post('/inventory/status', { lpn_code: lpn.code, action: 'QUARANTINE', reason_code: 'QUALITY_HOLD', reason: 'retención de calidad' }, idem());
     expect(q.status).toBe(200);
-    const o = await sup.post('/orders', { order_number: `E-${f.tag}-Q`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[2]!.code, qty: 1, uom_code: 'CASE' }] });
+    // 2 cases: the single case received at the dock earlier in this suite is plannable (dock stock counts), the quarantined pallet never is
+    const o = await sup.post('/orders', { order_number: `E-${f.tag}-Q`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[2]!.code, qty: 2, uom_code: 'CASE' }] });
     await sup.post(`/orders/${o.body.id}/accept`);
     const a = await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false });
     expect(a.status).toBe(422);
+    expect(JSON.stringify(a.body)).not.toContain(lpn.code);
     // unknown reason code
     const bad = await inv.post('/inventory/status', { lpn_code: lpn.code, action: 'RELEASE_QUARANTINE', reason_code: 'NOPE', reason: 'código inexistente' }, idem());
     expect(bad.status).toBe(422);
@@ -166,6 +168,7 @@ describe('transfers, quarantine, adjustments', () => {
     expect(rel.status).toBe(200);
     const a2 = await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false });
     expect(a2.status).toBe(200);
+    expect(a2.body.lines[0].lpns).toContain(lpn.code);
     await expectReconciled();
   });
 
