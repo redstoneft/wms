@@ -185,7 +185,8 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
       continue;
     }
     // allocation is a PLAN: inventory stays AVAILABLE (another order or picker may still take it); pallets nobody else
-    // has planned on come first, then the chosen strategy decides
+    // has planned on come first, then the chosen strategy decides. A pallet closed at the receiving dock (received, waiting
+    // for a rack spot) is stock like any other: when the racks are full it is picked straight from the dock.
     const candidates = await tx.$queryRaw<CandidateBalance[]>`
       SELECT b.id AS balance_id, l.id AS lpn_id, l.code AS lpn_code, b.qty,
              COALESCE((SELECT sum(a.qty - a.picked_qty) FROM allocations a WHERE a.lpn_id = l.id AND a.sku_id = b.sku_id AND a.status = 'ACTIVE'), 0)::bigint AS planned_others,
@@ -196,7 +197,7 @@ export async function allocateOrder(tx: Tx, ctx: ActorContext, input: { order_id
         JOIN lpns l ON l.id = b.lpn_id
         JOIN locations loc ON loc.id = l.current_location_id
        WHERE b.sku_id = ${line.sku_id}::uuid AND b.status = 'AVAILABLE' AND b.qty > 0
-         AND l.status = 'STORED' AND loc.is_active AND loc.admin_status = 'ACTIVE' AND loc.location_type IN ('RESERVE','PICKING')
+         AND l.status = 'STORED' AND loc.is_active AND loc.admin_status = 'ACTIVE' AND loc.location_type IN ('RESERVE','PICKING','RECEIVING')
          AND (l.expiry_date IS NULL OR l.expiry_date >= CURRENT_DATE)
        ORDER BY
          (b.qty - COALESCE((SELECT sum(a.qty - a.picked_qty) FROM allocations a WHERE a.lpn_id = l.id AND a.sku_id = b.sku_id AND a.status = 'ACTIVE'), 0) >= ${remaining}) DESC,

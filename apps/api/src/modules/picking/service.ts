@@ -459,6 +459,8 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
         // whole pallet becomes the outbound unit, in place
         movementId = await changeStatus(tx, ctx, { movement_type: 'PICK', lpn: expectedLpn, sku_id: line.sku_id, qty: base, from_status: 'AVAILABLE', to_status: 'PICKING', order_id: task.order_id, task_id: task.id, reference_type: 'pick_line', reference_id: line.id });
         await tx.lpns.update({ where: { id: expectedLpn.id }, data: { status: 'PICKING', lpn_type: 'OUTBOUND', order_id: task.order_id, version: { increment: 1 } } });
+        // a pallet picked whole from the dock no longer needs its put-away (and its reserved rack spot is released)
+        await tx.putaway_tasks.updateMany({ where: { lpn_id: expectedLpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
         outboundCode = expectedLpn.code;
       } else {
         const { lpn: outbound, switched } = await getOrCreateOutboundLpn(tx, ctx, task, expectedLpn, sku.compatibility_group ?? null);
@@ -482,7 +484,10 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
         outboundCode = outbound.code;
         // if the source pallet is now empty, mark it consumed
         const left = await tx.inventory_balances.count({ where: { lpn_id: expectedLpn.id, qty: { gt: 0n } } });
-        if (left === 0) await tx.lpns.update({ where: { id: expectedLpn.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+        if (left === 0) {
+          await tx.lpns.update({ where: { id: expectedLpn.id }, data: { status: 'CONSUMED', version: { increment: 1 } } });
+          await tx.putaway_tasks.updateMany({ where: { lpn_id: expectedLpn.id, status: { in: ['PENDING', 'ASSIGNED', 'IN_PROGRESS'] } }, data: { status: 'CANCELLED' } });
+        }
       }
       const newPicked = line.picked_qty + base;
       const done = newPicked === lineQty;
