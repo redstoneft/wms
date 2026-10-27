@@ -235,7 +235,9 @@ export async function startPutaway(tx: Tx, ctx: ActorContext, lpnCode: string) {
     task = await createPutawayTask(tx, ctx, lpn);
   }
   if (task.assigned_to && task.assigned_to !== ctx.userId && task.status === 'IN_PROGRESS') {
-    throw new ConflictError('TASK_TAKEN', 'Another operator is already moving this pallet');
+    // another operator started this pallet and did not finish (walked away, handheld died): whoever scans it now takes it
+    // over. The handover stays in the audit; nothing blocks the floor (user decision 2026-10-27).
+    await audit(tx, ctx, { action: 'putaway.taken_over', entity_type: 'putaway_task', entity_id: task.id, before: { assigned_to: task.assigned_to }, after: { assigned_to: ctx.userId, lpn: lpn.code } });
   }
   if (task.suggested_location_id && task.status !== 'IN_PROGRESS') {
     // the destination was only suggested (or planned) so far: someone may have taken the slot meanwhile → re-check now
