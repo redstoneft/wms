@@ -1,4 +1,5 @@
 import type { Tx } from '../../db.js';
+import { withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
@@ -255,12 +256,35 @@ export async function startPutaway(tx: Tx, ctx: ActorContext, lpnCode: string) {
     if (!s.chosen) throw new RuleError('NO_LOCATION_AVAILABLE', `No location can accept LPN ${lpn.code}`, { explanation: s });
     task = await tx.putaway_tasks.update({ where: { id: task.id }, data: { suggested_location_id: s.chosen.location_id, explanation: JSON.parse(JSON.stringify(s)) } });
   }
-  task = await tx.putaway_tasks.update({ where: { id: task.id }, data: { status: 'IN_PROGRESS', assigned_to: ctx.userId, started_at: task.started_at ?? new Date(), version: { increment: 1 } } });
+  // started_at marks the last time somebody picked the pallet up: an abandoned put-away expires from here (see expireStalePutaways)
+  task = await tx.putaway_tasks.update({ where: { id: task.id }, data: { status: 'IN_PROGRESS', assigned_to: ctx.userId, started_at: new Date(), version: { increment: 1 } } });
   const target = await tx.locations.findUnique({ where: { id: task.suggested_location_id! } });
   const contents = await tx.$queryRaw<{ sku_code: string; description: string; qty: bigint }[]>`
     SELECT s.code AS sku_code, s.description, sum(b.qty)::bigint AS qty FROM inventory_balances b JOIN skus s ON s.id = b.sku_id WHERE b.lpn_id = ${lpn.id}::uuid AND b.qty > 0 GROUP BY s.code, s.description`;
   await audit(tx, ctx, { action: 'putaway.start', entity_type: 'putaway_task', entity_id: task.id, after: { lpn: lpn.code, target: target?.code } });
   return { task, lpn: { id: lpn.id, code: lpn.code, current_location_id: lpn.current_location_id }, target: target ? { id: target.id, code: target.code, barcode: target.barcode } : null, contents };
+}
+
+/** An IN_PROGRESS put-away reserves its slot. One nobody confirmed for this long was abandoned (operator walked away,
+ *  handheld died, pallet put somewhere else): it goes back to PENDING with its destination kept only as a soft
+ *  suggestion, so the slot is free again for everyone and the next scan re-validates it. Owner decision 2026-10-29. */
+export const STALE_PUTAWAY_MS = 4 * 60 * 60_000;
+export async function expireStalePutaways(ctx: ActorContext, now = new Date()): Promise<{ expired: string[] }> {
+  const cutoff = new Date(now.getTime() - STALE_PUTAWAY_MS);
+  return withTx(async (tx) => {
+    const stale = await tx.$queryRaw<{ id: string; assigned_to: string | null; started_at: Date; lpn: string; target: string | null }[]>`
+      SELECT t.id, t.assigned_to, t.started_at, l.code AS lpn, loc.code AS target
+        FROM putaway_tasks t JOIN lpns l ON l.id = t.lpn_id LEFT JOIN locations loc ON loc.id = t.suggested_location_id
+       WHERE t.status = 'IN_PROGRESS' AND t.started_at IS NOT NULL AND t.started_at < ${cutoff.toISOString()}::timestamptz
+       FOR UPDATE OF t SKIP LOCKED`;
+    const expired: string[] = [];
+    for (const t of stale) {
+      await tx.putaway_tasks.update({ where: { id: t.id }, data: { status: 'PENDING', assigned_to: null, started_at: null, planned: false, version: { increment: 1 } } });
+      await audit(tx, ctx, { action: 'putaway.expired', entity_type: 'putaway_task', entity_id: t.id, before: { status: 'IN_PROGRESS', assigned_to: t.assigned_to, started_at: t.started_at, target: t.target }, after: { status: 'PENDING', lpn: t.lpn, released: t.target }, reason: `Acomodo sin confirmar en más de ${STALE_PUTAWAY_MS / 3_600_000} h: la posición vuelve a estar libre` });
+      expired.push(t.lpn);
+    }
+    return { expired };
+  });
 }
 
 /**

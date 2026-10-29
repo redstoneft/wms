@@ -28,20 +28,20 @@ async function batchHeader(kind: BatchKind, id: string) {
 }
 
 /** Receipts and assembly orders that still have pallets waiting for put-away. */
-export async function listBatches(includeTraining: boolean) {
+export async function listBatches() {
   const db = getDb();
   const rows = await db.$queryRaw<{ kind: BatchKind; id: string; number: string; status: string; label: string | null; closed_at: Date | null; pending: bigint; total: bigint }[]>`
     SELECT x.kind, x.id, x.number, x.status, x.label, x.closed_at, x.pending, x.total FROM (
       SELECT 'RECEIPT'::text AS kind, r.id, r.receipt_number AS number, r.status, c.container_number AS label, r.closed_at, r.created_at,
              count(*) FILTER (WHERE ${PENDING})::bigint AS pending, count(*)::bigint AS total
         FROM receipts r JOIN lpns l ON l.receipt_id = r.id LEFT JOIN containers c ON c.id = r.container_id
-       WHERE r.status <> 'CANCELLED' AND l.status IN ('OPEN','STORED') AND (${includeTraining}::boolean OR r.is_training = false)
+       WHERE r.status <> 'CANCELLED' AND l.status IN ('OPEN','STORED')
        GROUP BY r.id, c.container_number
       UNION ALL
       SELECT 'ASSEMBLY'::text AS kind, a.id, a.code AS number, a.status, s.code AS label, a.completed_at AS closed_at, a.created_at,
              count(*) FILTER (WHERE ${PENDING})::bigint AS pending, count(*)::bigint AS total
         FROM assembly_orders a JOIN assembly_outputs ao ON ao.order_id = a.id JOIN lpns l ON l.id = ao.lpn_id JOIN skus s ON s.id = a.output_sku_id
-       WHERE a.status <> 'CANCELLED' AND l.status IN ('OPEN','STORED') AND (${includeTraining}::boolean OR a.is_training = false)
+       WHERE a.status <> 'CANCELLED' AND l.status IN ('OPEN','STORED')
        GROUP BY a.id, s.code
     ) x WHERE x.pending > 0 ORDER BY COALESCE(x.closed_at, x.created_at) DESC LIMIT 200`;
   return rows.map((r) => ({ ...r, pending: r.pending.toString(), total: r.total.toString() }));

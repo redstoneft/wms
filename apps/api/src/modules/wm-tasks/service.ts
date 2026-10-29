@@ -67,7 +67,7 @@ export async function createSelfTask(tx: Tx, ctx: ActorContext, input: SelfTaskI
         dock = await lockLocationByBarcode(tx, input.reference.trim());
         if (dock.location_type !== 'RECEIVING') throw new RuleError('NOT_RECEIVING_LOCATION', `${dock.code} no es un andén de recibo`);
       } else {
-        const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true, NOT: { code: 'ESCUELA' } }, orderBy: { created_at: 'asc' } }));
+        const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true }, orderBy: { created_at: 'asc' } }));
         if (!wh) throw new RuleError('NO_WAREHOUSE', 'No hay almacén configurado');
         // prefer a dock without an open receipt, then the first dock by code
         const docks = await tx.locations.findMany({ where: { warehouse_id: wh.id, location_type: 'RECEIVING', is_active: true, admin_status: 'ACTIVE' }, orderBy: { code: 'asc' } });

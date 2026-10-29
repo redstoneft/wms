@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zAssemblyComplete, zAssemblyFinish, zAssemblyStart, zReason, zUuid } from '@wms/shared';
 import { withTx } from '../../db.js';
-import { includeTraining } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
 
@@ -43,8 +42,7 @@ export async function assemblyRoutes(app: FastifyInstance) {
 
   app.get('/assembly', { preHandler: read }, async (req) => {
     const q = z.object({ limit: z.coerce.number().int().min(1).max(500).default(100), sku: z.string().trim().optional(), status: z.string().trim().optional() }).parse(req.query);
-    const include_training = await includeTraining(req);
-    return withTx((tx) => svc.listAssemblies(tx, { ...q, include_training }));
+    return withTx((tx) => svc.listAssemblies(tx, q));
   });
 
   app.get('/assembly/:id', { preHandler: read }, async (req) => withTx((tx) => svc.getAssembly(tx, zUuid.parse((req.params as { id: string }).id))));

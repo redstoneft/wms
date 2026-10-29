@@ -33,8 +33,6 @@ export interface Me {
   mfa_enabled: boolean;
   mfa_pending: boolean;
   mfa_enrollment_required: boolean;
-  /** guided warehouse-mode training gate */
-  training?: { required: boolean; completed: boolean; current_page: string | null; steps_done: number; steps_total: number };
 }
 
 export interface LoginResponse {
@@ -1121,7 +1119,6 @@ export interface Settings {
   allocation_strategy: string;
   session_ttl_hours: number;
   require_mfa_for_admin: boolean;
-  training_required?: boolean;
   orders_import_since?: string;
   auto_print_lpn_labels?: boolean;
   free_pick_enabled?: boolean;

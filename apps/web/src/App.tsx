@@ -54,7 +54,6 @@ const WmRecountPage = lazy(() => import('./wm/WmRecountPage'));
 const WmReturnPage = lazy(() => import('./wm/WmReturnPage'));
 const WmDeliveriesPage = lazy(() => import('./wm/WmDeliveriesPage'));
 const BoardPage = lazy(() => import('./pages/BoardPage'));
-const WmTrainingPage = lazy(() => import('./wm/WmTrainingPage'));
 const WmReplenishPage = lazy(() => import('./wm/WmReplenishPage'));
 const WmCountPage = lazy(() => import('./wm/WmCountPage'));
 const WmPickPage = lazy(() => import('./wm/WmPickPage'));
@@ -105,22 +104,12 @@ function Office({ perms, children }: { perms: Permission[]; children: ReactNode 
     </RequireAuth>
   );
 }
-/** Mandatory training gate: until the guided training is done, warehouse mode only opens the guide and the screen of the current step. */
-function TrainingGate({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
-  const loc = useLocation();
-  const tr = user?.training;
-  if (tr?.required && loc.pathname !== '/wm/training' && loc.pathname !== tr.current_page) return <Navigate to="/wm/training" replace />;
-  return <>{children}</>;
-}
 function Wm({ perms, children }: { perms: Permission[]; children: ReactNode }) {
   return (
     <RequireAuth>
-      <TrainingGate>
-        <Suspense fallback={<FullSpinner />}>
-          <Perm any={perms}>{children}</Perm>
-        </Suspense>
-      </TrainingGate>
+      <Suspense fallback={<FullSpinner />}>
+        <Perm any={perms}>{children}</Perm>
+      </Suspense>
     </RequireAuth>
   );
 }
@@ -192,7 +181,6 @@ export default function App() {
         <Route path="/wm/split" element={<Wm perms={['picking.execute']}><WmSplitPage /></Wm>} />
         <Route path="/wm/merge" element={<Wm perms={['picking.execute']}><WmMergePage /></Wm>} />
         <Route path="/wm/deliveries" element={<Wm perms={['deliveries.manage']}><WmDeliveriesPage /></Wm>} />
-        <Route path="/wm/training" element={<Wm perms={[]}><WmTrainingPage /></Wm>} />
         <Route path="/wm/replenish" element={<Wm perms={['replenishment.execute']}><WmReplenishPage /></Wm>} />
         <Route path="/wm/count" element={<Wm perms={['counts.execute']}><WmCountPage /></Wm>} />
         <Route path="/wm/pick" element={<Wm perms={['picking.execute']}><WmPickPage /></Wm>} />

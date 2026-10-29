@@ -160,7 +160,7 @@ export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnI
     // whole pallets coming back: N new pallets born at the returns area (available with put-away, or damaged)
     const n = input.new_pallets!;
     if (base < BigInt(n)) throw new RuleError('QTY_LT_PALLETS', `${base} piezas no se pueden repartir en ${n} tarimas`);
-    const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true, NOT: { code: 'ESCUELA' } }, orderBy: { created_at: 'asc' } }));
+    const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true }, orderBy: { created_at: 'asc' } }));
     if (!wh) throw new RuleError('NO_WAREHOUSE', 'No hay almacén configurado');
     const ret = await tx.locations.findFirst({ where: { warehouse_id: wh.id, location_type: 'RETURNS', is_active: true }, orderBy: { code: 'asc' } });
     if (!ret) throw new RuleError('NO_RETURNS_LOCATION', 'El almacén no tiene un área de devoluciones (RETURNS)');
@@ -189,7 +189,7 @@ export async function quickReturn(tx: Tx, ctx: ActorContext, input: QuickReturnI
     locationCode = loc.code;
     status = 'AVAILABLE';
   } else {
-    const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true, NOT: { code: 'ESCUELA' } }, orderBy: { created_at: 'asc' } }));
+    const wh = (await tx.warehouses.findFirst({ where: { is_default: true, is_active: true } })) ?? (await tx.warehouses.findFirst({ where: { is_active: true }, orderBy: { created_at: 'asc' } }));
     if (!wh) throw new RuleError('NO_WAREHOUSE', 'No hay almacén configurado');
     const ret = await tx.locations.findFirst({ where: { warehouse_id: wh.id, location_type: 'RETURNS', is_active: true }, orderBy: { code: 'asc' } });
     if (!ret) throw new RuleError('NO_RETURNS_LOCATION', 'El almacén no tiene un área de devoluciones (RETURNS)');
@@ -269,7 +269,7 @@ export async function reopenReturn(tx: Tx, ctx: ActorContext, returnId: string, 
 
 /** Open returns for the handheld (reopened by the admin or formal ones still being received): number, customer, lines. */
 export async function openReturns(tx: Tx) {
-  const rows = await tx.returns.findMany({ where: { status: { not: 'CLOSED' }, is_training: false }, include: { customer: { select: { code: true, name: true } }, lines: { include: { sku: { select: { code: true, description: true, uoms: { where: { uom_code: 'CASE' }, select: { base_qty: true } } } } } } }, orderBy: { created_at: 'desc' }, take: 50 });
+  const rows = await tx.returns.findMany({ where: { status: { not: 'CLOSED' } }, include: { customer: { select: { code: true, name: true } }, lines: { include: { sku: { select: { code: true, description: true, uoms: { where: { uom_code: 'CASE' }, select: { base_qty: true } } } } } } }, orderBy: { created_at: 'desc' }, take: 50 });
   const lpnIds = rows.flatMap((r) => r.lines.map((l) => l.lpn_id).filter((x): x is string => !!x));
   const lpns = await tx.lpns.findMany({ where: { id: { in: lpnIds } }, select: { id: true, code: true, status: true, current_location_id: true } });
   const bals = await tx.inventory_balances.groupBy({ by: ['lpn_id', 'sku_id'], where: { lpn_id: { in: lpnIds }, qty: { gt: 0n } }, _sum: { qty: true } });

@@ -87,8 +87,8 @@ export async function acceptOrder(tx: Tx, ctx: ActorContext, orderId: string) {
 }
 
 async function lockOrder(tx: Tx, orderId: string) {
-  const rows = await tx.$queryRaw<{ id: string; status: string; version: number; order_number: string; picker_id: string | null; shipment_id: string | null; is_training: boolean }[]>`
-    SELECT id, status, version, order_number, picker_id, shipment_id, is_training FROM orders WHERE id = ${orderId}::uuid FOR UPDATE`;
+  const rows = await tx.$queryRaw<{ id: string; status: string; version: number; order_number: string; picker_id: string | null; shipment_id: string | null }[]>`
+    SELECT id, status, version, order_number, picker_id, shipment_id FROM orders WHERE id = ${orderId}::uuid FOR UPDATE`;
   const o = rows[0];
   if (!o) throw new NotFoundError('order', orderId);
   return o;
@@ -451,7 +451,6 @@ export async function forceDeliver(tx: Tx, ctx: ActorContext, input: { order_id:
       const stock = await tx.$queryRaw<{ lpn_id: string; qty: bigint }[]>`
         SELECT b.lpn_id, b.qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id JOIN warehouses w ON w.id = l.warehouse_id
          WHERE b.sku_id = ${line.sku_id}::uuid AND b.status = 'AVAILABLE' AND b.qty > 0 AND l.status IN ('STORED','OPEN') AND l.current_location_id IS NOT NULL
-           AND (w.code = 'ESCUELA') = ${o.is_training}
          ORDER BY b.qty DESC, l.created_at ASC`;
       for (const s of stock) {
         if (remaining <= 0n) break;

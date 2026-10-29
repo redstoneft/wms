@@ -9,7 +9,6 @@ export const DEFAULT_SETTINGS = {
   require_mfa_for_admin: true,
   mfa_trusted_device_days: 30,
   auto_print_lpn_labels: false, // labels are printed only when someone presses Imprimir
-  training_required: true,
   orders_import_since: '',
   free_pick_enabled: true,
   auto_pick_customer_codes: '',

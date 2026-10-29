@@ -790,8 +790,6 @@ export const zSettings = z.object({
   auto_print_lpn_labels: z.boolean().optional(),
   /** days a browser may skip the second factor after "remember this device" (0 disables the option) */
   mfa_trusted_device_days: z.number().int().min(0).max(90).optional(),
-  /** every non-admin user must finish the guided warehouse-mode training before operating */
-  training_required: z.boolean().optional(),
   /** platform orders (Walmart/HEB POs) dated before this day are never imported: the go-live cutoff */
   orders_import_since: z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]).optional(),
   /** the handheld may build an order by scanning pallets (no lines in advance); off = every order needs its lines first */

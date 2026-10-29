@@ -3,7 +3,6 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { zAdjustOrderLines, zAllocateOrder, zCancelOrder, zCreateOrder, zForceDeliver, zUuid, zReopenOrder } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
-import { trainingWhere } from '../../lib/training-scope.js';
 import * as svc from './service.js';
 import { reopenPicking } from '../wm-tasks/service.js';
 
@@ -13,7 +12,6 @@ export async function orderRoutes(app: FastifyInstance) {
   app.get('/orders', { preHandler: app.requirePermission('orders.read') }, async (req) => {
     const q = z.object({ status: z.string().optional(), q: z.string().trim().max(60).optional(), customer_id: zUuid.optional(), shipment_id: zUuid.optional(), unassigned: z.enum(['true', 'false']).optional(), limit: z.coerce.number().int().min(1).max(500).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
     const where = {
-      ...(await trainingWhere(req)),
       ...(q.status ? { status: { in: q.status.split(',') } } : {}),
       ...(q.customer_id ? { customer_id: q.customer_id } : {}),
       ...(q.shipment_id ? { shipment_id: q.shipment_id } : {}),

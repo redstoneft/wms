@@ -4,6 +4,7 @@ import { getDb } from './db.js';
 import { evaluateReplenishmentRules } from './modules/replenishment/service.js';
 import { SYSTEM_ACTOR } from './lib/context.js';
 import { scheduledSaeSync } from './modules/sae/sync.js';
+import { expireStalePutaways } from './modules/putaway/service.js';
 import { saeConfig } from './modules/sae/supabase.js';
 
 /**
@@ -33,6 +34,7 @@ export function startBackgroundJobs(log: FastifyBaseLogger): () => void {
     return r.count;
   });
   every(60_000, 'replenishment-scan', () => evaluateReplenishmentRules(SYSTEM_ACTOR));
+  every(5 * 60_000, 'expire-stale-putaways', () => expireStalePutaways(SYSTEM_ACTOR));
   const sae = saeConfig();
   if ((sae.erp || sae.raw) && sae.intervalMinutes > 0) {
     every(sae.intervalMinutes * 60_000, 'sae-sync', () => scheduledSaeSync(SYSTEM_ACTOR));

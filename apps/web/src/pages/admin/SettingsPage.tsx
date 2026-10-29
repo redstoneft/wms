@@ -15,7 +15,7 @@ export default function SettingsPage() {
     if (q.data) setF(q.data);
   }, [q.data]);
   const save = useMutation({
-    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin, training_required: f!.training_required ?? true, orders_import_since: f!.orders_import_since ?? '', free_pick_enabled: f!.free_pick_enabled ?? true, auto_pick_customer_codes: f!.auto_pick_customer_codes ?? '', auto_pick_imported_orders: f!.auto_pick_imported_orders ?? false }),
+    mutationFn: () => adminApi.updateSettings({ allocation_strategy: f!.allocation_strategy, session_ttl_hours: Number(f!.session_ttl_hours), require_mfa_for_admin: f!.require_mfa_for_admin, orders_import_since: f!.orders_import_since ?? '', free_pick_enabled: f!.free_pick_enabled ?? true, auto_pick_customer_codes: f!.auto_pick_customer_codes ?? '', auto_pick_imported_orders: f!.auto_pick_imported_orders ?? false }),
     onSuccess: () => { toast.success('Configuración guardada (auditada)'); void qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e) => toast.error('No se pudo guardar', e),
   });
@@ -37,7 +37,6 @@ export default function SettingsPage() {
           <Field label="Importar pedidos de la plataforma (Walmart/HEB) desde" hint="Fecha de arranque: los pedidos con fecha anterior nunca se importan al WMS aunque sigan abiertos en la plataforma de etiquetas. Solo se importan pedidos en estatus validado.">
             <Input type="date" value={f.orders_import_since ?? ''} onChange={(e) => setF({ ...f, orders_import_since: e.target.value })} />
           </Field>
-          <Checkbox label="Capacitación guiada obligatoria en modo almacén (todos los usuarios excepto ADMIN). Desmarcada = opcional: cada usuario la encuentra en el inicio del modo almacén y la toma cuando quiera." checked={f.training_required ?? true} onChange={(e) => setF({ ...f, training_required: e.target.checked })} />
           <Checkbox label="Surtido libre en la handheld (armar un pedido escaneando tarimas, sin capturar sus modelos). Desmarcado: todo pedido debe tener sus modelos antes de surtirse." checked={f.free_pick_enabled ?? true} onChange={(e) => setF({ ...f, free_pick_enabled: e.target.checked })} />
           <Checkbox label="Pedidos importados de la plataforma (SAE) directo a surtir: al importarse se aceptan, se planean y aparecen en Surtir, sin importar el cliente." checked={f.auto_pick_imported_orders ?? false} onChange={(e) => setF({ ...f, auto_pick_imported_orders: e.target.checked })} />
           <Field label="Clientes con surtido automático" hint="Códigos de cliente separados por coma. Sus pedidos, al importarse de SAE o capturarse, se aceptan, se planean y aparecen de inmediato en Surtir (estado SURTIENDO).">

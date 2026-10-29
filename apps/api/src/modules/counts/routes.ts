@@ -4,7 +4,6 @@ import { zApproveCount, zCreateCount, zSubmitCount, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { RuleError } from '../../errors.js';
 import { parseFile } from '../imports/service.js';
-import { trainingWhere } from '../../lib/training-scope.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
 
@@ -14,7 +13,7 @@ export async function countRoutes(app: FastifyInstance) {
   app.get('/counts', { preHandler: app.requirePermission('counts.execute') }, async (req) => {
     const q = z.object({ status: z.string().optional(), assigned_to: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
     const tasks = await db.count_tasks.findMany({
-      where: { ...(await trainingWhere(req)), ...(q.status ? { status: { in: q.status.split(',') } } : {}), ...(q.assigned_to === 'me' ? { OR: [{ assigned_to: req.actor!.userId }, { assigned_to: null }] } : q.assigned_to ? { assigned_to: q.assigned_to } : {}) },
+      where: { ...(q.status ? { status: { in: q.status.split(',') } } : {}), ...(q.assigned_to === 'me' ? { OR: [{ assigned_to: req.actor!.userId }, { assigned_to: null }] } : q.assigned_to ? { assigned_to: q.assigned_to } : {}) },
       include: { _count: { select: { lines: true } } },
       orderBy: { created_at: 'desc' },
       take: q.limit,

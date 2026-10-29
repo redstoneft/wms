@@ -62,8 +62,8 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const r = await picker.post('/wm/tasks', { kind: 'PICK', reference: number, purpose: 'cliente recoge el viernes', new_order: { customer_code: f.customer.code, destination: 'Mostrador' } });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     expect(r.body).toMatchObject({ kind: 'PICK', mode: 'FREE', order_number: number, next: '/wm/pick' });
-    const order = await sql<{ status: string; source: string; is_training: boolean }>(`SELECT status, source, is_training FROM orders WHERE order_number = '${number}'`);
-    expect(order[0]).toMatchObject({ status: 'ACCEPTED', source: 'MANUAL', is_training: false });
+    const order = await sql<{ status: string; source: string }>(`SELECT status, source FROM orders WHERE order_number = '${number}'`);
+    expect(order[0]).toMatchObject({ status: 'ACCEPTED', source: 'MANUAL' });
     // day 1: a whole pallet
     const s1 = await picker.post('/picking/free-scan', { pick_task_id: r.body.id, lpn_code: whole.code }, idem());
     expect(s1.status, JSON.stringify(s1.body)).toBe(200);

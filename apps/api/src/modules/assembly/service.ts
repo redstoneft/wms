@@ -366,9 +366,9 @@ async function produceOutputs(tx: Tx, ctx: ActorContext, order: { id: string; co
   return { produced, warnings, for_order };
 }
 
-export async function listAssemblies(tx: Tx, q: { limit: number; sku?: string; status?: string; include_training?: boolean }) {
+export async function listAssemblies(tx: Tx, q: { limit: number; sku?: string; status?: string }) {
   return tx.assembly_orders.findMany({
-    where: { ...(q.include_training ? {} : { is_training: false }), ...(q.sku ? { output_sku: { code: q.sku } } : {}), ...(q.status ? { status: { in: q.status.split(',') } } : {}) },
+    where: { ...(q.sku ? { output_sku: { code: q.sku } } : {}), ...(q.status ? { status: { in: q.status.split(',') } } : {}) },
     orderBy: { created_at: 'desc' },
     take: q.limit,
     include: ORDER_INCLUDE,

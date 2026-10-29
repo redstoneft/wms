@@ -943,7 +943,7 @@ export async function cancelFreeTask(tx: Tx, ctx: ActorContext, taskId: string, 
 // (damaged pallet, blocked aisle, closer pallet…). The allocation moves with the line; the ledger stays balanced.
 // ---------------------------------------------------------------------
 export async function pickLineCandidates(tx: Tx, taskId: string, lineId: string) {
-  const line = await tx.pick_task_lines.findFirst({ where: { id: lineId, pick_task_id: taskId }, include: { pick_task: { include: { order: { select: { is_training: true } } } } } });
+  const line = await tx.pick_task_lines.findFirst({ where: { id: lineId, pick_task_id: taskId }, include: { pick_task: true } });
   if (!line) throw new NotFoundError('pick line', lineId);
   const remaining = line.qty - line.picked_qty;
   const current = await tx.lpns.findUniqueOrThrow({ where: { id: line.lpn_id }, select: { warehouse_id: true } });
