@@ -9,7 +9,7 @@ let f: Fixture;
 beforeAll(async () => {
   adm = await admin();
   fork = await userWithRoles('relofork', ['FORKLIFT']);
-  f = await makeFixture({ skus: 1, reserveBays: 3, levels: 1 });
+  f = await makeFixture({ skus: 1, reserveBays: 4, levels: 1 });
 });
 afterAll(closeApp);
 
@@ -63,5 +63,15 @@ describe('relocate a stored pallet', () => {
     expect(full.status).toBe(422);
     expect(full.body.error).toBe('LOCATION_REJECTED');
     await expectReconciled();
+  });
+
+  it('a picker relocates (own permission) but cannot start a two-phase transfer', async () => {
+    const picker = await userWithRoles('relopick', ['PICKER']);
+    const p = await storedPallet(f, 0, f.reserve[2]!.id, 5n);
+    expect((await picker.get(`/transfers/relocate/options?lpn_code=${p.code}`)).status).toBe(200);
+    const moved = await picker.post('/transfers/relocate', { lpn_code: p.code, location: f.reserve[3]!.code }, idem());
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    expect((await picker.post('/transfers/start', { lpn_code: p.code, to_location_barcode: f.reserve[2]!.barcode }, idem())).status).toBe(403);
+    expect((await picker.get('/transfers')).status).toBe(403);
   });
 });

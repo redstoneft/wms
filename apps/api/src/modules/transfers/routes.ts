@@ -8,6 +8,8 @@ import * as svc from './service.js';
 export async function transferRoutes(app: FastifyInstance) {
   const db = getDb();
   const perm = app.requirePermission('transfers.execute');
+  // relocation is its own permission: pickers relocate pallets in one step without getting two-phase transfers
+  const relocate = app.requirePermission('transfers.relocate');
 
   app.get('/transfers', { preHandler: perm }, async (req) => {
     const q = z.object({ status: z.string().default('IN_TRANSIT'), limit: z.coerce.number().int().min(1).max(500).default(200) }).parse(req.query);
@@ -34,13 +36,13 @@ export async function transferRoutes(app: FastifyInstance) {
   });
 
   /** Relocation: destinations a person may pick for a stored pallet (floor blocks included, flagged manual_only). */
-  app.get('/transfers/relocate/options', { preHandler: perm }, async (req) => {
+  app.get('/transfers/relocate/options', { preHandler: relocate }, async (req) => {
     const q = z.object({ lpn_code: z.string().trim().min(1).max(30) }).parse(req.query);
     return withTx((tx) => svc.relocateOptions(tx, q.lpn_code));
   });
 
   /** Relocation in one step: the pallet moves now to the chosen (code) or scanned (barcode) location. */
-  app.post('/transfers/relocate', { preHandler: perm }, async (req, reply) => {
+  app.post('/transfers/relocate', { preHandler: relocate }, async (req, reply) => {
     const body = zRelocate.parse(req.body);
     const r = await runIdempotent(req.actor!, fingerprint('POST', '/transfers/relocate', body), async (tx) => ({ status: 200, body: await svc.relocateLpn(tx, req.actor!, body) }));
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
