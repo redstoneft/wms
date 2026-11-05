@@ -4,6 +4,7 @@ import { audit } from '../../lib/audit.js';
 import type { ActorContext } from '../../lib/context.js';
 import { lockBalances, lockLocation, lockLocationByBarcode, lockLpn, lockLpnByCode, moveLpn, recordMovement } from '../../inventory/ledger.js';
 import { checkLocationAccepts } from '../../inventory/location-rules.js';
+import { destinationOptions, suggestLocation } from '../putaway/service.js';
 
 /**
  * Transfers are two-phase so inventory never "disappears":
@@ -134,3 +135,38 @@ export async function cancelTransfer(tx: Tx, ctx: ActorContext, transferId: stri
 }
 
 export { lockLocation };
+
+/**
+ * Destinations a person may relocate a stored pallet to: every storage location that accepts it, floor blocks
+ * (manual_only) included and flagged. Same list the put-away chooser shows; the engine's own pick comes first.
+ */
+export async function relocateOptions(tx: Tx, lpnCode: string) {
+  const lpn = await lockLpnByCode(tx, lpnCode);
+  if (lpn.status !== 'STORED') throw new RuleError('LPN_STATUS', `LPN ${lpn.code} is ${lpn.status}; only stored pallets can be relocated`);
+  if (!lpn.current_location_id) throw new RuleError('LPN_NO_LOCATION', `LPN ${lpn.code} has no location`);
+  const current = await tx.locations.findUnique({ where: { id: lpn.current_location_id }, select: { id: true, code: true, location_type: true } });
+  if (current && ['RECEIVING', 'RETURNS'].includes(current.location_type)) {
+    throw new RuleError('USE_PUTAWAY', `LPN ${lpn.code} is at ${current.code}; pallets leave receiving through directed put-away`);
+  }
+  const s = await suggestLocation(tx, lpn, { allAlternatives: true, softReservations: false, includeManualOnly: true });
+  const options = destinationOptions(s).filter((o) => o.location_id !== lpn.current_location_id);
+  options.sort((a, b) => Number(b.has_same_sku) - Number(a.has_same_sku) || Number(a.manual_only) - Number(b.manual_only) || b.score - a.score);
+  return { lpn_code: lpn.code, current: current ? { id: current.id, code: current.code } : null, options };
+}
+
+/**
+ * One-step relocation (the operator is standing at the destination with the pallet): the transfer starts and
+ * completes in the same transaction, so the ledger keeps the usual TRANSFER_START + TRANSFER_COMPLETE pair and a
+ * COMPLETED transfer row. The destination is a location code picked from the list or a scanned barcode.
+ */
+export async function relocateLpn(tx: Tx, ctx: ActorContext, input: { lpn_code: string; location: string; reason?: string }) {
+  const lpn = await lockLpnByCode(tx, input.lpn_code);
+  const key = input.location.trim().toUpperCase();
+  const to = await tx.locations.findFirst({ where: { OR: [{ barcode: input.location.trim() }, { barcode: key }, { code: key, warehouse_id: lpn.warehouse_id }] }, select: { barcode: true } });
+  if (!to) throw new NotFoundError('location', input.location);
+  const reason = input.reason?.trim() || 'Reubicación desde el handheld';
+  const started = await startTransfer(tx, ctx, { lpn_code: lpn.code, to_location_barcode: to.barcode, reason });
+  const done = await completeTransfer(tx, ctx, { transfer_id: started.transfer.id, lpn_code: lpn.code, location_barcode: to.barcode });
+  await audit(tx, ctx, { action: 'transfer.relocate', entity_type: 'transfer', entity_id: started.transfer.id, after: { lpn: lpn.code, from: started.transfer.from_location_id, to: done.location }, reason });
+  return { transfer_id: started.transfer.id, lpn_code: lpn.code, from: started.transfer.from_location_id, to: done.location, movements: done.movements };
+}

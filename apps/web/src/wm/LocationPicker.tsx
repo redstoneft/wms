@@ -24,7 +24,7 @@ export function LocationPicker({ list, selected, onSelect, testId }: { list: Put
       <select value={selected} onChange={(e) => onSelect(e.target.value)} size={Math.min(8, Math.max(2, shown.length))} className="w-full rounded-lg border-2 border-slate-500 bg-slate-800 px-2 py-1 text-lg text-white" data-testid={testId}>
         {shown.map((o) => (
           <option key={o.code} value={o.code} className="py-1">
-            {o.code}{o.has_same_sku ? ' · ya tiene este producto' : ''}{o.pallet_capacity > 0 ? ` · ${o.lpn_count}/${o.pallet_capacity}` : ''}{o.is_current ? ' (actual)' : ''}
+            {o.code}{o.manual_only ? ' · PISO (solo a petición)' : ''}{o.has_same_sku ? ' · ya tiene este producto' : ''}{o.pallet_capacity > 0 ? ` · ${o.lpn_count}/${o.pallet_capacity}` : ''}{o.is_current ? ' (actual)' : ''}
           </option>
         ))}
       </select>

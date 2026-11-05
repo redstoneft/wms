@@ -305,11 +305,11 @@ function LocationsTab({ initialCode }: { initialCode: string }) {
   const [status, setStatus] = useState('');
   const rows = useQuery({ queryKey: ['locations', 'list', dq, type, status], queryFn: () => layoutApi.locations({ q: dq || undefined, type: type || undefined, status: status || undefined, limit: 500 }) });
   const [edit, setEdit] = useState<LocationRow | null>(null);
-  const [f, setF] = useState({ admin_status: 'ACTIVE', reason: '', pallet_capacity: '', max_weight_kg: '', height_m: '', allowed_families: '', allowed_compatibility_groups: '', max_height_cm: '', pick_sequence: '' });
+  const [f, setF] = useState({ admin_status: 'ACTIVE', reason: '', pallet_capacity: '', max_weight_kg: '', height_m: '', allowed_families: '', allowed_compatibility_groups: '', max_height_cm: '', pick_sequence: '', manual_only: false });
   useEffect(() => {
     if (edit) {
-      const r = (edit.restrictions ?? {}) as { allowed_families?: string[]; allowed_compatibility_groups?: string[]; max_height_cm?: number };
-      setF({ admin_status: edit.admin_status, reason: '', pallet_capacity: String(edit.pallet_capacity), max_weight_kg: String(edit.max_weight_kg), height_m: String(edit.height_m), allowed_families: (r.allowed_families ?? []).join(', '), allowed_compatibility_groups: (r.allowed_compatibility_groups ?? []).join(', '), max_height_cm: r.max_height_cm ? String(r.max_height_cm) : '', pick_sequence: edit.pick_sequence === null ? '' : String(edit.pick_sequence) });
+      const r = (edit.restrictions ?? {}) as { allowed_families?: string[]; allowed_compatibility_groups?: string[]; max_height_cm?: number; manual_only?: boolean };
+      setF({ admin_status: edit.admin_status, reason: '', pallet_capacity: String(edit.pallet_capacity), max_weight_kg: String(edit.max_weight_kg), height_m: String(edit.height_m), allowed_families: (r.allowed_families ?? []).join(', '), allowed_compatibility_groups: (r.allowed_compatibility_groups ?? []).join(', '), max_height_cm: r.max_height_cm ? String(r.max_height_cm) : '', pick_sequence: edit.pick_sequence === null ? '' : String(edit.pick_sequence), manual_only: r.manual_only === true });
     }
   }, [edit]);
   const save = useMutation({
@@ -322,7 +322,7 @@ function LocationsTab({ initialCode }: { initialCode: string }) {
         max_weight_kg: num(f.max_weight_kg),
         height_m: num(f.height_m),
         pick_sequence: num(f.pick_sequence),
-        restrictions: { allowed_families: f.allowed_families ? f.allowed_families.split(',').map((s) => s.trim()).filter(Boolean) : undefined, allowed_compatibility_groups: f.allowed_compatibility_groups ? f.allowed_compatibility_groups.split(',').map((s) => s.trim()).filter(Boolean) : undefined, max_height_cm: num(f.max_height_cm) },
+        restrictions: { allowed_families: f.allowed_families ? f.allowed_families.split(',').map((s) => s.trim()).filter(Boolean) : undefined, allowed_compatibility_groups: f.allowed_compatibility_groups ? f.allowed_compatibility_groups.split(',').map((s) => s.trim()).filter(Boolean) : undefined, max_height_cm: num(f.max_height_cm), manual_only: f.manual_only },
       }),
     onSuccess: () => { toast.success('Ubicación actualizada'); setEdit(null); void qc.invalidateQueries({ queryKey: ['locations'] }); void qc.invalidateQueries({ queryKey: ['map'] }); },
     onError: (e) => toast.error('No se pudo guardar', e),
@@ -367,6 +367,10 @@ function LocationsTab({ initialCode }: { initialCode: string }) {
             <Field label="Familias permitidas (coma)"><Input value={f.allowed_families} onChange={(e) => setF({ ...f, allowed_families: e.target.value })} /></Field>
             <Field label="Grupos de compatibilidad (coma)"><Input value={f.allowed_compatibility_groups} onChange={(e) => setF({ ...f, allowed_compatibility_groups: e.target.value })} /></Field>
             <Field label="Altura máx. de pallet (cm)"><Input type="number" value={f.max_height_cm} onChange={(e) => setF({ ...f, max_height_cm: e.target.value })} /></Field>
+            <label className="flex items-start gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" className="mt-1" checked={f.manual_only} onChange={(e) => setF({ ...f, manual_only: e.target.checked })} />
+              <span><b>Solo si el operador la elige.</b> El acomodo automático nunca la sugiere; aparece en la lista cuando el operador escoge destino (Ubicar o Reubicar) o la escanea. Úsalo para las posiciones de piso.</span>
+            </label>
           </div>
         )}
       </Drawer>

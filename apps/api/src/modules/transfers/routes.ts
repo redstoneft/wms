@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zReason, zTransferComplete, zTransferStart, zUuid } from '@wms/shared';
+import { zReason, zRelocate, zTransferComplete, zTransferStart, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { fingerprint, runIdempotent } from '../../lib/idempotency.js';
 import * as svc from './service.js';
@@ -29,6 +29,20 @@ export async function transferRoutes(app: FastifyInstance) {
   app.post('/transfers/complete', { preHandler: perm }, async (req, reply) => {
     const body = zTransferComplete.parse(req.body);
     const r = await runIdempotent(req.actor!, fingerprint('POST', '/transfers/complete', body), async (tx) => ({ status: 200, body: await svc.completeTransfer(tx, req.actor!, body) }));
+    if (r.replayed) reply.header('Idempotent-Replayed', 'true');
+    return r.body;
+  });
+
+  /** Relocation: destinations a person may pick for a stored pallet (floor blocks included, flagged manual_only). */
+  app.get('/transfers/relocate/options', { preHandler: perm }, async (req) => {
+    const q = z.object({ lpn_code: z.string().trim().min(1).max(30) }).parse(req.query);
+    return withTx((tx) => svc.relocateOptions(tx, q.lpn_code));
+  });
+
+  /** Relocation in one step: the pallet moves now to the chosen (code) or scanned (barcode) location. */
+  app.post('/transfers/relocate', { preHandler: perm }, async (req, reply) => {
+    const body = zRelocate.parse(req.body);
+    const r = await runIdempotent(req.actor!, fingerprint('POST', '/transfers/relocate', body), async (tx) => ({ status: 200, body: await svc.relocateLpn(tx, req.actor!, body) }));
     if (r.replayed) reply.header('Idempotent-Replayed', 'true');
     return r.body;
   });

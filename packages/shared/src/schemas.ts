@@ -262,6 +262,8 @@ export const zUpdateLocation = z.object({
       allowed_families: z.array(z.string().max(60)).optional(),
       allowed_compatibility_groups: z.array(z.string().max(60)).optional(),
       max_height_cm: z.number().positive().optional(),
+      /** the engine never suggests this location by itself; only a person choosing or scanning it puts a pallet there */
+      manual_only: z.boolean().optional(),
     })
     .optional(),
   pick_sequence: z.number().int().min(0).optional(),
@@ -369,6 +371,13 @@ export const zTransferComplete = z.object({
   lpn_code: z.string().trim().min(1).max(30),
   location_barcode: zBarcode,
 });
+/** One-step relocation of a stored pallet: destination by location code (chosen from the list) or barcode (scanned). */
+export const zRelocate = z.object({
+  lpn_code: z.string().trim().min(1).max(30),
+  location: z.string().trim().min(1).max(64),
+  reason: z.string().trim().max(300).optional(),
+});
+export type RelocateInput = z.infer<typeof zRelocate>;
 
 // ---- assembly (components → finished product) ----
 /** One finished pallet: full cases × pieces per case, optionally one incomplete case, and defective pieces found on it. */

@@ -414,6 +414,20 @@ export interface PutawayOption {
   pallet_capacity: number;
   level: number | null;
   is_current: boolean;
+  /** floor blocks and the like: offered only when a person chooses, never suggested by the engine */
+  manual_only?: boolean;
+}
+export interface RelocateOptions {
+  lpn_code: string;
+  current: { id: Uuid; code: string } | null;
+  options: PutawayOption[];
+}
+export interface RelocateResult {
+  transfer_id: Uuid;
+  lpn_code: string;
+  from: Uuid;
+  to: string;
+  movements: string[];
 }
 export interface QuickReturnResult {
   return_number: string;

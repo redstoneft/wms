@@ -150,6 +150,12 @@ Quien verifica **no puede ser quien surtió**. Si el sistema le dice `SURTIDOR =
 2. Al llegar, escanee el **LPN** y la **ubicación** → completado. Destino equivocado = rojo. Si no puede completar, pida cancelar (el pallet vuelve a su origen).
 3. Reabasto: `Almacén → Reabasto` muestra las caras de picking bajas; **INICIAR** indica qué pallet de reserva llevar; el resto es igual a una transferencia.
 
+## REUBICAR UNA TARIMA (mover en un solo paso)
+
+`Almacén → Reubicar`: escanee la **tarima** ya acomodada; el handheld muestra dónde está, qué contiene y la **lista de posiciones libres que la aceptan**. Elija una de la lista (o escanee la ubicación destino) y confirme: la tarima cambia de posición en ese momento, sin quedar "en tránsito". Queda registrado como un traslado completado (movimientos TRANSFER_START + TRANSFER_COMPLETE). Úselo cuando ya está con la tarima en el destino; si va a dejarla a medio camino, use **Traslados**. Las tarimas del andén no se reubican: se ubican con **Ubicar**.
+
+**Posiciones de piso (HID-PISO-…): solo si el operador las elige.** El acomodo automático **nunca** sugiere una posición de piso. En *Ubicar → Elegir ubicación* y en *Reubicar* sí aparecen al final de la lista, marcadas **PISO (solo a petición)**, y también se aceptan escaneándolas. Siguen aplicando las reglas de siempre: solo cajas (grupo CAJAS), capacidad 2 tarimas por posición, nunca revueltas. El administrador marca o desmarca esto por ubicación en *Configuración → Layout → Ubicaciones* con la casilla **Solo si el operador la elige**.
+
 ## CONSULTAR (qué contiene una tarima o una ubicación)
 
 `Almacén → Consultar`: escanee un **LPN** y verá su ubicación, estado, lote/caducidad, pedido o recepción, y cada producto con sus piezas. Escanee una **etiqueta de ubicación** y verá las tarimas que hay en ese hueco con su contenido. Solo consulta: no mueve nada.
@@ -166,7 +172,7 @@ Si escaneaste la tarima de almacén pero la pieza ya estaba surtida para un pedi
 
 ## CAJAS (CAPM): SOLO ELLAS VAN A PISO Y NUNCA REVUELTAS
 
-Las cajas organizadoras (claves CAPM…) son el único producto que se acomoda en el piso (HID-PISO-…): el acomodo no ofrece ni acepta piso para otra mercancía (`COMPAT_GROUP_NOT_ALLOWED`). En el surtido, las cajas nunca comparten tarima de salida con otra mercancía: si la tarima abierta trae otra cosa, el sistema abre una tarima nueva solo y avisa **TARIMA NUEVA … LAS CAJAS VAN SOLAS**; etiquétala como cualquier otra. Las cajas sí pueden ir a rack.
+Las cajas organizadoras (claves CAPM…) son el único producto que se acomoda en el piso (HID-PISO-…): el acomodo no ofrece ni acepta piso para otra mercancía (`COMPAT_GROUP_NOT_ALLOWED`). Desde noviembre 2026 el piso tampoco se sugiere solo para cajas: el operador lo elige en la lista (ver *Reubicar una tarima*). En el surtido, las cajas nunca comparten tarima de salida con otra mercancía: si la tarima abierta trae otra cosa, el sistema abre una tarima nueva solo y avisa **TARIMA NUEVA … LAS CAJAS VAN SOLAS**; etiquétala como cualquier otra. Las cajas sí pueden ir a rack.
 
 ## RECIBIR: PRODUCTO POR CÓDIGO, CLAVE O NOMBRE; CAJAS × PIEZAS
 

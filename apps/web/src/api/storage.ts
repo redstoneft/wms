@@ -1,6 +1,6 @@
 // put-away, transfers, replenishment, cycle counts
 import { api } from './client';
-import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult, PutawayOption, ReceiptPutawayPallet, CountImportResult } from './types';
+import type { CountTask, CountTaskView, PutawayConfirmResult, PutawayStartResult, PutawayTaskRow, ReplenRule, ReplenTaskRow, TransferRow, TransferStartResult, PutawayOption, ReceiptPutawayPallet, CountImportResult, RelocateOptions, RelocateResult } from './types';
 
 export type PutawayBatchKind = 'RECEIPT' | 'ASSEMBLY';
 export interface PutawayBatch { kind: PutawayBatchKind; id: string; number: string; status: string; label: string | null; closed_at: string | null; pending: string; total: string }
@@ -34,6 +34,10 @@ export const transfersApi = {
   complete: (body: { transfer_id: string; lpn_code: string; location_barcode: string }, key: string) =>
     api.postIdem<{ transfer_id: string; lpn_code: string; location: string; movements: string[] }>('/transfers/complete', body, key),
   cancel: (id: string, reason: string) => api.post<{ ok: true; lpn_code: string }>(`/transfers/${id}/cancel`, { reason }),
+  /** destinations a person may relocate a stored pallet to (floor blocks flagged manual_only) */
+  relocateOptions: (lpn_code: string) => api.get<RelocateOptions>('/transfers/relocate/options', { lpn_code }),
+  /** idempotent · one-step move to a chosen code or scanned barcode */
+  relocate: (body: { lpn_code: string; location: string; reason?: string }, key: string) => api.postIdem<RelocateResult>('/transfers/relocate', body, key),
 };
 
 export const replenApi = {

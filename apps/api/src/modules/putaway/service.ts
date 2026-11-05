@@ -51,15 +51,16 @@ interface Candidate {
   rack_lpn_count: number;
   has_same_family: boolean;
   compat_groups: (string | null)[] | null;
+  manual_only: boolean;
 }
 
 export interface SlottingExplanation {
-  chosen: { location_id: string; code: string; score: number } | null;
+  chosen: { location_id: string; code: string; score: number; manual_only?: boolean } | null;
   factors: { factor: string; points: number; detail: string }[];
   rejected_sample: { code: string; reasons: string[] }[];
   candidates_evaluated: number;
   weights: SlottingWeights;
-  alternatives: { location_id: string; code: string; score: number; has_same_sku: boolean; lpn_count: number; pallet_capacity: number; level: number | null }[];
+  alternatives: { location_id: string; code: string; score: number; has_same_sku: boolean; lpn_count: number; pallet_capacity: number; level: number | null; manual_only: boolean }[];
 }
 
 async function loadWeights(tx: Tx, profile: LpnProfile, abc: string): Promise<SlottingWeights> {
@@ -78,9 +79,11 @@ async function loadWeights(tx: Tx, profile: LpnProfile, abc: string): Promise<Sl
  * actual reservation happens when the task is created, and the fit is
  * re-validated with locks at confirmation time.
  */
-export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternatives?: boolean; softReservations?: boolean } = {}): Promise<SlottingExplanation> {
+export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternatives?: boolean; softReservations?: boolean; includeManualOnly?: boolean } = {}): Promise<SlottingExplanation> {
   // engine suggestions of other pallets count by default (so automatic suggestions spread out); a person planning ignores them
   const soft = opts.softReservations !== false;
+  // locations marked manual_only (floor blocks) are never suggested by the engine; they are listed only when a person is choosing
+  const manual = opts.includeManualOnly === true;
   const profile = await lpnProfile(tx, lpn);
   if (profile.sku_ids.length === 0) throw new RuleError('EMPTY_LPN', `LPN ${lpn.code} has no inventory`);
   const skuMeta = await tx.$queryRaw<{ abc_class: string }[]>`SELECT abc_class FROM skus WHERE id = ANY(${profile.sku_ids}::uuid[]) ORDER BY abc_class LIMIT 1`;
@@ -113,7 +116,8 @@ export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternativ
            COALESCE(occ.lpn_count, 0)::int AS lpn_count, COALESCE(res.reserved_count, 0)::int AS reserved_count,
            COALESCE(occ.weight_kg, 0)::text AS weight_kg, COALESCE(occ.has_same_sku, false) AS has_same_sku,
            COALESCE(rs.rack_has_same_sku, false) AS rack_has_same_sku, COALESCE(rs.rack_lpn_count, 0)::int AS rack_lpn_count,
-           COALESCE(occ.has_same_family, false) AS has_same_family, occ.compat_groups
+           COALESCE(occ.has_same_family, false) AS has_same_family, occ.compat_groups,
+           COALESCE((loc.restrictions->>'manual_only')::boolean, false) AS manual_only
       FROM locations loc
       LEFT JOIN zones z ON z.id = loc.zone_id
       LEFT JOIN occ ON occ.location_id = loc.id
@@ -121,6 +125,7 @@ export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternativ
       LEFT JOIN rack_stats rs ON rs.rack_id = loc.rack_id
      WHERE loc.warehouse_id = ${lpn.warehouse_id}::uuid AND loc.is_active AND loc.admin_status = 'ACTIVE'
        AND loc.location_type IN ('RESERVE','PICKING')
+       AND (${manual}::boolean OR NOT COALESCE((loc.restrictions->>'manual_only')::boolean, false))
        AND COALESCE(occ.lpn_count, 0) + COALESCE(res.reserved_count, 0) < loc.pallet_capacity`;
 
   const rejected: { code: string; reasons: string[] }[] = [];
@@ -178,15 +183,16 @@ export async function suggestLocation(tx: Tx, lpn: LpnRow, opts: { allAlternativ
     }
     scored.push({ c, score, factors });
   }
-  scored.sort((a, b) => b.score - a.score || a.c.code.localeCompare(b.c.code));
+  // a manual-only location never outranks a regular one, even when listed for a person to choose
+  scored.sort((a, b) => Number(a.c.manual_only) - Number(b.c.manual_only) || b.score - a.score || a.c.code.localeCompare(b.c.code));
   const best = scored[0];
   return {
-    chosen: best ? { location_id: best.c.id, code: best.c.code, score: best.score } : null,
+    chosen: best ? { location_id: best.c.id, code: best.c.code, score: best.score, manual_only: best.c.manual_only } : null,
     factors: best?.factors ?? [],
     rejected_sample: rejected,
     candidates_evaluated: candidates.length,
     weights,
-    alternatives: scored.slice(1, opts.allAlternatives ? undefined : 25).map((s) => ({ location_id: s.c.id, code: s.c.code, score: s.score, has_same_sku: s.c.has_same_sku, lpn_count: s.c.lpn_count + s.c.reserved_count, pallet_capacity: s.c.pallet_capacity, level: s.c.level })),
+    alternatives: scored.slice(1, opts.allAlternatives ? undefined : 25).map((s) => ({ location_id: s.c.id, code: s.c.code, score: s.score, has_same_sku: s.c.has_same_sku, lpn_count: s.c.lpn_count + s.c.reserved_count, pallet_capacity: s.c.pallet_capacity, level: s.c.level, manual_only: s.c.manual_only })),
   };
 }
 
@@ -391,16 +397,22 @@ export async function putawayOptions(tx: Tx, taskId: string) {
   if (!t) throw new NotFoundError('putaway task', taskId);
   if (!['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(t.status)) throw new RuleError('TASK_STATUS', `Task is ${t.status}`);
   const lpn = await lockLpn(tx, t.lpn_id);
-  // every location the engine accepts (the stored explanation keeps only the top 25, the operator gets the full list)
-  const s = await suggestLocation(tx, lpn, { allAlternatives: true, softReservations: false });
+  // every location the engine accepts (the stored explanation keeps only the top 25, the operator gets the full list),
+  // including manual-only ones (floor blocks): a person may choose them, the engine never does
+  const s = await suggestLocation(tx, lpn, { allAlternatives: true, softReservations: false, includeManualOnly: true });
   const current = t.suggested_location_id ? await tx.locations.findUnique({ where: { id: t.suggested_location_id }, select: { id: true, code: true } }) : null;
-  const options = [
-    ...(s.chosen ? [{ location_id: s.chosen.location_id, code: s.chosen.code, score: s.chosen.score, has_same_sku: s.factors.some((f) => f.factor === 'same_sku'), lpn_count: -1, pallet_capacity: -1, level: null as number | null }] : []),
-    ...s.alternatives,
-  ];
+  const options = destinationOptions(s);
   // same-SKU locations first (consolidation), then by score; the current target is flagged
   options.sort((a, b) => Number(b.has_same_sku) - Number(a.has_same_sku) || b.score - a.score);
   return { task_id: t.id, current: current?.code ?? null, options: options.map((o) => ({ ...o, is_current: o.location_id === current?.id })) };
+}
+
+/** Flattens an explanation into the list a person picks from (chosen first, then alternatives). */
+export function destinationOptions(s: SlottingExplanation) {
+  return [
+    ...(s.chosen ? [{ location_id: s.chosen.location_id, code: s.chosen.code, score: s.chosen.score, has_same_sku: s.factors.some((f) => f.factor === 'same_sku'), lpn_count: -1, pallet_capacity: -1, level: null as number | null, manual_only: s.chosen.manual_only ?? false }] : []),
+    ...s.alternatives,
+  ];
 }
 
 /**

@@ -46,6 +46,7 @@ const WmPutawayPlanPage = lazy(() => import('./wm/WmPutawayPlanPage'));
 const WmDamagePage = lazy(() => import('./wm/WmDamagePage'));
 const WmPrintQueuePage = lazy(() => import('./wm/WmPrintQueuePage'));
 const WmTransferPage = lazy(() => import('./wm/WmTransferPage'));
+const WmRelocatePage = lazy(() => import('./wm/WmRelocatePage'));
 const WmAssemblyPage = lazy(() => import('./wm/WmAssemblyPage'));
 const WmNewTaskPage = lazy(() => import('./wm/WmNewTaskPage'));
 const WmLookupPage = lazy(() => import('./wm/WmLookupPage'));
@@ -172,6 +173,7 @@ export default function App() {
         <Route path="/wm/damage" element={<Wm perms={['inventory.damage']}><WmDamagePage /></Wm>} />
         <Route path="/wm/print-queue" element={<Wm perms={['labels.print']}><WmPrintQueuePage /></Wm>} />
         <Route path="/wm/transfer" element={<Wm perms={['transfers.execute']}><WmTransferPage /></Wm>} />
+        <Route path="/wm/relocate" element={<Wm perms={['transfers.execute']}><WmRelocatePage /></Wm>} />
         <Route path="/wm/assembly" element={<Wm perms={['assembly.execute']}><WmAssemblyPage /></Wm>} />
         <Route path="/wm/new-task" element={<Wm perms={['tasks.self_create']}><WmNewTaskPage /></Wm>} />
         <Route path="/wm/lookup" element={<Wm perms={['inventory.read']}><WmLookupPage /></Wm>} />
