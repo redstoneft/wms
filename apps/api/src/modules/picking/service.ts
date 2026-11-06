@@ -599,7 +599,45 @@ async function maybeCompleteTask(tx: Tx, ctx: ActorContext, taskId: string): Pro
   const remainingAllocs = await tx.allocations.count({ where: { order_line: { order_id: t.order_id }, status: 'ACTIVE' } });
   await tx.orders.update({ where: { id: t.order_id }, data: { status: remainingAllocs > 0 ? 'PARTIALLY_ALLOCATED' : 'PICKED', version: { increment: 1 } } });
   await audit(tx, ctx, { action: 'pick.task_completed', entity_type: 'pick_task', entity_id: taskId, after: { remaining_active_allocations: remainingAllocs } });
+  if (remainingAllocs === 0) await releasePickedPositions(tx, ctx, t.order_id);
   return true;
+}
+
+/**
+ * Picking finished: every outbound pallet of the order still standing in a rack position (RESERVE/PICKING location)
+ * leaves it, so the position is free again. The pallet goes to the order's staging lane (assigned now if a lane is
+ * free) or, when every lane is busy, to the outbound dock (first active SHIPPING location of its warehouse). Its
+ * inventory keeps the PICKING status: the staging scan still confirms the lane, loading still needs STAGED.
+ */
+export async function releasePickedPositions(tx: Tx, ctx: ActorContext, orderId: string): Promise<{ moved: string[]; to: string | null }> {
+  const pallets = await tx.$queryRaw<{ id: string; warehouse_id: string }[]>`
+    SELECT l.id, l.warehouse_id FROM lpns l JOIN locations loc ON loc.id = l.current_location_id
+     WHERE l.order_id = ${orderId}::uuid AND l.status = 'PICKING' AND loc.location_type IN ('RESERVE','PICKING')
+     ORDER BY l.code FOR UPDATE OF l`;
+  if (pallets.length === 0) return { moved: [], to: null };
+  let dest: { id: string; code: string } | null = await assignStaging(tx, ctx, orderId);
+  let kind: 'lane' | 'dock' = 'lane';
+  if (!dest) {
+    const rows = await tx.$queryRaw<{ id: string; code: string }[]>`
+      SELECT id, code FROM locations WHERE warehouse_id = ${pallets[0]!.warehouse_id}::uuid AND location_type = 'SHIPPING' AND is_active AND admin_status = 'ACTIVE' ORDER BY code LIMIT 1`;
+    dest = rows[0] ?? null;
+    kind = 'dock';
+  }
+  if (!dest) {
+    await audit(tx, ctx, { action: 'pick.release_skipped', entity_type: 'order', entity_id: orderId, after: { pallets: pallets.length, reason: 'no staging lane and no shipping dock available' } });
+    return { moved: [], to: null };
+  }
+  const moved: string[] = [];
+  for (const p of pallets) {
+    const lpn = await lockLpn(tx, p.id);
+    if (lpn.current_location_id === dest.id) continue;
+    const balances = await lockBalances(tx, lpn.id);
+    if (balances.length === 0 || balances.some((b) => b.status !== 'PICKING')) continue;
+    await moveLpn(tx, ctx, { movement_type: 'PICK_RELEASE', lpn, to_location_id: dest.id, only_status: 'PICKING', order_id: orderId, reference_type: 'order', reference_id: orderId, note: 'surtido terminado: la tarima deja la posición de rack' });
+    moved.push(lpn.code);
+  }
+  if (moved.length) await audit(tx, ctx, { action: 'pick.release_positions', entity_type: 'order', entity_id: orderId, after: { to: dest.code, kind, pallets: moved } });
+  return { moved, to: dest.code };
 }
 
 /**
@@ -869,6 +907,7 @@ export async function closeFreeTask(tx: Tx, ctx: ActorContext, taskId: string) {
   await tx.pick_tasks.update({ where: { id: taskId }, data: { status: 'COMPLETED', completed_at: new Date(), version: { increment: 1 } } });
   await tx.orders.update({ where: { id: task.order_id }, data: { status: 'PICKED', version: { increment: 1 } } });
   await audit(tx, ctx, { action: 'pick.free_closed', entity_type: 'pick_task', entity_id: taskId, after: { lines: picked } });
+  await releasePickedPositions(tx, ctx, task.order_id);
   return pickTaskView(tx, taskId);
 }
 

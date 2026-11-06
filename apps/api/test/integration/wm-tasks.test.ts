@@ -232,12 +232,14 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const busy = await picker.post('/staging/scan', { lpn_code: pallet.code, staging_location_barcode: lanes[0]!.barcode }, idem());
     expect(busy.status).toBe(422);
     expect(busy.body.error).toBe('LANE_BUSY');
-    await sql(`UPDATE staging_assignments SET released_at = now() WHERE order_id = '${blockers[1]}'`);
-    const ok = await picker.post('/staging/scan', { lpn_code: pallet.code, staging_location_barcode: lanes[1]!.barcode }, idem());
+    // (picked pallets of earlier orders may already stand in a lane: a lane with pallets of another order stays busy, so free one that is empty)
+    const emptyLane = (await sql<{ id: string; code: string; barcode: string }>(`SELECT loc.id, loc.code, loc.barcode FROM locations loc WHERE loc.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM lpns l WHERE l.current_location_id = loc.id) ORDER BY loc.code LIMIT 1`, [lanes.map((l) => l.id)]))[0]!;
+    await sql(`UPDATE staging_assignments SET released_at = now() WHERE order_id = '${blockers[lanes.findIndex((l) => l.id === emptyLane.id)]}'`);
+    const ok = await picker.post('/staging/scan', { lpn_code: pallet.code, staging_location_barcode: emptyLane.barcode }, idem());
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    expect(ok.body.location).toBe(lanes[1]!.code);
+    expect(ok.body.location).toBe(emptyLane.code);
     const view = await picker.get(`/picking/tasks/${r.body.id}`);
-    expect(view.body.staging.code).toBe(lanes[1]!.code);
+    expect(view.body.staging.code).toBe(emptyLane.code);
   });
 
   it('RECEIPT kind opens a receipt at the scanned dock; re-receiving a pallet applies the real contents for a supervisor and leaves a finished count for a picker', async () => {

@@ -70,6 +70,7 @@ export const MOVEMENT_TYPES = [
   'ASSEMBLY_IN', // finished product produced by an assembly order
   'RECEIPT_UNDO', // a receiving scan registered by mistake, reversed while the pallet is still at the dock
   'SHIP_UNDO', // a closed order reopened: what was shipped comes back onto its pallets
+  'PICK_RELEASE', // picking finished: the outbound pallet leaves its rack position for the staging lane / outbound dock (status unchanged)
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
