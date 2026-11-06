@@ -475,7 +475,8 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
           uom_qty: input.qty,
           from_status: 'AVAILABLE',
           to_status: 'PICKING',
-          to_location_id: expectedLpn.current_location_id,
+          // an outbound pallet already released to its lane / the dock stays there in the ledger
+          to_location_id: outbound.current_location_id ?? expectedLpn.current_location_id,
           order_id: task.order_id,
           task_id: task.id,
           reference_type: 'pick_line',
@@ -495,6 +496,8 @@ export async function pickScan(tx: Tx, ctx: ActorContext, input: { pick_task_id:
       await tx.allocations.update({ where: { id: line.allocation_id }, data: { picked_qty: { increment: base }, status: done ? 'PICKED' : 'ACTIVE' } });
       await tx.order_lines.update({ where: { id: line.order_line_id }, data: { picked_qty: { increment: base }, allocated_qty: { decrement: base } } });
       await audit(tx, ctx, { action: 'pick.scan', entity_type: 'pick_task', entity_id: task.id, after: { line: line.id, sku: sku.code, qty: base.toString(), absorbed: absorbed.toString(), from_lpn: expectedLpn.code, to_lpn: outboundCode, movement_id: movementId.toString() } });
+      // a picked pallet never keeps a rack position, even while the rest of the order is still being picked
+      await releasePickedPositions(tx, ctx, task.order_id);
       const completed = await maybeCompleteTask(tx, ctx, task.id);
       return { ok: true, next: done ? 'NEXT_LINE' : 'QTY', line_id: line.id, picked: newPicked, remaining: lineQty - newPicked, absorbed, outbound_lpn: outboundCode, pallet_switched: palletSwitched, task_completed: completed };
     }
@@ -604,10 +607,11 @@ async function maybeCompleteTask(tx: Tx, ctx: ActorContext, taskId: string): Pro
 }
 
 /**
- * Picking finished: every outbound pallet of the order still standing in a rack position (RESERVE/PICKING location)
- * leaves it, so the position is free again. The pallet goes to the order's staging lane (assigned now if a lane is
- * free) or, when every lane is busy, to the outbound dock (first active SHIPPING location of its warehouse). Its
- * inventory keeps the PICKING status: the staging scan still confirms the lane, loading still needs STAGED.
+ * A picked pallet never keeps a rack position: after every pick confirmation (and when the order completes), every
+ * outbound pallet of the order still standing in a rack position (RESERVE/PICKING location) leaves it, so the
+ * position is free again. The pallet goes to the order's staging lane (assigned now if a lane is free) or, when every
+ * lane is busy, to the outbound dock (first active SHIPPING location of its warehouse). Its inventory keeps the PICKING
+ * status: the staging scan still confirms the lane, loading still needs STAGED.
  */
 export async function releasePickedPositions(tx: Tx, ctx: ActorContext, orderId: string): Promise<{ moved: string[]; to: string | null }> {
   const pallets = await tx.$queryRaw<{ id: string; warehouse_id: string }[]>`

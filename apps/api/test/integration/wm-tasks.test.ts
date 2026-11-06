@@ -210,7 +210,9 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
   });
 
   it('no free staging lane never blocks picking: the task is created without a lane and the lane is taken when the pallet arrives', async () => {
-    // occupy every lane of the fixture with other orders
+    // a fresh, empty lane (picked pallets of earlier orders already stand in the fixture's lanes), then occupy every lane with other orders
+    await sql(`INSERT INTO locations (warehouse_id, zone_id, code, barcode, location_type, pallet_capacity, max_weight_kg, height_m)
+               SELECT warehouse_id, zone_id, 'STGX-${f.tag}', 'LOC-STGX-${f.tag}', 'STAGING', 10, 100000, 5 FROM locations WHERE id = '${f.staging[0]!.id}'`);
     const lanes = await sql<{ id: string; code: string; barcode: string }>(`SELECT id, code, barcode FROM locations WHERE warehouse_id = '${f.warehouse_id}' AND location_type = 'STAGING' AND is_active ORDER BY code`);
     const blockers: string[] = [];
     for (const lane of lanes) {
@@ -232,8 +234,8 @@ describe('self-created handheld tasks (para qué obligatorio)', () => {
     const busy = await picker.post('/staging/scan', { lpn_code: pallet.code, staging_location_barcode: lanes[0]!.barcode }, idem());
     expect(busy.status).toBe(422);
     expect(busy.body.error).toBe('LANE_BUSY');
-    // (picked pallets of earlier orders may already stand in a lane: a lane with pallets of another order stays busy, so free one that is empty)
-    const emptyLane = (await sql<{ id: string; code: string; barcode: string }>(`SELECT loc.id, loc.code, loc.barcode FROM locations loc WHERE loc.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM lpns l WHERE l.current_location_id = loc.id) ORDER BY loc.code LIMIT 1`, [lanes.map((l) => l.id)]))[0]!;
+    // a lane with pallets of another order stays busy even when its assignment is released, so the freed lane is the empty one
+    const emptyLane = lanes.find((l) => l.code === `STGX-${f.tag}`)!;
     await sql(`UPDATE staging_assignments SET released_at = now() WHERE order_id = '${blockers[lanes.findIndex((l) => l.id === emptyLane.id)]}'`);
     const ok = await picker.post('/staging/scan', { lpn_code: pallet.code, staging_location_barcode: emptyLane.barcode }, idem());
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);

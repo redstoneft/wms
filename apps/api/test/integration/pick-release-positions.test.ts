@@ -10,7 +10,7 @@ beforeAll(async () => {
   sup = await userWithRoles('prlsup', ['SUPERVISOR']);
   picker = await userWithRoles('prlpick', ['PICKER']);
   adm = await admin();
-  f = await makeFixture({ skus: 1, reserveBays: 4, levels: 1 });
+  f = await makeFixture({ skus: 2, reserveBays: 6, levels: 1 });
 });
 afterAll(closeApp);
 
@@ -64,6 +64,40 @@ describe('picked pallets free their rack positions', () => {
     } finally {
       for (const lane of f.staging) await adm.patch(`/locations/${lane.id}`, { admin_status: 'ACTIVE' });
     }
+    await expectReconciled();
+  });
+
+  it('a pallet picked whole frees its position at once, even while the rest of the order is still being picked', async () => {
+    const a = await storedPallet(f, 0, f.reserve[2]!.id, 120n); // taken whole
+    const b = await storedPallet(f, 1, f.reserve[3]!.id, 100n); // 60 of it
+    const o = await sup.post('/orders', { order_number: `PRL-${f.tag}-C`, customer_code: f.customer.code, lines: [{ sku_code: f.skus[0]!.code, qty: 120, uom_code: 'PIECE' }, { sku_code: f.skus[1]!.code, qty: 60, uom_code: 'PIECE' }] });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
+    await sup.post(`/orders/${o.body.id}/accept`);
+    expect((await sup.post('/orders/allocate', { order_id: o.body.id, allow_partial: false, strategy: 'FINISH_PALLET' })).status).toBe(200);
+    const t = await sup.post('/picking/tasks', { order_id: o.body.id });
+    const v = await picker.post(`/picking/tasks/${t.body.task.id}/start`);
+    const lineA = v.body.lines.find((l: { lpn_code: string }) => l.lpn_code === a.code);
+    const lineB = v.body.lines.find((l: { lpn_code: string }) => l.lpn_code === b.code);
+    const scan = (line: { id: string }, step: string, extra: Record<string, unknown>) => picker.post('/picking/scan', { pick_task_id: t.body.task.id, line_id: line.id, step, ...extra }, idem());
+    expect((await scan(lineA, 'LOCATION', { scanned: f.reserve[2]!.barcode })).status).toBe(200);
+    expect((await scan(lineA, 'LPN', { scanned: a.code })).status).toBe(200);
+    const qa = await scan(lineA, 'QTY', { qty: '120', uom_code: 'PIECE' });
+    expect(qa.status, JSON.stringify(qa.body)).toBe(200);
+    // order still being picked, yet the whole pallet already left its position
+    expect((await sup.get(`/orders/${o.body.id}`)).body.status).toBe('PICKING');
+    expect(await occ(f.reserve[2]!.code)).toBe('FREE');
+    const wa = await where(a.id);
+    expect(wa.status).toBe('PICKING');
+    expect(wa.type).toBe('STAGING');
+    // the second line is picked onto the same outbound pallet, which stays in its lane; the source keeps 40 and its position
+    expect((await scan(lineB, 'LOCATION', { scanned: f.reserve[3]!.barcode })).status).toBe(200);
+    expect((await scan(lineB, 'LPN', { scanned: b.code })).status).toBe(200);
+    const qb = await scan(lineB, 'QTY', { qty: '60', uom_code: 'PIECE' });
+    expect(qb.status, JSON.stringify(qb.body)).toBe(200);
+    expect((await sup.get(`/orders/${o.body.id}`)).body.status).toBe('PICKED');
+    expect(await occ(f.reserve[3]!.code)).toBe('OCCUPIED');
+    const outbound = await sql<{ code: string; loc: string; type: string }>(`SELECT l.code, loc.code AS loc, loc.location_type AS type FROM lpns l JOIN locations loc ON loc.id = l.current_location_id WHERE l.order_id = $1::uuid AND l.status = 'PICKING' ORDER BY l.code`, [o.body.id]);
+    expect(outbound.every((x) => x.type === 'STAGING')).toBe(true);
     await expectReconciled();
   });
 });

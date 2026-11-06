@@ -86,7 +86,7 @@ Regla que se conserva: nadie puede autorizar con sus propias credenciales una ex
 
 ## STAGING
 
-**Al terminar de surtir, las posiciones de rack se liberan solas.** En cuanto el pedido queda *surtido*, todas sus tarimas de salida que seguían registradas en una posición de rack pasan al **carril de staging del pedido** (se le asigna uno si hay libre) o, si todos los carriles están ocupados, al **andén de salida** (HID-SAL-01). La posición del rack queda libre en ese momento para el acomodo. La tarima sigue "en surtido" hasta que se escanee en su carril (paso siguiente); movimiento PICK_RELEASE en el historial.
+**Una tarima surtida nunca ocupa una posición de rack.** En cuanto se confirma un surtido (cada escaneo de cantidad, aunque al pedido le falte mercancía), las tarimas de salida del pedido que seguían registradas en una posición de rack pasan al **carril de staging del pedido** (se le asigna uno si hay libre) o, si todos los carriles están ocupados, al **andén de salida** (HID-SAL-01). La posición del rack queda libre en ese momento para el acomodo. La tarima sigue "en surtido" hasta que se escanee en su carril (paso siguiente); movimiento PICK_RELEASE en el historial.
 
 1. `Almacén → Staging`. Escanee el **LPN** del pallet surtido.
 2. Escanee el **carril de staging** que indica la pantalla (cada pedido tiene el suyo). Carril equivocado = rojo.
