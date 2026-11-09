@@ -80,6 +80,9 @@ export const zUpdateUser = z.object({
 
 // ---- master data ----
 export const zSkuUom = z.object({ uom_code: zUom, base_qty: zQty });
+/** Components of a set/battery: pieces of each component SKU in one finished set. An empty list removes the kit. */
+export const zKitComponents = z.object({ components: z.array(z.object({ sku_code: zCode, qty_per_kit: zQty })).max(50) });
+export type KitComponentsInput = z.infer<typeof zKitComponents>;
 export const zCreateSku = z.object({
   code: zCode,
   description: z.string().trim().min(1).max(300),

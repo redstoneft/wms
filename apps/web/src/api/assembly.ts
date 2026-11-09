@@ -24,7 +24,7 @@ export interface AssemblyOrder {
   status: string; // IN_PROGRESS | COMPLETED | CANCELLED
   started_at?: string | null;
   completed_at?: string | null;
-  mode: 'ASSEMBLY' | 'REPACK';
+  mode: 'ASSEMBLY' | 'REPACK' | 'KIT';
   output_qty: string;
   consumed_qty: string;
   scrap_qty: string;

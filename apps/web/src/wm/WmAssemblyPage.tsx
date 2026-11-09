@@ -7,7 +7,7 @@ import { assemblyApi, type AssemblyOrder, type AssemblyResult } from '../api/ass
 import { inventoryApi } from '../api/inventory';
 import { labelsApi } from '../api/labels';
 import { putawayApi } from '../api/storage';
-import type { PutawayOption } from '../api/types';
+import type { KitSpec, PutawayOption } from '../api/types';
 import { LocationPicker } from './LocationPicker';
 import { masterdataApi } from '../api/masterdata';
 import { ScanInput } from '../components/ScanInput';
@@ -42,6 +42,31 @@ function Num({ label, value, onChange, testId }: { label: string; value: string;
   );
 }
 
+/** Set / battery: per component, what one set needs, what was taken to the station, and how many sets that allows. */
+function KitPanel({ kit, taken, sets }: { kit: KitSpec; taken: Map<string, bigint>; sets: number }) {
+  const possible = kit.components.reduce<bigint | null>((acc, c) => {
+    const n = (taken.get(c.sku_code) ?? 0n) / BigInt(c.qty_per_kit);
+    return acc === null || n < acc ? n : acc;
+  }, null) ?? 0n;
+  return (
+    <div className="mt-2 rounded-xl border-2 border-violet-500 bg-slate-900 p-3 text-sm" data-testid="kit-panel">
+      <div className="mb-1 font-bold text-violet-300">SET: cada {kit.kit.code} lleva</div>
+      {kit.components.map((c) => {
+        const have = taken.get(c.sku_code) ?? 0n;
+        const need = BigInt(sets) * BigInt(c.qty_per_kit);
+        const short = sets > 0 && have < need;
+        return (
+          <div key={c.sku_code} className={`flex justify-between gap-2 ${short ? 'text-amber-300' : ''}`}>
+            <span className="font-mono">{String(c.qty_per_kit)} × {c.sku_code}</span>
+            <span>{fmtQty(have.toString())} surtidas{sets > 0 ? ` · ${sets} sets usan ${fmtQty(need.toString())}` : ''}</span>
+          </div>
+        );
+      })}
+      <div className="mt-1 font-bold text-emerald-300">Con lo surtido alcanzan {possible.toString()} sets completos</div>
+    </div>
+  );
+}
+
 function Flow() {
   const wm = useWm();
   const qc = useQueryClient();
@@ -68,6 +93,16 @@ function Flow() {
   const [draft, setDraft] = useState<InLine | null>(null);
   const [options, setOptions] = useState<{ sku_code: string; description: string; qty: string }[]>([]);
   const [out, setOut] = useState<{ code: string; description: string; requires_lot: boolean; requires_expiry: boolean; case_qty: string } | null>(null);
+  // set / battery: components of one finished unit (null = the output is not a kit)
+  const [kit, setKit] = useState<KitSpec | null>(null);
+  const loadKit = async (code: string) => {
+    try {
+      const k = await masterdataApi.kit(code);
+      setKit(k.is_kit ? k : null);
+    } catch {
+      setKit(null);
+    }
+  };
   // one entry per physical pallet (cases on it); pallets need not be equal: 70 + 70 + 30 is fine
   // one row per physical pallet: full cases, pieces in one incomplete case, defective pieces found on it
   const [pallets, setPallets] = useState<{ cases: string; partial: string; defective: string }[]>([{ cases: '', partial: '', defective: '' }]);
@@ -84,6 +119,8 @@ function Flow() {
   const [result, setResult] = useState<AssemblyResult | null>(null);
 
   const consumed = flow === 'FINISH' && open ? Number(open.consumed_qty) : lines.reduce((a, l) => a + (Number(l.qty) || 0), 0);
+  const takenBySku = new Map<string, bigint>();
+  for (const l of flow === 'FINISH' && open ? open.inputs.map((i) => ({ sku_code: i.sku.code, qty: String(i.qty) })) : lines) takenBySku.set(l.sku_code, (takenBySku.get(l.sku_code) ?? 0n) + BigInt(Number(l.qty) || 0));
   const ppcN = Number(ppc) || 0;
   const produced = pallets.reduce((a, p) => a + (Number(p.cases) || 0) * ppcN + (Number(p.partial) || 0), 0);
   const defectiveTotal = pallets.reduce((a, p) => a + (Number(p.defective) || 0), 0);
@@ -128,6 +165,7 @@ function Flow() {
       const caseUom = r.uoms.find((u) => u.uom_code === 'CASE');
       setOut({ code: r.sku.code, description: r.sku.description, requires_lot: r.sku.requires_lot, requires_expiry: r.sku.requires_expiry, case_qty: caseUom ? String(caseUom.base_qty) : '' });
       if (caseUom && !ppc) setPpc(String(caseUom.base_qty));
+      await loadKit(r.sku.code);
       wm.ok(lines.every((l) => l.sku_code === r.sku.code) ? `${r.sku.code} · MISMO CÓDIGO: REEMPAQUE` : `${r.sku.code} · ${r.sku.description}`);
       setStep(flow === 'START' ? 'PURPOSE' : 'PALLETS');
     } catch (e) {
@@ -174,6 +212,7 @@ function Flow() {
       const caseUom = r.uoms.find((u) => u.uom_code === 'CASE');
       setOut({ code: r.sku.code, description: r.sku.description, requires_lot: r.sku.requires_lot, requires_expiry: r.sku.requires_expiry, case_qty: caseUom ? String(caseUom.base_qty) : '' });
       setPpc(caseUom ? String(caseUom.base_qty) : '');
+      await loadKit(r.sku.code);
       setOpen(o);
       setFlow('FINISH');
       setStation(o.station.barcode);
@@ -466,6 +505,7 @@ function Flow() {
         <div className="text-sm text-slate-300">
           {out.code} · {out.description}
         </div>
+        {kit && <KitPanel kit={kit} taken={takenBySku} sets={produced} />}
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <Num label="Tarimas" value={String(pallets.length)} onChange={(v) => setCount(Math.min(50, Number(v) || 0))} testId="n-pallets" />
           <Num label="Cajas en todas" value={pallets.every((p) => p.cases === pallets[0]!.cases) ? pallets[0]!.cases : ''} onChange={(v) => setPallets((rows) => rows.map((p) => ({ ...p, cases: v })))} testId="cases" />
@@ -586,6 +626,7 @@ function Flow() {
     return (
       <div>
         <StepBar text="7 · ¿PARA QUÉ SE HACE ESTE ARMADO? (OBLIGATORIO)" />
+        {kit && <KitPanel kit={kit} taken={takenBySku} sets={0} />}
         <label className="block">
           <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-300">Para qué</div>
           <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={3} placeholder="Ej.: pedido de Walmart sale mañana · reponer picking de sartén 20 cm" className="w-full rounded-lg border-2 border-slate-500 bg-slate-900 px-3 py-3 text-xl text-white" data-testid="asm-purpose" />

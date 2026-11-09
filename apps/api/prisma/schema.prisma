@@ -357,6 +357,8 @@ model skus {
   return_lines        return_lines[]
   assembly_inputs     assembly_inputs[]
   assembly_orders     assembly_orders[]
+  kit_components      sku_kit_components[] @relation("kit")
+  component_of_kits   sku_kit_components[] @relation("component")
   count_lines         count_lines[]
 }
 
@@ -369,6 +371,21 @@ model sku_barcodes {
   sku skus @relation(fields: [sku_id], references: [id], onDelete: Cascade)
 
   @@index([sku_id])
+}
+
+// Sets and batteries (kits): the finished SKU is made of N pieces of each component SKU. The assembly (Armado) uses it
+// to check that what was consumed matches the sets produced, and the handheld shows how many sets the components allow.
+model sku_kit_components {
+  id               String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  kit_sku_id       String @db.Uuid
+  component_sku_id String @db.Uuid
+  qty_per_kit      BigInt // pieces of the component in one finished set
+
+  kit       skus @relation("kit", fields: [kit_sku_id], references: [id], onDelete: Cascade)
+  component skus @relation("component", fields: [component_sku_id], references: [id])
+
+  @@unique([kit_sku_id, component_sku_id])
+  @@index([component_sku_id])
 }
 
 // Exact integer conversions: 1 <uom_code> = <base_qty> PIECE

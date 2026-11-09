@@ -1,6 +1,6 @@
 import type { UomCode } from '@wms/shared';
 import { api, type Query } from './client';
-import type { Paged, Party, Printer, QuarantineReason, Sku } from './types';
+import type { KitSpec, Paged, Party, Printer, QuarantineReason, Sku } from './types';
 
 export interface ListQuery extends Query {
   q?: string;
@@ -15,6 +15,9 @@ export const masterdataApi = {
   sku: (idOrCode: string) => api.get<Sku>(`/skus/${encodeURIComponent(idOrCode)}`),
   /** Server-side barcode resolution (exact barcode first, then SKU code). 404 BARCODE_UNKNOWN when nothing matches. */
   skuByBarcode: (barcode: string) => api.get<{ sku: Pick<Sku, 'id' | 'code' | 'description' | 'requires_lot' | 'requires_expiry' | 'is_active'>; uom_code: UomCode; uoms: { uom_code: UomCode; base_qty: string }[] }>(`/skus/by-barcode/${encodeURIComponent(barcode)}`),
+  /** set/battery definition and how many sets the available stock allows */
+  kit: (idOrCode: string) => api.get<KitSpec>(`/skus/${encodeURIComponent(idOrCode)}/kit`),
+  setKit: (id: string, components: { sku_code: string; qty_per_kit: string }[]) => api.put<{ kit: string }>(`/skus/${id}/kit`, { components }),
   createSku: (body: Record<string, unknown>) => api.post<Sku>('/skus', body),
   updateSku: (id: string, body: Record<string, unknown>) => api.patch<Sku>(`/skus/${id}`, body),
   parties: (kind: PartyKind, q: ListQuery = {}) => api.get<Paged<Party>>(`/${kind}`, q),

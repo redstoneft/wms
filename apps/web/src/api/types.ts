@@ -76,6 +76,12 @@ export interface Sku {
   barcodes: SkuBarcode[];
   inventory?: { status: string; qty: Qty; lpn_count: number }[];
 }
+export interface KitSpec {
+  kit: { id: Uuid; code: string; description: string };
+  is_kit: boolean;
+  components: { sku_id: Uuid; sku_code: string; description: string; qty_per_kit: Qty; available: Qty }[];
+  max_sets: Qty;
+}
 export interface Party {
   id: Uuid;
   code: string;

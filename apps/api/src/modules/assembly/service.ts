@@ -33,6 +33,48 @@ async function resolveForOrder(tx: Tx, number: string | undefined) {
   return o;
 }
 
+/** Sets and batteries: what one finished unit of `kitSkuId` is made of (null when the SKU is not a kit). */
+export async function kitSpec(tx: Tx, kitSkuId: string): Promise<{ sku_id: string; code: string; description: string; qty_per_kit: bigint }[] | null> {
+  const rows = await tx.sku_kit_components.findMany({ where: { kit_sku_id: kitSkuId }, include: { component: { select: { code: true, description: true } } }, orderBy: { component: { code: 'asc' } } });
+  if (rows.length === 0) return null;
+  return rows.map((r) => ({ sku_id: r.component_sku_id, code: r.component.code, description: r.component.description, qty_per_kit: r.qty_per_kit }));
+}
+
+/** How many complete sets the given component pieces allow (floor over every component; components missing → 0). */
+export function kitSetsFrom(spec: { sku_id: string; qty_per_kit: bigint }[], consumedBySku: Map<string, bigint>): bigint {
+  let sets: bigint | null = null;
+  for (const c of spec) {
+    const have = consumedBySku.get(c.sku_id) ?? 0n;
+    const n = have / c.qty_per_kit;
+    sets = sets === null || n < sets ? n : sets;
+  }
+  return sets ?? 0n;
+}
+
+/**
+ * A kit (set/battery) is balanced when every input is a component, every component is present, and what was consumed
+ * of each component is exactly sets × pieces-per-set; whatever exceeds that must be declared as scrap (defective
+ * component pieces). Throws with the per-component detail otherwise.
+ */
+function assertKitBalanced(spec: { sku_id: string; code: string; qty_per_kit: bigint }[], outCode: string, consumedBySku: Map<string, bigint>, sets: bigint, scrapQty: bigint) {
+  const specIds = new Set(spec.map((c) => c.sku_id));
+  const unknown = [...consumedBySku.keys()].filter((id) => !specIds.has(id));
+  if (unknown.length) throw new RuleError('KIT_COMPONENT_UNKNOWN', `${outCode} no lleva ${unknown.length} de los productos surtidos; componentes del set: ${spec.map((c) => `${c.qty_per_kit}×${c.code}`).join(', ')}`, { components: spec.map((c) => ({ sku: c.code, qty_per_kit: c.qty_per_kit.toString() })) });
+  const missing = spec.filter((c) => (consumedBySku.get(c.sku_id) ?? 0n) <= 0n);
+  if (missing.length) throw new RuleError('KIT_COMPONENT_MISSING', `Falta surtir ${missing.map((c) => c.code).join(', ')} para armar ${outCode}`, { missing: missing.map((c) => c.code) });
+  const detail = spec.map((c) => {
+    const consumed = consumedBySku.get(c.sku_id) ?? 0n;
+    const needed = sets * c.qty_per_kit;
+    return { sku: c.code, qty_per_kit: c.qty_per_kit.toString(), consumed: consumed.toString(), needed: needed.toString(), surplus: (consumed - needed).toString(), sets_possible: (consumed / c.qty_per_kit).toString() };
+  });
+  const short = detail.filter((d) => BigInt(d.surplus) < 0n);
+  if (short.length) throw new RuleError('KIT_UNBALANCED', `Para ${sets} sets de ${outCode} faltan componentes: ${short.map((d) => `${d.sku} (${d.consumed} de ${d.needed})`).join(', ')}`, { sets: sets.toString(), components: detail });
+  const surplus = detail.reduce((a, d) => a + BigInt(d.surplus), 0n);
+  if (surplus !== scrapQty) {
+    throw new RuleError('KIT_UNBALANCED', `Se consumieron ${surplus} piezas más de las que llevan ${sets} sets de ${outCode} y se declararon ${scrapQty} defectuosas; registra la diferencia como defectuosas o ajusta los sets`, { sets: sets.toString(), surplus: surplus.toString(), scrap: scrapQty.toString(), components: detail });
+  }
+}
+
 /** `sku_code` may be the WMS code or any alias barcode (SAE key, GTIN) — same rule as the imports. */
 async function resolveSku(tx: Tx, code: string) {
   const direct = await tx.skus.findUnique({ where: { code } });
@@ -55,16 +97,23 @@ export async function completeAssembly(tx: Tx, ctx: ActorContext, input: Assembl
   const consumedQty = input.inputs.reduce((acc, i) => acc + BigInt(i.qty), 0n);
   const inputSkuRows = await Promise.all([...new Set(input.inputs.map((i) => i.sku_code))].map((c) => resolveSku(tx, c)));
   const inputSkus = new Set(inputSkuRows.map((s) => s.id));
-  const mode = inputSkus.size === 1 && inputSkus.has(outSku.id) ? 'REPACK' : 'ASSEMBLY';
-  // Single component (body → pan, or the same SKU re-packed) is 1:1: every consumed piece is either a finished piece or scrap. Kits skip the check.
-  if (inputSkus.size === 1 && consumedQty !== outputQty + scrapQty) {
+  const kit = await kitSpec(tx, outSku.id);
+  const mode = kit ? 'KIT' : inputSkus.size === 1 && inputSkus.has(outSku.id) ? 'REPACK' : 'ASSEMBLY';
+  if (kit) {
+    // a set/battery: every component consumed must match the sets produced (surplus = defective component pieces)
+    const bySku = new Map<string, bigint>();
+    for (const i of input.inputs) { const id = inputSkuRows.find((r) => r.code === i.sku_code)?.id ?? (await resolveSku(tx, i.sku_code)).id; bySku.set(id, (bySku.get(id) ?? 0n) + BigInt(i.qty)); }
+    assertKitBalanced(kit, outSku.code, bySku, outputQty, scrapQty);
+  }
+  // Single component (body → pan, or the same SKU re-packed) is 1:1: every consumed piece is either a finished piece or scrap.
+  if (!kit && inputSkus.size === 1 && consumedQty !== outputQty + scrapQty) {
     throw new RuleError('ASSEMBLY_UNBALANCED', `Consumed ${consumedQty} pieces but produced ${outputQty} + scrap ${scrapQty}; register the difference as scrap with a reason`, {
       consumed: consumedQty.toString(),
       produced: outputQty.toString(),
       scrap: scrapQty.toString(),
     });
   }
-  if (mode === 'ASSEMBLY' && inputSkus.has(outSku.id)) throw new RuleError('MIXED_SAME_SKU', 'The finished product cannot also be one of several components; a same-SKU repack takes a single input SKU');
+  if (mode !== 'REPACK' && inputSkus.has(outSku.id)) throw new RuleError('MIXED_SAME_SKU', 'The finished product cannot also be one of several components; a same-SKU repack takes a single input SKU');
 
   const forOrder = await resolveForOrder(tx, input.for_order_number);
   const code = (await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('ASM', 'assembly_seq') AS n`)[0]!.n;
@@ -195,8 +244,19 @@ export async function startAssembly(tx: Tx, ctx: ActorContext, input: AssemblySt
   const consumedQty = input.inputs.reduce((acc, i) => acc + BigInt(i.qty), 0n);
   const inputSkuRows = await Promise.all([...new Set(input.inputs.map((i) => i.sku_code))].map((c) => resolveSku(tx, c)));
   const inputSkus = new Set(inputSkuRows.map((r) => r.id));
-  const mode = inputSkus.size === 1 && inputSkus.has(outSku.id) ? 'REPACK' : 'ASSEMBLY';
-  if (mode === 'ASSEMBLY' && inputSkus.has(outSku.id)) throw new RuleError('MIXED_SAME_SKU', 'The finished product cannot also be one of several components; a same-SKU repack takes a single input SKU');
+  const kit = await kitSpec(tx, outSku.id);
+  const mode = kit ? 'KIT' : inputSkus.size === 1 && inputSkus.has(outSku.id) ? 'REPACK' : 'ASSEMBLY';
+  if (mode !== 'REPACK' && inputSkus.has(outSku.id)) throw new RuleError('MIXED_SAME_SKU', 'The finished product cannot also be one of several components; a same-SKU repack takes a single input SKU');
+  let kitSets: bigint | null = null;
+  if (kit) {
+    // taking components to the station: only components of the set may go; the sets they allow are reported (finish checks the balance)
+    const specIds = new Set(kit.map((c) => c.sku_id));
+    const unknown = inputSkuRows.filter((r) => !specIds.has(r.id));
+    if (unknown.length) throw new RuleError('KIT_COMPONENT_UNKNOWN', `${outSku.code} no lleva ${unknown.map((r) => r.code).join(', ')}; componentes del set: ${kit.map((c) => `${c.qty_per_kit}×${c.code}`).join(', ')}`, { components: kit.map((c) => ({ sku: c.code, qty_per_kit: c.qty_per_kit.toString() })) });
+    const bySku = new Map<string, bigint>();
+    for (const i of input.inputs) { const id = inputSkuRows.find((r) => r.code === i.sku_code)!.id; bySku.set(id, (bySku.get(id) ?? 0n) + BigInt(i.qty)); }
+    kitSets = kitSetsFrom(kit, bySku);
+  }
 
   const code = (await tx.$queryRaw<{ n: string }[]>`SELECT next_doc_number('ASM', 'assembly_seq') AS n`)[0]!.n;
   const order = await tx.assembly_orders.create({
@@ -229,9 +289,9 @@ export async function startAssembly(tx: Tx, ctx: ActorContext, input: AssemblySt
     await tx.assembly_inputs.create({ data: { order_id: order.id, lpn_id: lpn.id, sku_id: sku.id, qty: BigInt(line.qty) } });
     moved.push({ lpn: lpn.code, sku: sku.code, qty: line.qty.toString(), from: fromLoc, blocked: toBlock.toString() });
   }
-  await audit(tx, ctx, { action: 'assembly.started', entity_type: 'assembly_order', entity_id: order.id, after: { code, mode, station: station.code, output_sku: outSku.code, consumed_qty: consumedQty.toString(), inputs: moved }, reason: input.notes });
+  await audit(tx, ctx, { action: 'assembly.started', entity_type: 'assembly_order', entity_id: order.id, after: { code, mode, station: station.code, output_sku: outSku.code, consumed_qty: consumedQty.toString(), inputs: moved, kit_sets: kitSets?.toString() ?? null }, reason: input.notes });
   const full = await tx.assembly_orders.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
-  return { ...full, moved };
+  return { ...full, moved, kit_sets: kitSets };
 }
 
 export async function finishAssembly(tx: Tx, ctx: ActorContext, id: string, input: AssemblyFinishInput) {
@@ -250,7 +310,13 @@ export async function finishAssembly(tx: Tx, ctx: ActorContext, id: string, inpu
   const scrapReason = input.scrap?.reason ?? (scrapQty > 0n ? 'Piezas defectuosas en el armado' : null);
   const consumedQty = order.inputs.reduce((a, i) => a + i.qty, 0n);
   const inputSkus = new Set(order.inputs.map((i) => i.sku_id));
-  if (inputSkus.size === 1 && consumedQty !== outputQty + scrapQty) {
+  const kit = await kitSpec(tx, outSku.id);
+  if (kit) {
+    const bySku = new Map<string, bigint>();
+    for (const i of order.inputs) bySku.set(i.sku_id, (bySku.get(i.sku_id) ?? 0n) + i.qty);
+    assertKitBalanced(kit, outSku.code, bySku, outputQty, scrapQty);
+  }
+  if (!kit && inputSkus.size === 1 && consumedQty !== outputQty + scrapQty) {
     throw new RuleError('ASSEMBLY_UNBALANCED', `Consumed ${consumedQty} pieces but produced ${outputQty} + scrap ${scrapQty}; register the difference as scrap with a reason`, { consumed: consumedQty.toString(), produced: outputQty.toString(), scrap: scrapQty.toString() });
   }
 

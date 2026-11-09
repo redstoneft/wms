@@ -295,7 +295,7 @@ export default function AssemblyPage() {
           columns={[
             { key: 'd', header: 'Fecha', render: (r) => fmtDateTime(r.created_at) },
             { key: 'c', header: 'Orden', render: (r) => <span className="font-mono">{r.code}</span> },
-            { key: 'm', header: 'Tipo', render: (r) => (r.mode === 'REPACK' ? 'Reempaque' : 'Armado') },
+            { key: 'm', header: 'Tipo', render: (r) => (r.mode === 'REPACK' ? 'Reempaque' : r.mode === 'KIT' ? 'Set / batería' : 'Armado') },
             { key: 'i', header: 'Insumos', render: (r) => r.inputs.map((i) => `${i.lpn.code} · ${i.sku.code} · ${fmtQty(i.qty)}`).join(' | ') },
             { key: 'o', header: 'Producto', render: (r) => `${r.output_sku.code} · ${r.output_sku.description}` },
             { key: 'q', header: 'Pzas', render: (r) => fmtQty(r.output_qty), align: 'right' },

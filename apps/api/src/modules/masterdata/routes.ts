@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { validateUomHierarchy, zCreateParty, zCreateSku, zUpdateSku, zUuid } from '@wms/shared';
+import { validateUomHierarchy, zCreateParty, zCreateSku, zKitComponents, zUpdateSku, zUuid } from '@wms/shared';
 import { getDb, withTx } from '../../db.js';
 import { ConflictError, NotFoundError, RuleError } from '../../errors.js';
 import { audit } from '../../lib/audit.js';
@@ -53,6 +53,52 @@ export async function masterDataRoutes(app: FastifyInstance) {
     const inventory = await db.$queryRaw<{ status: string; qty: bigint; lpn_count: number }[]>`
       SELECT status, qty, lpn_count FROM v_sku_inventory WHERE sku_id = ${sku.id}::uuid`;
     return { ...sku, inventory };
+  });
+
+  /** Set/battery definition: components of one finished unit, and how many sets the available stock allows. */
+  app.get('/skus/:id/kit', { preHandler: app.requireAuth }, async (req) => {
+    const id = (req.params as { id: string }).id;
+    const sku = await db.skus.findFirst({ where: { OR: [{ id: z.string().uuid().safeParse(id).success ? id : undefined }, { code: id }] }, select: { id: true, code: true, description: true } });
+    if (!sku) throw new NotFoundError('SKU', id);
+    const rows = await db.sku_kit_components.findMany({ where: { kit_sku_id: sku.id }, include: { component: { select: { id: true, code: true, description: true } } }, orderBy: { component: { code: 'asc' } } });
+    const components = [];
+    let maxSets: bigint | null = null;
+    for (const r of rows) {
+      const avail = await db.$queryRaw<{ qty: bigint }[]>`SELECT COALESCE(sum(b.qty), 0)::bigint AS qty FROM inventory_balances b JOIN lpns l ON l.id = b.lpn_id WHERE b.sku_id = ${r.component_sku_id}::uuid AND b.status = 'AVAILABLE' AND l.status IN ('STORED','OPEN')`;
+      const available = avail[0]?.qty ?? 0n;
+      const sets = available / r.qty_per_kit;
+      maxSets = maxSets === null || sets < maxSets ? sets : maxSets;
+      components.push({ sku_id: r.component.id, sku_code: r.component.code, description: r.component.description, qty_per_kit: r.qty_per_kit.toString(), available: available.toString() });
+    }
+    return { kit: { id: sku.id, code: sku.code, description: sku.description }, is_kit: rows.length > 0, components, max_sets: (maxSets ?? 0n).toString() };
+  });
+
+  /** Replace the components of a set/battery (empty list = the SKU stops being a kit). */
+  app.put('/skus/:id/kit', { preHandler: app.requirePermission('masterdata.manage') }, async (req) => {
+    const id = zUuid.parse((req.params as { id: string }).id);
+    const body = zKitComponents.parse(req.body);
+    return withTx(async (tx) => {
+      const kit = await tx.skus.findUnique({ where: { id }, select: { id: true, code: true } });
+      if (!kit) throw new NotFoundError('SKU', id);
+      const before = await tx.sku_kit_components.findMany({ where: { kit_sku_id: id }, include: { component: { select: { code: true } } } });
+      const seen = new Set<string>();
+      const rows: { component_sku_id: string; qty_per_kit: bigint }[] = [];
+      for (const c of body.components) {
+        const comp = await tx.skus.findUnique({ where: { code: c.sku_code }, select: { id: true, code: true, is_active: true } });
+        if (!comp) throw new NotFoundError('SKU', c.sku_code);
+        if (comp.id === kit.id) throw new RuleError('KIT_SELF', `${kit.code} no puede ser componente de sí mismo`);
+        if (!comp.is_active) throw new RuleError('SKU_INACTIVE', `El componente ${comp.code} está inactivo`);
+        if (seen.has(comp.id)) throw new RuleError('KIT_DUPLICATE', `El componente ${comp.code} está repetido`);
+        const nested = await tx.sku_kit_components.count({ where: { kit_sku_id: comp.id } });
+        if (nested) throw new RuleError('KIT_NESTED', `${comp.code} es a su vez un set; los sets no se anidan`);
+        seen.add(comp.id);
+        rows.push({ component_sku_id: comp.id, qty_per_kit: BigInt(c.qty_per_kit) });
+      }
+      await tx.sku_kit_components.deleteMany({ where: { kit_sku_id: id } });
+      if (rows.length) await tx.sku_kit_components.createMany({ data: rows.map((r) => ({ kit_sku_id: id, ...r })) });
+      await audit(tx, req.actor!, { action: 'sku.kit_set', entity_type: 'sku', entity_id: id, before: { components: before.map((b) => ({ sku: b.component.code, qty_per_kit: b.qty_per_kit.toString() })) }, after: { components: body.components } });
+      return { kit: kit.code, components: body.components };
+    });
   });
 
   app.post('/skus', { preHandler: app.requirePermission('masterdata.manage') }, async (req, reply) => {

@@ -183,7 +183,41 @@ function SkuDrawer({ sku, onClose }: { sku: (Partial<Sku> & { isNew?: boolean })
         <Button size="sm" variant="secondary" onClick={() => setF({ ...f, barcodes: [...barcodes, { barcode: '', uom_code: 'PIECE' }] })}>+ Código</Button>
       </div>
       {!f.isNew && f.inventory && f.inventory.length > 0 && <Alert tone="info" className="mt-4">Inventario: {f.inventory.map((i) => `${es(i.status)} ${fmtQty(i.qty)} (${i.lpn_count} LPN)`).join(' · ')}</Alert>}
+      {!f.isNew && f.id && <KitEditor sku={f as Sku} />}
     </Drawer>
+  );
+}
+
+/** Set / battery: which component SKUs (and how many pieces of each) make one finished unit. Saved on its own, for existing SKUs. */
+function KitEditor({ sku }: { sku: Sku }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const spec = useQuery({ queryKey: ['sku-kit', sku.id], queryFn: () => masterdataApi.kit(sku.id) });
+  const [rows, setRows] = useState<{ sku_code: string; qty_per_kit: string }[] | null>(null);
+  const current = rows ?? (spec.data?.components ?? []).map((c) => ({ sku_code: c.sku_code, qty_per_kit: String(c.qty_per_kit) }));
+  const save = useMutation({
+    mutationFn: () => masterdataApi.setKit(sku.id, current.filter((r) => r.sku_code.trim()).map((r) => ({ sku_code: r.sku_code.trim().toUpperCase(), qty_per_kit: r.qty_per_kit || '1' }))),
+    onSuccess: () => { toast.success('Componentes del set guardados'); setRows(null); void qc.invalidateQueries({ queryKey: ['sku-kit', sku.id] }); },
+    onError: (e) => toast.error('No se pudo guardar el set', e),
+  });
+  const set = (i: number, patch: Partial<{ sku_code: string; qty_per_kit: string }>) => setRows(current.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="mt-4 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+      <div className="mb-1 text-sm font-semibold">Set / batería: componentes de una unidad</div>
+      <div className="mb-2 text-xs text-slate-500">Si este producto se arma con otros (batería, set de sartenes), captura aquí qué lleva cada unidad. El Armado solo acepta esos componentes y exige que lo consumido cuadre con los sets producidos.{spec.data?.is_kit ? ` Con la existencia disponible alcanzan ${spec.data.max_sets} sets.` : ''}</div>
+      {current.map((r, i) => (
+        <div key={i} className="mb-1 flex items-center gap-2">
+          <Input value={r.sku_code} onChange={(e) => set(i, { sku_code: e.target.value })} placeholder="Código del componente" className="font-mono" />
+          <Input type="number" min={1} value={r.qty_per_kit} onChange={(e) => set(i, { qty_per_kit: e.target.value })} className="w-24" />
+          <span className="text-xs text-slate-500">pzas por set{spec.data?.components[i] && rows === null ? ` · ${spec.data.components[i]!.description}` : ''}</span>
+          <Button variant="secondary" onClick={() => setRows(current.filter((_, j) => j !== i))}>Quitar</Button>
+        </div>
+      ))}
+      <div className="mt-2 flex gap-2">
+        <Button variant="secondary" onClick={() => setRows([...current, { sku_code: '', qty_per_kit: '1' }])}>+ Componente</Button>
+        <Button onClick={() => save.mutate()} loading={save.isPending} disabled={rows === null}>Guardar componentes</Button>
+      </div>
+    </div>
   );
 }
 
