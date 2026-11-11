@@ -18,6 +18,7 @@ export const NAV: NavGroup[] = [
     label: 'General',
     items: [
       { to: '/', label: 'Tablero', icon: '▦', perms: ['dashboard.read'] },
+      { to: '/requests', label: 'Solicitudes', icon: '✋', perms: ['counts.approve'] },
       { to: '/map', label: 'Mapa 3D', icon: '⬢', perms: ['layout.read'] },
       { to: '/timeline', label: 'Trazabilidad', icon: '⟲', perms: ['inventory.read', 'lpn.read'] },
     ],

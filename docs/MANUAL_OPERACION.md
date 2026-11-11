@@ -207,6 +207,18 @@ Cuando quedan tarimas con pocas piezas del mismo modelo, en la handheld `Unir ta
 
 **Nueva recepción desde el handheld**: `Nueva tarea → Recibir mercancía`, escriba el motivo y listo: la recepción se abre en el andén de recibo del almacén (el que esté libre) y pasa directo a `Recibir`. No hay que escanear el andén.
 
+## SOLICITUDES DEL PERSONAL (oficina: aprobar o rechazar)
+
+Menú de oficina **Solicitudes** (junto a Tablero; el número naranja son las que esperan). Ahí cae todo lo que un operador pide desde el handheld y necesita la decisión de un supervisor o del administrador. Hoy: las **re-recepciones de tarima** hechas por alguien sin permiso de ajuste y los **conteos con diferencias**.
+
+Cada solicitud muestra quién la hizo, cuándo, su motivo y, por producto: lo que **el sistema tenía**, lo que **el operador contó**, la **diferencia** y lo que la tarima **tiene hoy**.
+
+* **Aprobar**: el inventario de la tarima queda como lo contó el operador (ajuste auditado con el usuario que aprueba, con su incidencia). No hace falta el segundo conteo: la revisión de quien aprueba lo sustituye.
+* **Rechazar** (con motivo): el inventario no cambia y la solicitud se cierra.
+* **Vencida**: si la tarima se movió, se surtió o cambió después de que el operador la contó, la solicitud ya no describe lo que hay; el botón Aprobar se apaga y solo se puede rechazar (**Rechazar las vencidas** las cierra todas de una vez). Si la diferencia sigue, el operador re-recibe la tarima otra vez.
+
+La misma pantalla trae accesos con contador a lo demás que espera atención: incidencias abiertas, recepciones por cerrar, devoluciones en inspección y armados en proceso. Permiso: `counts.approve` (supervisor y administrador).
+
 ## NUEVA TAREA (el operador crea su propia tarea)
 
 `Almacén → Nueva tarea` permite empezar trabajo sin esperar a que el supervisor lo asigne: **recibir mercancía** (abre una recepción en el andén que escanee), **surtir un pedido** (escanee o escriba el número; si el pedido ya existe el sistema asigna inventario y la tarea queda a su nombre; si **no existe**, elija el cliente y el pedido se crea ahí mismo en **surtido libre**), **contar una ubicación** (conteo a ciegas de ese hueco) o **ubicar una tarima** que quedó sin tarea de acomodo. Siempre pide **para qué** se hace (mínimo 5 letras): queda en la tarea y en la auditoría con su usuario. Solo puede crear tareas del tipo que su rol ejecuta.

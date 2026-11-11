@@ -27,6 +27,7 @@ const PickingPage = lazy(() => import('./pages/orders/PickingPage'));
 const ShipmentsPage = lazy(() => import('./pages/shipments/ShipmentsPage'));
 const ShipmentDetailPage = lazy(() => import('./pages/shipments/ShipmentDetailPage'));
 const IncidentsPage = lazy(() => import('./pages/IncidentsPage'));
+const RequestsPage = lazy(() => import('./pages/RequestsPage'));
 const ReturnsPage = lazy(() => import('./pages/ReturnsPage'));
 const LabelsPage = lazy(() => import('./pages/LabelsPage'));
 const PrintStationPage = lazy(() => import('./pages/PrintStationPage'));
@@ -150,6 +151,7 @@ export default function App() {
         <Route path="/picking" element={<Office perms={['picking.assign', 'picking.execute']}><PickingPage /></Office>} />
         <Route path="/shipments" element={<Office perms={['shipments.read']}><ShipmentsPage /></Office>} />
         <Route path="/shipments/:id" element={<Office perms={['shipments.read']}><ShipmentDetailPage /></Office>} />
+        <Route path="/requests" element={<Office perms={['counts.approve']}><RequestsPage /></Office>} />
         <Route path="/incidents" element={<Office perms={['incidents.read']}><IncidentsPage /></Office>} />
         <Route path="/incidents/:id" element={<Office perms={['incidents.read']}><IncidentsPage /></Office>} />
         <Route path="/returns" element={<Office perms={['returns.manage', 'orders.read']}><ReturnsPage /></Office>} />

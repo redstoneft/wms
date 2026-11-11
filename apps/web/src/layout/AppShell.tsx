@@ -6,6 +6,8 @@ import { useAuth } from '../auth/AuthContext';
 import { OfflineBanner, OnlineDot } from '../components/OfflineBanner';
 import { cls } from '../lib/format';
 import { NAV, WM_NAV } from './nav';
+import { useQuery } from '@tanstack/react-query';
+import { requestsApi } from '../api/requests';
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout, canAny } = useAuth();
@@ -13,6 +15,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const groups = NAV.map((g) => ({ ...g, items: g.items.filter((i) => i.perms.length === 0 || canAny(...i.perms)) })).filter((g) => g.items.length > 0);
   const wmItems = WM_NAV.filter((i) => canAny(...i.perms));
+  // requests waiting for an office decision (badge on the menu entry)
+  const pendingQ = useQuery({ queryKey: ['requests-pending'], queryFn: requestsApi.pending, enabled: canAny('counts.approve'), refetchInterval: 60_000 });
+  const pendingRequests = pendingQ.data?.pending ?? 0;
 
   return (
     <div className="flex h-full min-h-screen bg-slate-100">
@@ -33,6 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <NavLink key={i.to} to={i.to} end={i.to === '/'} onClick={() => setOpen(false)} className={({ isActive }) => cls('flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-slate-800', isActive && 'bg-sky-600/20 text-sky-300')}>
                   <span className="w-5 text-center text-base leading-none">{i.icon}</span>
                   {i.label}
+                  {i.to === '/requests' && pendingRequests > 0 && <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-bold text-slate-900">{pendingRequests}</span>}
                 </NavLink>
               ))}
             </div>
@@ -90,7 +96,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             .slice(0, 5)
             .map((i) => (
               <NavLink key={i.to} to={i.to} end={i.to === '/'} className={({ isActive }) => cls('flex flex-col items-center px-2 py-1 text-slate-600', isActive && 'text-sky-700')}>
-                <span className="text-lg leading-none">{i.icon}</span>
+                <span className="relative text-lg leading-none">
+                  {i.icon}
+                  {i.to === '/requests' && pendingRequests > 0 && <span className="absolute -right-3 -top-1 rounded-full bg-amber-500 px-1 text-[10px] font-bold text-slate-900">{pendingRequests}</span>}
+                </span>
                 {i.label}
               </NavLink>
             ))}

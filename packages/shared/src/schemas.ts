@@ -574,6 +574,9 @@ export const zApproveCount = z.object({
   reason: zReason,
 });
 
+/** Office decision on a staff request (re-receipt, count with differences). */
+export const zRequestDecision = z.object({ decision: z.enum(['APPROVE', 'REJECT']), reason: zReason });
+
 // ---- orders ----
 export const zOrderLineInput = z.object({
   sku_code: zCode,

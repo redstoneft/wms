@@ -13,6 +13,7 @@ import { printAgentRoutes } from './modules/print-agent/routes.js';
 import { wmTaskRoutes } from './modules/wm-tasks/routes.js';
 import { replenishmentRoutes } from './modules/replenishment/routes.js';
 import { countRoutes } from './modules/counts/routes.js';
+import { requestRoutes } from './modules/requests/routes.js';
 import { orderRoutes } from './modules/orders/routes.js';
 import { pickingRoutes } from './modules/picking/routes.js';
 import { verificationRoutes } from './modules/verification/routes.js';
@@ -47,6 +48,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(wmTaskRoutes);
       await api.register(replenishmentRoutes);
       await api.register(countRoutes);
+      await api.register(requestRoutes);
       await api.register(orderRoutes);
       await api.register(pickingRoutes);
       await api.register(verificationRoutes);
